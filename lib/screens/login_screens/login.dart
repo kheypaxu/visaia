@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:visaia/screens/reporting_screens/pest_report_submission.dart'; 
+import 'package:visaia/screens/monitoring_screens/monitoring_dashboard.dart'; 
 import 'package:visaia/screens/login_screens/registration.dart';
 
 class LoginPage extends StatefulWidget {
@@ -46,7 +46,7 @@ class _LoginPageState extends State<LoginPage> {
       Future.delayed(const Duration(milliseconds: 500), () {
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (context) => const SubmitPestReportPage()),
+          MaterialPageRoute(builder: (context) => const MonitoringDashboard()),
         );
       });
     }
