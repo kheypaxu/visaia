@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:visaia/screens/login_screens/login.dart';
+import 'package:visaia/screens/auth/login_screen.dart';
 
 // Import only the screens you need
-import 'screens/login_screens/get_started.dart';
-import 'screens/login_screens/registration.dart';
+import 'package:visaia/screens/root_screen.dart';
+import 'package:visaia/screens/auth/get_started_screen.dart';
+import 'package:visaia/screens/auth/registration_screen.dart';
+import 'package:visaia/screens/monitoring/monitoring_dashboard_screen.dart';
 
 void main() {
   runApp(const MyApp());
@@ -25,7 +27,7 @@ class MyApp extends StatelessWidget {
       ),
       initialRoute: '/',
       routes: {
-        '/': (context) => const GetStartedPage(),
+        '/': (context) => const RootLayout(),
         '/register': (context) => const RegistrationPage(),
         '/login': (context) => const LoginPage(),
         
