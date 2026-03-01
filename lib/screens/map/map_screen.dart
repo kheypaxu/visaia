@@ -11,9 +11,10 @@ class MapViewScreen extends StatefulWidget {
 }
 
 class _MapViewScreenState extends State<MapViewScreen> {
-  // Coordinates for the farm (example location)
-  final LatLng _farmCenter = const LatLng(14.5995, 120.9842);
-  final LatLng _pestLocation = const LatLng(14.6015, 120.9880);
+  // Coordinates for farmlands in Pototan, Iloilo
+  // Pototan is known as the "Rice Granary of Iloilo"
+  final LatLng _farmCenter = const LatLng(10.9422, 122.6280); 
+  final LatLng _pestLocation = const LatLng(10.9450, 122.6320);
 
   bool _isSatellite = true;
 
@@ -25,7 +26,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
         FlutterMap(
           options: MapOptions(
             initialCenter: _farmCenter,
-            initialZoom: 16.5,
+            initialZoom: 15.0, // Zoomed slightly out to see more fields
             minZoom: 3.0,
             maxZoom: 19.0,
             interactionOptions: const InteractionOptions(
@@ -34,81 +35,77 @@ class _MapViewScreenState extends State<MapViewScreen> {
           ),
           children: [
             if (_isSatellite) ...[
-              // Optimized High-Performance Satellite Layer
               TileLayer(
                 urlTemplate: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
                 userAgentPackageName: 'com.visaia.app',
                 tileProvider: NetworkTileProvider(),
-                // Performance Tuning:
-                keepBuffer: 3, // Keeps tiles from previous zoom levels to prevent white flashes
+                keepBuffer: 3,
                 tileDisplay: const TileDisplay.fadeIn(duration: Duration(milliseconds: 300)),
               ),
-              // Consolidate Labels into a single, light overlay if needed, 
-              // or just keep base for maximum performance.
-              // We'll keep just Transportation for critical context to minimize lag.
               TileLayer(
                 urlTemplate: 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
                 userAgentPackageName: 'com.visaia.app',
                 keepBuffer: 1,
               ),
             ] else ...[
-              // Standard Street Map (Lightweight)
               TileLayer(
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.visaia.app',
                 keepBuffer: 2,
               ),
             ],
-            // Circular Overlays (Farm Boundary & Pest Zone)
+
+            // Circular Overlays (Iloilo Farm Boundary & Pest Zone)
             CircleLayer(
               circles: [
                 CircleMarker(
                   point: _farmCenter,
-                  radius: 180,
+                  radius: 350, // Increased radius for larger Iloilo fields
                   useRadiusInMeter: true,
-                  color: const Color(0xFF8DBA60).withOpacity(0.15),
+                  color: const Color(0xFF8DBA60).withValues(alpha: 0.15),
                   borderColor: const Color(0xFF8DBA60),
                   borderStrokeWidth: 2,
                 ),
                 CircleMarker(
                   point: _pestLocation,
-                  radius: 80,
+                  radius: 120,
                   useRadiusInMeter: true,
-                  color: Colors.red.withOpacity(0.3),
+                  color: Colors.red.withValues(alpha: 0.3),
                   borderColor: Colors.red,
                   borderStrokeWidth: 2,
                 ),
               ],
             ),
+
             // Markers
             MarkerLayer(
               markers: [
-                _buildMapMarker(_farmCenter, "Active Farm", const Color(0xFF00FF85)),
-                _buildMapMarker(_pestLocation, "Pest Outbreak", Colors.red),
+                _buildMapMarker(_farmCenter, "Pototan Rice Field", const Color(0xFF00FF85)),
+                _buildMapMarker(_pestLocation, "Armyworm Alert", Colors.red),
               ],
             ),
-            // Attribution Requirement
+
             const RichAttributionWidget(
               attributions: [
                 TextSourceAttribution(
-                  'Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+                  'Esri, Maxar, Earthstar Geographics, and Iloilo GIS Community',
                 ),
               ],
             ),
           ],
         ),
 
-        // 2. Floating Search Bar (Adjusted for floating header)
+        // 2. Floating Search Bar
         Positioned(
-          top: 140, // Moved down to avoid overlapping with "Field Explorer" header
+          top: 140,
           left: 20,
           right: 20,
           child: _buildSearchBar(),
         ),
         
-        // 3. Risk Map / Your Tasks Toggle Buttons
+        // 3. Map Type Toggle
         Positioned(
-          top: 205, // Moved down relative to search bar
+          top: 205,
           left: 0,
           right: 0,
           child: Row(
@@ -130,6 +127,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
     );
   }
 
+  // ... (Remainder of helper methods _buildMapMarker, _buildSearchBar, _buildPillButton remain the same)
   Marker _buildMapMarker(LatLng point, String label, Color color) {
     return Marker(
       point: point,
@@ -165,24 +163,24 @@ class _MapViewScreenState extends State<MapViewScreen> {
     return Container(
       height: 50,
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.4),
+        color: Colors.black.withValues(alpha: 0.4),
         borderRadius: BorderRadius.circular(25),
         border: Border.all(color: Colors.white24),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Row(
+      child: const Row(
         children: [
-          const Expanded(
+          Expanded(
             child: TextField(
               style: TextStyle(color: Colors.white, fontSize: 14),
               decoration: InputDecoration(
-                hintText: "Search fields, crops, or pests...",
+                hintText: "Search Iloilo fields...",
                 hintStyle: TextStyle(color: Colors.white54),
                 border: InputBorder.none,
               ),
             ),
           ),
-          const Icon(Icons.search, color: Colors.white54),
+          Icon(Icons.search, color: Colors.white54),
         ],
       ),
     );
@@ -192,7 +190,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
       decoration: BoxDecoration(
-        color: isPrimary ? const Color(0xFF8DBA60).withOpacity(0.8) : Colors.black.withOpacity(0.5),
+        color: isPrimary ? const Color(0xFF8DBA60).withValues(alpha: 0.8) : Colors.black.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.white24),
       ),
