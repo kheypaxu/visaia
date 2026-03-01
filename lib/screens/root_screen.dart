@@ -5,6 +5,35 @@ import 'package:visaia/widgets/custom_nav_bar.dart';
 import 'package:visaia/screens/monitoring/monitoring_dashboard_screen.dart';
 import 'package:visaia/screens/reporting/pest_report_submission_screen.dart';
 import 'package:visaia/screens/map/map_screen.dart';
+import 'package:visaia/screens/history/action_history_screen.dart';
+import 'package:visaia/screens/mitigation/mitigation_screen.dart';
+import 'package:visaia/screens/onboarding/onboarding_screens.dart';
+
+class VisaiaAppRoot extends StatefulWidget {
+  const VisaiaAppRoot({super.key});
+
+  @override
+  State<VisaiaAppRoot> createState() => _VisaiaAppRootState();
+}
+
+class _VisaiaAppRootState extends State<VisaiaAppRoot> {
+  bool _showOnboarding = true; // Set to true to start with onboarding
+
+  void _completeOnboarding() {
+    setState(() {
+      _showOnboarding = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_showOnboarding) {
+      // Pass the completion callback to your onboarding screen
+      return OnboardingScreen(onFinish: _completeOnboarding);
+    }
+    return const RootLayout();
+  }
+}
 
 class RootLayout extends StatefulWidget {
   const RootLayout({super.key});
@@ -14,7 +43,7 @@ class RootLayout extends StatefulWidget {
 }
 
 class _RootLayoutState extends State<RootLayout> {
-  int _selectedIndex = 2; // Default to MonitoringDashboard (Start Cycle)
+  int _selectedIndex = 2;
 
   final List<Map<String, dynamic>> _pages = [
     {
@@ -35,12 +64,12 @@ class _RootLayoutState extends State<RootLayout> {
     {
       'title': 'ACTION HISTORY',
       'label': 'Treatment Logs',
-      'widget': const Center(child: Text('History Content', style: TextStyle(color: Colors.white))),
+      'widget': const ActionHistoryScreen(),
     },
     {
       'title': 'MITIGATION HUB',
       'label': 'Risk Control',
-      'widget': const Center(child: Text('Mitigation Content', style: TextStyle(color: Colors.white))),
+      'widget': const MitigationProtocolScreen(),
     },
   ];
 
@@ -48,6 +77,14 @@ class _RootLayoutState extends State<RootLayout> {
     setState(() {
       _selectedIndex = index;
     });
+  }
+
+  String _capitalizeTitle(String text) {
+    if (text.isEmpty) return text;
+    return text.split(' ').map((word) {
+      if (word.isEmpty) return word;
+      return word[0].toUpperCase() + word.substring(1).toLowerCase();
+    }).join(' ');
   }
 
   @override
@@ -110,103 +147,142 @@ class _RootLayoutState extends State<RootLayout> {
     );
   }
 
-  Widget _buildDynamicHeader() {
+Widget _buildDynamicHeader() {
     final page = _pages[_selectedIndex];
-    
+
+    // Specialized Header for Map View (overlapping style)
     if (_selectedIndex == 0) {
       return Padding(
-        padding: const EdgeInsets.fromLTRB(28, 32, 28, 12),
+        padding: const EdgeInsets.fromLTRB(24, 32, 24, 12),
         child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    page['title'],
-                    style: GoogleFonts.inter(
-                      fontSize: 28,
-                      letterSpacing: 2,
-                      fontWeight: FontWeight.w900,
-                      color: Colors.white,
-                    ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  page['title'],
+                  style: GoogleFonts.inter(
+                    fontSize: 26,
+                    letterSpacing: 1.5,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white,
                   ),
-                  Text(
-                    page['label'],
-                    style: GoogleFonts.inter(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      color: const Color(0xFF8DBA60),
-                    ),
+                ),
+                Text(
+                  page['label'],
+                  style: GoogleFonts.inter(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF8DBA60),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-            _buildProfileBadge(),
+            _buildTopActionGroup(),
           ],
         ),
       );
     }
 
+    // Centered Header for all other screens
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-      child: Row(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+      child: Stack(
+        alignment: Alignment.center,
         children: [
-          GestureDetector(
-            onTap: () => setState(() => _selectedIndex = 0),
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              child: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 22),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              _capitalizeTitle(page['title']),
-              style: GoogleFonts.inter(
-                fontSize: 22,
-                fontWeight: FontWeight.w800,
-                color: Colors.white,
+          // Back Button (Left)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: GestureDetector(
+              onTap: () => setState(() => _selectedIndex = 2), // Navigate back to Dashboard
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.03),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 18),
               ),
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.more_horiz, color: Colors.white, size: 32),
-            onPressed: () {},
+
+          // Centered Title
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _capitalizeTitle(page['title']),
+                style: GoogleFonts.inter(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              if (page['label'] != null)
+                Text(
+                  page['label'].toString().toUpperCase(),
+                  style: GoogleFonts.inter(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF8DBA60),
+                    letterSpacing: 1.2,
+                  ),
+                ),
+            ],
+          ),
+
+          // Notification & Profile (Right)
+          Align(
+            alignment: Alignment.centerRight,
+            child: _buildTopActionGroup(),
           ),
         ],
       ),
     );
   }
 
-  String _capitalizeTitle(String text) {
-    if (text.isEmpty) return text;
-    return text.split(' ').map((word) {
-      if (word.isEmpty) return word;
-      return word[0].toUpperCase() + word.substring(1).toLowerCase();
-    }).join(' ');
-  }
-
-  Widget _buildProfileBadge() {
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.05),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
-      ),
-      child: const Row(
-        children: [
-          CircleAvatar(
-            radius: 16,
-            backgroundColor: Color(0xFF8DBA60),
-            child: Icon(Icons.person, color: Colors.black, size: 18),
+  Widget _buildTopActionGroup() {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Notification Icon with Badge
+        Stack(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.notifications_none_outlined, color: Colors.white70, size: 24),
+              onPressed: () {},
+            ),
+            Positioned(
+              right: 12,
+              top: 12,
+              child: Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF8DBA60),
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(width: 4),
+        // Profile Placeholder
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white.withValues(alpha: 0.1), width: 1.5),
+            image: const DecorationImage(
+              image: NetworkImage('https://via.placeholder.com/150'), // Placeholder
+              fit: BoxFit.cover,
+            ),
           ),
-          SizedBox(width: 8),
-          Icon(Icons.keyboard_arrow_down, color: Colors.white38, size: 16),
-          SizedBox(width: 4),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
