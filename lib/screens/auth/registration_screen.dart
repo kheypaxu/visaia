@@ -75,7 +75,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
             height: double.infinity,
             decoration: const BoxDecoration(
               image: DecorationImage(
-                image: AssetImage('assets/bg.png'),
+                image: AssetImage('assets/images/bg.png'),
                 fit: BoxFit.cover,
               ),
             ),
@@ -113,7 +113,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
                           Column(
                             children: [
                               Image.asset(
-                                'assets/logo.png',
+                                'assets/images/logo.png',
                                 width: 120,
                                 height: 120,
                               ),
