@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:visaia/screens/monitoring/monitoring_dashboard_screen.dart'; 
+import 'package:visaia/screens/onboarding/onboarding_screens.dart'; 
 import 'package:visaia/screens/auth/registration_screen.dart';
+import 'package:visaia/screens/root_screen.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({Key? key}) : super(key: key);
@@ -46,7 +47,14 @@ class _LoginPageState extends State<LoginPage> {
       Future.delayed(const Duration(milliseconds: 500), () {
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (context) => const MonitoringDashboard()),
+          MaterialPageRoute(builder: (context) => OnboardingScreen(
+            onFinish: () {
+              Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (context) => const RootLayout()),
+                );
+            },
+          )),
         );
       });
     }
@@ -71,7 +79,7 @@ class _LoginPageState extends State<LoginPage> {
             height: double.infinity,
             decoration: const BoxDecoration(
               image: DecorationImage(
-                image: AssetImage('assets/bg.png'),
+                image: AssetImage('assets/images/bg.png'),
                 fit: BoxFit.cover,
               ),
             ),
@@ -110,7 +118,7 @@ class _LoginPageState extends State<LoginPage> {
                           Column(
                             children: [
                               Image.asset(
-                                'assets/logo.png',
+                                'assets/images/logo.png',
                                 width: 120,
                                 height: 120,
                               ),
