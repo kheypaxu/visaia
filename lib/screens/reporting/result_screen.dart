@@ -1,7 +1,8 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:visaia/core/services/api_service.dart';
 import 'package:visaia/core/models/crop_type.dart';
@@ -22,18 +23,23 @@ class ResultPage extends StatefulWidget {
   _ResultPageState createState() => _ResultPageState();
 }
 
-class _ResultPageState extends State<ResultPage> with TickerProviderStateMixin {
-  late AnimationController _fadeController;
-  late Animation<double> _fadeAnimation;
+class _ResultPageState extends State<ResultPage> {
+  // Constants from your new layout style
+  static const Color bgDark = Color(0xFF102216);
+  static const Color errorRed = Color(0xFFE32525);
+  static const Color successGreen = Color(0xFF76CA22);
+  static const Color cardBg = Color(0xFF232C26);
+  static const Color greyText = Color(0xFF878787);
+  static const Color white = Color(0xFFFFFFFF);
+  static const Color primaryBtn = Color(0xFF8DBA60);
+
+  // Default location (Can be updated if your targetArea has coordinates)
+  final LatLng detectionLocation = const LatLng(14.5995, 120.9842);
 
   @override
   void initState() {
     super.initState();
-    _fadeController = AnimationController(duration: const Duration(milliseconds: 800), vsync: this);
-    _fadeAnimation = CurvedAnimation(parent: _fadeController, curve: Curves.easeIn);
-    _fadeController.forward();
-    
-    // Auto-save to farm area history if context exists
+    // Auto-save to history logic
     if (widget.targetArea != null) {
       widget.targetArea!.detectionHistory.add(PestDetection(
         id: DateTime.now().toString(),
@@ -46,292 +52,289 @@ class _ResultPageState extends State<ResultPage> with TickerProviderStateMixin {
   }
 
   @override
-  void dispose() {
-    _fadeController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF102216),
-      body: CustomScrollView(
-        physics: const BouncingScrollPhysics(),
-        slivers: [
-          _buildAppBar(),
-          SliverToBoxAdapter(
-            child: FadeTransition(
-              opacity: _fadeAnimation,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(height: 20),
-                    _buildImageSection(),
-                    const SizedBox(height: 32),
-                    _buildIdentityCard(),
-                    const SizedBox(height: 24),
-                    _buildRiskDashboard(),
-                    const SizedBox(height: 24),
-                    _buildAnalysisSummary(),
-                    const SizedBox(height: 48),
-                    _buildActionFooter(),
-                    const SizedBox(height: 60),
-                  ],
-                ),
-              ),
-            ),
+      backgroundColor: bgDark,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        centerTitle: true,
+        title: Text(
+          "Analysis Result",
+          style: GoogleFonts.inter(color: white, fontWeight: FontWeight.bold),
+        ),
+        leading: IconButton(
+          icon: const Icon(Icons.chevron_left, color: white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.share_outlined, color: white),
+            onPressed: () => Share.share(
+                'Diagnostic Report: ${widget.result.pestName} identified with ${widget.result.riskLevel} risk.'),
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildAppBar() {
-    return SliverAppBar(
-      expandedHeight: 120,
-      pinned: true,
-      backgroundColor: const Color(0xFF102216),
-      elevation: 0,
-      leading: IconButton(
-        icon: const Icon(Icons.close_rounded, color: Colors.white),
-        onPressed: () => Navigator.pop(context),
-      ),
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.share_rounded, color: Color(0xFF8DBA60)),
-          onPressed: () => Share.share('Diagnostic Report: ${widget.result.pestName} at ${widget.result.lifeStage} stage.'),
+      body: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        child: Column(
+          children: [
+            _buildImageSection(),
+            _buildIdentifiedPestCard(),
+            _buildMapSection(),
+            _buildActionButtons(),
+            const SizedBox(height: 40),
+          ],
         ),
-        const SizedBox(width: 8),
-      ],
-      flexibleSpace: FlexibleSpaceBar(
-        centerTitle: true,
-        title: Text('Diagnostic Report', 
-          style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 18, color: Colors.white)),
       ),
     );
   }
 
   Widget _buildImageSection() {
-    return Container(
-      height: 320,
-      width: double.infinity,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(32),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 30, offset: const Offset(0, 15))],
-      ),
+    return Padding(
+      padding: const EdgeInsets.all(20.0),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(32),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final width = constraints.maxWidth;
-            final height = constraints.maxHeight;
-            return Stack(
-              fit: StackFit.expand,
-              children: [
-                Image.file(widget.image, fit: BoxFit.fill),
-                Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                      colors: [Colors.transparent, Colors.black.withValues(alpha: 0.7)],
-                      stops: const [0.6, 1.0],
-                    ),
-                  ),
-                ),
-                ...widget.result.boxes.map((box) => _buildBoundingBox(box, width, height)),
-                _buildAnalyzedBadge(),
-              ],
-            );
-          },
+        borderRadius: BorderRadius.circular(25),
+        child: Container(
+          height: 250,
+          width: double.infinity,
+          color: cardBg,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.file(widget.image, fit: BoxFit.cover),
+              // Render AI Bounding Boxes over the image
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  return Stack(
+                    children: widget.result.boxes.map((box) {
+                      final color = box.className.toLowerCase().contains('larva') ? errorRed : successGreen;
+                      return Positioned(
+                        left: box.x * constraints.maxWidth,
+                        top: box.y * constraints.maxHeight,
+                        width: box.width * constraints.maxWidth,
+                        height: box.height * constraints.maxHeight,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            border: Border.all(color: color, width: 2),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  );
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildBoundingBox(BoundingBox box, double cw, double ch) {
-    final color = box.className.toLowerCase().contains('larva') ? Colors.redAccent : const Color(0xFF8DBA60);
-    return Positioned(
-      left: box.x * cw, top: box.y * ch, width: box.width * cw, height: box.height * ch,
-      child: Container(
-        decoration: BoxDecoration(border: Border.all(color: color, width: 2), borderRadius: BorderRadius.circular(6)),
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Positioned(
-              top: -22, left: -2,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(4)),
-                child: Text(
-                  "${box.className} ${(box.confidence * 100).toStringAsFixed(0)}%",
-                  style: GoogleFonts.inter(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+  Widget _buildIdentifiedPestCard() {
+    final bool isHighRisk = widget.result.riskLevel.toLowerCase() == 'high';
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: cardBg,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text("Identified Pest", style: TextStyle(color: greyText, fontSize: 14)),
+                  Text(
+                    widget.result.pestName,
+                    style: const TextStyle(color: white, fontSize: 26, fontWeight: FontWeight.bold),
+                  ),
+                  const Text(
+                    "Spodoptera frugiperda", // Scientific name placeholder
+                    style: TextStyle(color: greyText, fontStyle: FontStyle.italic, fontSize: 14),
+                  ),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: const BoxDecoration(color: bgDark, shape: BoxShape.circle),
+                child: const Icon(Icons.pest_control, color: primaryBtn, size: 28),
+              )
+            ],
+          ),
+          const SizedBox(height: 20),
+          const Divider(color: Colors.white10, thickness: 1),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text("Life Stage", style: TextStyle(color: greyText)),
+                    Text(
+                      widget.result.lifeStage.isEmpty ? "Larvae" : widget.result.lifeStage,
+                      style: const TextStyle(color: white, fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                  ],
                 ),
               ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAnalyzedBadge() {
-    return Positioned(
-      top: 20, right: 20,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.9),
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 10)],
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.verified_rounded, color: Colors.green[700], size: 16),
-            const SizedBox(width: 8),
-            Text('Validated', style: GoogleFonts.inter(color: Colors.black, fontSize: 11, fontWeight: FontWeight.bold)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildIdentityCard() {
-    final isFAW = widget.result.pestName.toLowerCase().contains('fall army');
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.03),
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: (isFAW ? Colors.redAccent : const Color(0xFF8DBA60)).withValues(alpha: 0.1),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(isFAW ? Icons.warning_rounded : Icons.bug_report_rounded, 
-              color: isFAW ? Colors.redAccent : const Color(0xFF8DBA60), size: 32),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text("Risk Level", style: TextStyle(color: greyText)),
+                    Row(
+                      children: [
+                        Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: isHighRisk ? errorRed : successGreen,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          widget.result.riskLevel,
+                          style: TextStyle(
+                            color: isHighRisk ? errorRed : successGreen,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 20),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('IDENTIFIED SPECIES', 
-                  style: GoogleFonts.inter(letterSpacing: 2, fontSize: 10, fontWeight: FontWeight.w900, color: Colors.white38)),
-                Text(widget.result.pestName, 
-                  style: GoogleFonts.inter(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800)),
-                if (widget.result.lifeStage.isNotEmpty)
-                  Text('Phase: ${widget.result.lifeStage}', 
-                    style: GoogleFonts.inter(color: const Color(0xFF8DBA60), fontSize: 13, fontWeight: FontWeight.w600)),
-              ],
-            ),
+          const SizedBox(height: 25),
+          const Row(
+            children: [
+              Icon(Icons.grid_view_rounded, color: successGreen, size: 20),
+              SizedBox(width: 8),
+              Text("Analysis Content", style: TextStyle(color: white, fontWeight: FontWeight.bold, fontSize: 16)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            widget.result.explanation,
+            style: const TextStyle(color: greyText, fontSize: 14, height: 1.4),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildRiskDashboard() {
-    final riskColor = _getRiskColor(widget.result.riskLevel);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('THREAT ASSESSMENT', 
-          style: GoogleFonts.inter(letterSpacing: 2, fontSize: 10, fontWeight: FontWeight.w900, color: Colors.white38)),
-        const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: riskColor.withValues(alpha: 0.05),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: riskColor.withValues(alpha: 0.2)),
-          ),
-          child: Column(
+  Widget _buildMapSection() {
+    return Container(
+      margin: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: cardBg,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('Risk Index', style: GoogleFonts.inter(color: Colors.white70, fontSize: 14)),
-                  Text(widget.result.riskLevel, 
-                    style: GoogleFonts.inter(color: riskColor, fontWeight: FontWeight.w800, fontSize: 18)),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Stack(
-                children: [
-                  Container(height: 8, decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.05), borderRadius: BorderRadius.circular(10))),
-                  FractionallySizedBox(
-                    widthFactor: _getRiskLevelFactor(widget.result.riskLevel),
-                    child: Container(
-                      height: 8,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(colors: [riskColor.withValues(alpha: 0.4), riskColor]),
-                        borderRadius: BorderRadius.circular(10),
+                  const Icon(Icons.map_outlined, color: white),
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text("GIS Location", style: TextStyle(color: greyText, fontSize: 12)),
+                      Text(
+                        widget.targetArea?.name ?? "Current Field Location",
+                        style: const TextStyle(color: white, fontWeight: FontWeight.bold),
                       ),
-                    ),
+                    ],
                   ),
                 ],
               ),
+              TextButton(
+                onPressed: () {},
+                child: const Text("View Map", style: TextStyle(color: greyText)),
+              )
             ],
           ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildAnalysisSummary() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('NEURAL INSIGHTS', 
-          style: GoogleFonts.inter(letterSpacing: 2, fontSize: 10, fontWeight: FontWeight.w900, color: Colors.white38)),
-        const SizedBox(height: 16),
-        Text(
-          widget.result.explanation,
-          style: GoogleFonts.inter(color: Colors.white70, fontSize: 15, height: 1.6),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildActionFooter() {
-    return SizedBox(
-      width: double.infinity,
-      height: 64,
-      child: ElevatedButton(
-        onPressed: () => Navigator.pop(context),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF8DBA60),
-          foregroundColor: Colors.black,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        ),
-        child: Text('DISMISS REPORT', 
-          style: GoogleFonts.inter(fontWeight: FontWeight.w900, fontSize: 14, letterSpacing: 1.5)),
+          const SizedBox(height: 15),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(15),
+            child: SizedBox(
+              height: 160,
+              width: double.infinity,
+              child: FlutterMap(
+                options: MapOptions(
+                  initialCenter: detectionLocation,
+                  initialZoom: 14.0,
+                  interactionOptions: const InteractionOptions(flags: InteractiveFlag.none),
+                ),
+                children: [
+                  TileLayer(
+                    urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    userAgentPackageName: 'com.visaia.app',
+                  ),
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: detectionLocation,
+                        width: 40,
+                        height: 40,
+                        child: const Icon(Icons.location_on, color: errorRed, size: 40),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          )
+        ],
       ),
     );
   }
 
-  Color _getRiskColor(String risk) {
-    switch (risk.toLowerCase()) {
-      case 'high': return Colors.redAccent;
-      case 'medium': return Colors.orangeAccent;
-      case 'low': return const Color(0xFF8DBA60);
-      default: return Colors.blueAccent;
-    }
-  }
-
-  double _getRiskLevelFactor(String risk) {
-    switch (risk.toLowerCase()) {
-      case 'high': return 0.9;
-      case 'medium': return 0.5;
-      case 'low': return 0.25;
-      default: return 0.1;
-    }
+  Widget _buildActionButtons() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Column(
+        children: [
+          SizedBox(
+            width: double.infinity,
+            height: 55,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: primaryBtn,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () {
+                // Logic for risk mapping
+              },
+              child: const Text(
+                "Proceed Risk Mapping",
+                style: TextStyle(color: bgDark, fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Dismiss Report", style: TextStyle(color: greyText, fontSize: 16)),
+          ),
+        ],
+      ),
+    );
   }
 }

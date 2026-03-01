@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart';
@@ -21,7 +20,6 @@ class SubmitPestReportPage extends StatefulWidget {
 }
 
 class _SubmitPestReportPageState extends State<SubmitPestReportPage> {
-  final _formKey = GlobalKey<FormState>();
   final _locationController = TextEditingController();
   final _dateTimeController = TextEditingController();
 
@@ -121,27 +119,6 @@ class _SubmitPestReportPageState extends State<SubmitPestReportPage> {
         if (_isAnalyzing) const AnalysisLoadingOverlay(),
       ],
     );
-
-    if (isStandalone) {
-      return Scaffold(
-        backgroundColor: const Color(0xFF102216),
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back_ios, color: Colors.white, size: 20),
-            onPressed: () => Navigator.pop(context),
-          ),
-          title: Text(
-            widget.targetArea != null ? 'AREA SCRUTINY' : 'PEST ANALYSIS',
-            style: GoogleFonts.inter(fontSize: 12, letterSpacing: 2, fontWeight: FontWeight.w900, color: const Color(0xFF8DBA60)),
-          ),
-          centerTitle: true,
-        ),
-        body: SafeArea(child: content),
-      );
-    }
-
     return content;
   }
 
