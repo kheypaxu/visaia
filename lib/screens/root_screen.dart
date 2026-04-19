@@ -168,10 +168,6 @@ class _RootLayoutState extends State<RootLayout>
                   ),
                   onPressed: () {},
                 ),
-                const CircleAvatar(
-                  backgroundColor: Color(0xFFA6C9A2),
-                  child: Icon(Icons.person, color: Colors.white),
-                ),
                 const SizedBox(width: 16),
               ],
             ),
