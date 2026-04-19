@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:visaia/screens/auth/login_screen.dart'; 
+import 'package:visaia/screens/auth/veri_form.dart';
+import 'package:visaia/services/auth_service.dart';
 
 class RegistrationPage extends StatefulWidget {
   const RegistrationPage({Key? key}) : super(key: key);
@@ -27,6 +29,9 @@ class _RegistrationPageState extends State<RegistrationPage> {
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
 
+  final AuthService _authService = AuthService();
+  bool _isLoading = false;
+
   @override
   void dispose() {
     _nameController.dispose();
@@ -36,16 +41,44 @@ class _RegistrationPageState extends State<RegistrationPage> {
     super.dispose();
   }
 
-  void _register() {
+  void _register() async {
     if (_formKey.currentState!.validate() && _agreeToTerms) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Registration Successful!'),
-          backgroundColor: Color(0xFF4CAF50),
-        ),
-      );
-      // Navigate back to the Get Started page after successful registration
-      Navigator.pushReplacementNamed(context, '/');
+      setState(() {
+        _isLoading = true;
+      });
+
+      try {
+        await _authService.signUpWithEmailAndPassword(
+          _emailController.text.trim(),
+          _passwordController.text.trim(),
+        );
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Account created. Please complete verification.'),
+            backgroundColor: Color(0xFF8DBA60),
+          ),
+        );
+
+        // Navigate to verification form
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const VerificationFormScreen(),
+          ),
+        );
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString().replaceAll('Exception: ', '')),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      } finally {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     } else if (!_agreeToTerms) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -137,31 +170,6 @@ class _RegistrationPageState extends State<RegistrationPage> {
                             ],
                           ),
                           const SizedBox(height: 60),
-
-                          TextFormField(
-                            controller: _nameController,
-                            style: const TextStyle(color: Colors.white),
-                            decoration: InputDecoration(
-                              labelText: 'Full Name',
-                              labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
-                              prefixIcon: const Icon(Icons.person, color: Color(0xFF8DBA60)),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12.0),
-                                borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12.0),
-                                borderSide: const BorderSide(color: Color(0xFF8DBA60)),
-                              ),
-                            ),
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Please enter your full name';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 16),
 
                           // Email Field
                           TextFormField(
@@ -306,21 +314,30 @@ class _RegistrationPageState extends State<RegistrationPage> {
                             width: double.infinity,
                             height: 50,
                             child: ElevatedButton(
-                              onPressed: _register,
+                              onPressed: _isLoading ? null : _register,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color(0xFF8DBA60),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(30),
                                 ),
                               ),
-                              child: Text(
-                                'Register',
-                                style: GoogleFonts.inter(
-                                  color: Colors.black,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                              child: _isLoading
+                                  ? const SizedBox(
+                                      height: 24,
+                                      width: 24,
+                                      child: CircularProgressIndicator(
+                                        color: Colors.black,
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : Text(
+                                      'Register',
+                                      style: GoogleFonts.inter(
+                                        color: Colors.black,
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
                             ),
                           ),
                           const SizedBox(height: 16),

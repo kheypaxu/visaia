@@ -27,11 +27,15 @@ class _SubmitPestReportPageState extends State<SubmitPestReportPage> {
   final ImagePicker _picker = ImagePicker();
   bool _isAnalyzing = false;
 
+  // Added variables to store raw coordinates for the ResultPage mapping
+  double? _lat;
+  double? _lng;
+
   @override
   void initState() {
     super.initState();
     _getCurrentDateTime();
-    _getCurrentLocation();
+    _handleLocationPermission();
   }
 
   @override
@@ -41,21 +45,56 @@ class _SubmitPestReportPageState extends State<SubmitPestReportPage> {
     super.dispose();
   }
 
-  Future<void> _pickImage() async {
-    final XFile? pickedFile = await _picker.pickImage(source: ImageSource.gallery);
-    if (pickedFile != null) {
-      setState(() => _image = File(pickedFile.path));
+  // Ensures we have permission before trying to get coordinates
+  Future<void> _handleLocationPermission() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      setState(() => _locationController.text = 'Location services disabled');
+      return;
     }
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        setState(() => _locationController.text = 'Permission denied');
+        return;
+      }
+    }
+    
+    if (permission == LocationPermission.deniedForever) {
+      setState(() => _locationController.text = 'Permissions permanently denied');
+      return;
+    }
+
+    _getCurrentLocation();
   }
 
   Future<void> _getCurrentLocation() async {
     try {
-      Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-      List<Placemark> placemarks = await placemarkFromCoordinates(position.latitude, position.longitude);
+      Position position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high);
+      
+      // Store raw coordinates
+      setState(() {
+        _lat = position.latitude;
+        _lng = position.longitude;
+      });
+
+      List<Placemark> placemarks = await placemarkFromCoordinates(
+          position.latitude, position.longitude);
       Placemark place = placemarks[0];
-      setState(() => _locationController.text = "${place.locality}, ${place.country}");
+      
+      if (mounted) {
+        setState(() => _locationController.text = "${place.locality}, ${place.country}");
+      }
     } catch (e) {
-      setState(() => _locationController.text = 'Location Detection Pending...');
+      if (mounted) {
+        setState(() => _locationController.text = 'Location Detection Pending...');
+      }
     }
   }
 
@@ -64,62 +103,102 @@ class _SubmitPestReportPageState extends State<SubmitPestReportPage> {
     setState(() => _dateTimeController.text = DateFormat('MMM d, y • h:mm a').format(now));
   }
 
-  Future<void> _submitForAnalysis() async {
-    if (_image == null) return;
-    setState(() => _isAnalyzing = true);
-    try {
-      final result = await ApiService.sendImage(_image!);
-      if (mounted) {
-        setState(() => _isAnalyzing = false);
-        Navigator.push(context, MaterialPageRoute(builder: (_) => ResultPage(
-          image: _image!, 
-          result: result,
-          targetArea: widget.targetArea,
-        )));
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isAnalyzing = false);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Analysis Link Error: $e"), backgroundColor: Colors.redAccent));
-      }
+  Future<void> _pickImage() async {
+    final XFile? pickedFile = await _picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 85, // Lightweight pre-compression
+    );
+    if (pickedFile != null) {
+      setState(() => _image = File(pickedFile.path));
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    // Check if we are being pushed (standalone) or displayed in RootLayout
-    final bool isStandalone = ModalRoute.of(context)?.canPop ?? false;
-
-    Widget content = Stack(
-      children: [
-        // Background Glows (For Standalone)
-        if (isStandalone) ...[
-          Positioned(top: -150, left: -100, child: _buildBlurCircle(300, const Color(0xFF8DBA60).withValues(alpha: 0.03))),
-          Positioned(bottom: 50, right: -100, child: _buildBlurCircle(400, const Color(0xFF2E8B57).withValues(alpha: 0.05))),
-        ],
-        CustomScrollView(
-          physics: const BouncingScrollPhysics(),
-          slivers: [
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 28),
-              sliver: SliverList(
-                delegate: SliverChildListDelegate([
-                  const SizedBox(height: 20),
-                  _buildUploadCard(),
-                  const SizedBox(height: 32),
-                  _buildMetadataSection(),
-                  const SizedBox(height: 48),
-                  if (_image != null) _buildControlPanel(),
-                  const SizedBox(height: 60),
-                ]),
+  Future<void> _submitForAnalysis() async {
+      if (_image == null) return;
+      
+      setState(() => _isAnalyzing = true);
+      
+      try {
+        // 1. Send the image to your API
+        final result = await ApiService.sendImage(_image!);
+        
+        if (mounted) {
+          setState(() => _isAnalyzing = false);
+          
+          // 2. Push the ResultPage onto the stack
+          // We don't need popUntil(isFirst) in the ResultPage anymore; 
+          // a simple Navigator.pop(context) there will bring the user back here.
+          Navigator.push(
+            context, 
+            MaterialPageRoute(
+              builder: (_) => ResultPage(
+                image: _image!, 
+                result: result,
+                targetArea: widget.targetArea,
+                latitude: _lat ?? 14.5995, 
+                longitude: _lng ?? 120.9842,
               ),
             ),
+          ).then((_) {
+            // 3. RESET LOGIC: This runs when the user comes back from ResultPage.
+            // We clear the image so the "Capture Specimen" UI shows up again.
+            if (mounted) {
+              setState(() {
+                _image = null;
+              });
+            }
+          });
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() => _isAnalyzing = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text("Analysis Link Error: $e"), 
+              backgroundColor: Colors.redAccent,
+              behavior: SnackBarBehavior.floating, // Matches your style
+            ),
+          );
+        }
+      }
+    }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isStandalone = ModalRoute.of(context)?.canPop ?? false;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF102216), // Matching your dark theme
+      body: Stack(
+        children: [
+          // Background Glows
+          if (isStandalone) ...[
+            Positioned(top: -150, left: -100, child: _buildBlurCircle(300, const Color(0xFF8DBA60).withOpacity(0.03))),
+            Positioned(bottom: 50, right: -100, child: _buildBlurCircle(400, const Color(0xFF2E8B57).withOpacity(0.05))),
           ],
-        ),
-        if (_isAnalyzing) const AnalysisLoadingOverlay(),
-      ],
+          CustomScrollView(
+            physics: const BouncingScrollPhysics(),
+            slivers: [
+              SliverPadding(
+                padding: const EdgeInsets.symmetric(horizontal: 28),
+                sliver: SliverList(
+                  delegate: SliverChildListDelegate([
+                    const SizedBox(height: 60), // Space for top area
+                    _buildUploadCard(),
+                    const SizedBox(height: 32),
+                    _buildMetadataSection(),
+                    const SizedBox(height: 48),
+                    if (_image != null) _buildControlPanel(),
+                    const SizedBox(height: 60),
+                  ]),
+                ),
+              ),
+            ],
+          ),
+          if (_isAnalyzing) const AnalysisLoadingOverlay(),
+        ],
+      ),
     );
-    return content;
   }
 
   Widget _buildBlurCircle(double size, Color color) {
@@ -140,9 +219,9 @@ class _SubmitPestReportPageState extends State<SubmitPestReportPage> {
         height: 380,
         width: double.infinity,
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.02),
+          color: Colors.white.withOpacity(0.02),
           borderRadius: BorderRadius.circular(32),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.05), width: 1.5),
+          border: Border.all(color: Colors.white.withOpacity(0.05), width: 1.5),
         ),
         child: _image != null
             ? ClipRRect(
@@ -154,13 +233,18 @@ class _SubmitPestReportPageState extends State<SubmitPestReportPage> {
                 children: [
                   Container(
                     padding: const EdgeInsets.all(24),
-                    decoration: BoxDecoration(color: const Color(0xFF8DBA60).withValues(alpha: 0.1), shape: BoxShape.circle),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF8DBA60).withOpacity(0.1), 
+                      shape: BoxShape.circle
+                    ),
                     child: const Icon(Icons.camera_enhance_rounded, size: 48, color: Color(0xFF8DBA60)),
                   ),
                   const SizedBox(height: 24),
-                  Text('Capture Specimen', style: GoogleFonts.inter(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
+                  Text('Capture Specimen', 
+                    style: GoogleFonts.inter(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
                   const SizedBox(height: 8),
-                  Text('High-resolution macro recommended', style: GoogleFonts.inter(color: Colors.white38, fontSize: 13)),
+                  Text('High-resolution macro recommended', 
+                    style: GoogleFonts.inter(color: Colors.white38, fontSize: 13)),
                 ],
               ),
       ),
@@ -187,20 +271,25 @@ class _SubmitPestReportPageState extends State<SubmitPestReportPage> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.02),
+        color: Colors.white.withOpacity(0.02),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
       ),
       child: Row(
         children: [
           Icon(icon, color: const Color(0xFF8DBA60), size: 20),
           const SizedBox(width: 16),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: GoogleFonts.inter(color: Colors.white24, fontSize: 11)),
-              Text(value, style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-            ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: GoogleFonts.inter(color: Colors.white24, fontSize: 11)),
+                Text(value, 
+                  style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -211,9 +300,9 @@ class _SubmitPestReportPageState extends State<SubmitPestReportPage> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: const Color(0xFF8DBA60).withValues(alpha: 0.03),
+        color: const Color(0xFF8DBA60).withOpacity(0.03),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFF8DBA60).withValues(alpha: 0.1)),
+        border: Border.all(color: const Color(0xFF8DBA60).withOpacity(0.1)),
       ),
       child: Row(
         children: [

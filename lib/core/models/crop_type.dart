@@ -58,7 +58,7 @@ class FarmArea {
   double health; // 0.0 to 1.0
   double growthProgress; // 0.0 to 1.0
   DateTime? plantingDate;
-  bool isLarge;
+  double hectares; // Size of the area in hectares
   List<MonitoringTask> tasks;
   List<PestDetection> detectionHistory;
 
@@ -70,11 +70,15 @@ class FarmArea {
     this.health = 1.0,
     this.growthProgress = 0.0,
     this.plantingDate,
-    this.isLarge = false,
+    this.hectares = 0.0, // Default to 0.0 hectares
     List<MonitoringTask>? tasks,
     List<PestDetection>? detectionHistory,
   }) : tasks = tasks ?? [],
        detectionHistory = detectionHistory ?? [];
+
+  /// Determines if the farm area should be displayed as a large tile.
+  /// An area is considered large if it is greater than 2.0 hectares.
+  bool get isLarge => hectares > 2.0;
 
   bool get isPlanted => crop != Crop.unknown;
 }

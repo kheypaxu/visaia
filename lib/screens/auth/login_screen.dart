@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:visaia/screens/onboarding/onboarding_screens.dart'; 
 import 'package:visaia/screens/auth/registration_screen.dart';
-import 'package:visaia/screens/root_screen.dart';
+import 'package:visaia/services/auth_service.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({Key? key}) : super(key: key);
@@ -23,6 +22,9 @@ class _LoginPageState extends State<LoginPage> {
   // Password visibility state
   bool _obscurePassword = true;
 
+  final AuthService _authService = AuthService();
+  bool _isLoading = false;
+
   @override
   void dispose() {
     _emailController.dispose();
@@ -31,32 +33,50 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   // STEP 2: Update the _login method to navigate
-  void _login() {
+  void _login() async {
     if (_formKey.currentState!.validate()) {
-      // Show a success message
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Login Successful!'),
-          backgroundColor: Color(0xFF8DBA60),
-          duration: Duration(seconds: 1), // Shorter duration for better UX
-        ),
-      );
-
-      // Navigate to the Pest Report Submission page after a short delay
-      // This allows the SnackBar to be visible before the screen changes
-      Future.delayed(const Duration(milliseconds: 500), () {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => OnboardingScreen(
-            onFinish: () {
-              Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(builder: (context) => const RootLayout()),
-                );
-            },
-          )),
-        );
+      setState(() {
+        _isLoading = true;
       });
+
+      try {
+        await _authService.signInWithEmailAndPassword(
+          _emailController.text.trim(),
+          _passwordController.text.trim(),
+        );
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Login Successful!'),
+              backgroundColor: Color(0xFF8DBA60),
+              duration: Duration(seconds: 1),
+            ),
+          );
+
+          // We navigate back to root or to AuthGate after login. Given the app flow, 
+          // onboarding can still trigger, or we can just navigate to the app root using AuthGate.
+          Future.delayed(const Duration(milliseconds: 500), () {
+            Navigator.pushReplacementNamed(context, '/auth-gate');
+          });
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(e.toString().replaceAll('Exception: ', '')),
+              backgroundColor: Colors.redAccent,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+      }
     }
   }
 
@@ -234,21 +254,30 @@ class _LoginPageState extends State<LoginPage> {
                             width: double.infinity,
                             height: 50,
                             child: ElevatedButton(
-                              onPressed: _login,
+                              onPressed: _isLoading ? null : _login,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color(0xFF8DBA60),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(30),
                                 ),
                               ),
-                              child: Text(
-                                'Login',
-                                style: GoogleFonts.inter(
-                                  color: Colors.black,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                              child: _isLoading
+                                  ? const SizedBox(
+                                      height: 24,
+                                      width: 24,
+                                      child: CircularProgressIndicator(
+                                        color: Colors.black,
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : Text(
+                                      'Login',
+                                      style: GoogleFonts.inter(
+                                        color: Colors.black,
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
                             ),
                           ),
                           const SizedBox(height: 16),

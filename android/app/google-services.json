@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "838623846602",
+    "project_id": "visaia",
+    "storage_bucket": "visaia.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:838623846602:android:dc739efe9097ec1d895433",
+        "android_client_info": {
+          "package_name": "com.example.visaia"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCmXNJZaZlceU3bjiAAZNfk_Xz-A2lJ24U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

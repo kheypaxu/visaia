@@ -1,21 +1,29 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:image/image.dart' as img;
 import 'package:visaia/core/services/api_service.dart';
 import 'package:visaia/core/models/crop_type.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class ResultPage extends StatefulWidget {
   final File image;
   final AnalysisResult result;
   final FarmArea? targetArea;
+  final double latitude;
+  final double longitude;
 
   const ResultPage({
     Key? key,
     required this.image,
     required this.result,
+    required this.latitude,
+    required this.longitude,
     this.targetArea,
   }) : super(key: key);
 
@@ -24,7 +32,6 @@ class ResultPage extends StatefulWidget {
 }
 
 class _ResultPageState extends State<ResultPage> {
-  // Constants from your new layout style
   static const Color bgDark = Color(0xFF102216);
   static const Color errorRed = Color(0xFFE32525);
   static const Color successGreen = Color(0xFF76CA22);
@@ -33,22 +40,107 @@ class _ResultPageState extends State<ResultPage> {
   static const Color white = Color(0xFFFFFFFF);
   static const Color primaryBtn = Color(0xFF8DBA60);
 
-  // Default location (Can be updated if your targetArea has coordinates)
-  final LatLng detectionLocation = const LatLng(14.5995, 120.9842);
+  late LatLng detectionLocation;
 
   @override
   void initState() {
     super.initState();
-    // Auto-save to history logic
+    // Initialize map position from passed coordinates
+    detectionLocation = LatLng(widget.latitude, widget.longitude);
+    
+    // Log detection to local history if target area exists
     if (widget.targetArea != null) {
       widget.targetArea!.detectionHistory.add(PestDetection(
-        id: DateTime.now().toString(),
+        id: DateTime.now().toIso8601String(),
         label: widget.result.pestName,
         confidence: widget.result.boxes.isNotEmpty ? widget.result.boxes.first.confidence : 0.9,
         timestamp: DateTime.now(),
         imageUrl: widget.image.path,
       ));
     }
+  }
+
+  Future<void> _submitReportToExpert() async {
+    try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(color: primaryBtn),
+        ),
+      );
+
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw Exception("User not logged in");
+
+      final farmerDoc = await FirebaseFirestore.instance.collection('farmers').doc(user.uid).get();
+      final String fullName = farmerDoc.data()?['fullName'] ?? "Unknown Farmer";
+
+      // 1. Process and Compress Image for Firestore compatibility
+      final bytes = await widget.image.readAsBytes();
+      img.Image? decoded = img.decodeImage(bytes);
+      
+      if (decoded == null) throw Exception("Image processing failed");
+
+      // Resize to 500px width and use 50% quality to ensure stay well under 1MB
+      img.Image resized = img.copyResize(decoded, width: 500);
+      String base64Image = base64Encode(img.encodeJpg(resized, quality: 50));
+
+      // Update your reportData in Flutter to be consistent
+      Map<String, dynamic> reportData = {
+        'farmerId': user.uid,
+        'farmerName': fullName,
+        'detection': widget.result.pestName, // Rename from 'pestName' to 'detection'
+        'scientificName': "Spodoptera frugiperda",
+        'lifeStage': widget.result.lifeStage.isNotEmpty ? widget.result.lifeStage : "N/A",
+        'risk': widget.result.riskLevel,    
+        'explanation': widget.result.explanation,
+        'imageBase64': base64Image,
+        'status': 'pending',
+        'timestamp': FieldValue.serverTimestamp(),
+        'location': {
+          'lat': widget.latitude,
+          'lng': widget.longitude,
+          'areaName': widget.targetArea?.name ?? "General Field",
+        },
+        'confidence': widget.result.boxes.isNotEmpty ? widget.result.boxes.first.confidence : 0.0,
+      };
+
+      // 3. Save to Cloud Firestore
+      await FirebaseFirestore.instance.collection('reports').add(reportData);
+
+      if (mounted) {
+        Navigator.pop(context); // Close loading dialog
+        _showSuccessNotification();
+      }
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Cloud Sync Failed: $e"), backgroundColor: errorRed),
+      );
+    }
+  }
+
+  void _showSuccessNotification() {
+    // 1. Just pop once to get out of the ResultPage back to the SubmitPestReportPage
+    Navigator.of(context).pop();
+
+    // 2. Show the Success Snackbar
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: const [
+            Icon(Icons.check_circle_outline, color: Colors.white),
+            SizedBox(width: 12),
+            Text("Report successfully sent to DA!"),
+          ],
+        ),
+        backgroundColor: const Color(0xFF76CA22),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(20),
+      ),
+    );
   }
 
   @override
@@ -71,7 +163,7 @@ class _ResultPageState extends State<ResultPage> {
           IconButton(
             icon: const Icon(Icons.share_outlined, color: white),
             onPressed: () => Share.share(
-                'Diagnostic Report: ${widget.result.pestName} identified with ${widget.result.riskLevel} risk.'),
+                'Visaia Report: ${widget.result.pestName} detected at ${widget.latitude}, ${widget.longitude}'),
           ),
         ],
       ),
@@ -103,7 +195,6 @@ class _ResultPageState extends State<ResultPage> {
             fit: StackFit.expand,
             children: [
               Image.file(widget.image, fit: BoxFit.cover),
-              // Render AI Bounding Boxes over the image
               LayoutBuilder(
                 builder: (context, constraints) {
                   return Stack(
@@ -157,7 +248,7 @@ class _ResultPageState extends State<ResultPage> {
                     style: const TextStyle(color: white, fontSize: 26, fontWeight: FontWeight.bold),
                   ),
                   const Text(
-                    "Spodoptera frugiperda", // Scientific name placeholder
+                    "Spodoptera frugiperda",
                     style: TextStyle(color: greyText, fontStyle: FontStyle.italic, fontSize: 14),
                   ),
                 ],
@@ -165,7 +256,7 @@ class _ResultPageState extends State<ResultPage> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: const BoxDecoration(color: bgDark, shape: BoxShape.circle),
-                child: const Icon(Icons.pest_control, color: primaryBtn, size: 28),
+                child: const Icon(Icons.biotech_rounded, color: primaryBtn, size: 28),
               )
             ],
           ),
@@ -194,21 +285,13 @@ class _ResultPageState extends State<ResultPage> {
                     Row(
                       children: [
                         Container(
-                          width: 10,
-                          height: 10,
-                          decoration: BoxDecoration(
-                            color: isHighRisk ? errorRed : successGreen,
-                            shape: BoxShape.circle,
-                          ),
+                          width: 10, height: 10,
+                          decoration: BoxDecoration(color: isHighRisk ? errorRed : successGreen, shape: BoxShape.circle),
                         ),
                         const SizedBox(width: 8),
                         Text(
                           widget.result.riskLevel,
-                          style: TextStyle(
-                            color: isHighRisk ? errorRed : successGreen,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
+                          style: TextStyle(color: isHighRisk ? errorRed : successGreen, fontSize: 18, fontWeight: FontWeight.bold),
                         ),
                       ],
                     ),
@@ -218,17 +301,17 @@ class _ResultPageState extends State<ResultPage> {
             ],
           ),
           const SizedBox(height: 25),
-          const Row(
+          Row(
             children: [
-              Icon(Icons.grid_view_rounded, color: successGreen, size: 20),
-              SizedBox(width: 8),
-              Text("Analysis Content", style: TextStyle(color: white, fontWeight: FontWeight.bold, fontSize: 16)),
+              const Icon(Icons.analytics_outlined, color: primaryBtn, size: 18),
+              const SizedBox(width: 8),
+              Text("NEURAL INSIGHT", style: GoogleFonts.inter(color: primaryBtn, fontWeight: FontWeight.w900, fontSize: 11, letterSpacing: 1.5)),
             ],
           ),
           const SizedBox(height: 10),
           Text(
             widget.result.explanation,
-            style: const TextStyle(color: greyText, fontSize: 14, height: 1.4),
+            style: const TextStyle(color: greyText, fontSize: 14, height: 1.5),
           ),
         ],
       ),
@@ -250,23 +333,23 @@ class _ResultPageState extends State<ResultPage> {
             children: [
               Row(
                 children: [
-                  const Icon(Icons.map_outlined, color: white),
+                  const Icon(Icons.share_location_rounded, color: white),
                   const SizedBox(width: 10),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text("GIS Location", style: TextStyle(color: greyText, fontSize: 12)),
+                      const Text("GIS Telemetry", style: TextStyle(color: greyText, fontSize: 12)),
                       Text(
-                        widget.targetArea?.name ?? "Current Field Location",
+                        widget.targetArea?.name ?? "Field Coordinate",
                         style: const TextStyle(color: white, fontWeight: FontWeight.bold),
                       ),
                     ],
                   ),
                 ],
               ),
-              TextButton(
-                onPressed: () {},
-                child: const Text("View Map", style: TextStyle(color: greyText)),
+              Text(
+                "${widget.latitude.toStringAsFixed(4)}, ${widget.longitude.toStringAsFixed(4)}",
+                style: const TextStyle(color: greyText, fontSize: 10),
               )
             ],
           ),
@@ -279,7 +362,7 @@ class _ResultPageState extends State<ResultPage> {
               child: FlutterMap(
                 options: MapOptions(
                   initialCenter: detectionLocation,
-                  initialZoom: 14.0,
+                  initialZoom: 15.0,
                   interactionOptions: const InteractionOptions(flags: InteractiveFlag.none),
                 ),
                 children: [
@@ -313,25 +396,24 @@ class _ResultPageState extends State<ResultPage> {
         children: [
           SizedBox(
             width: double.infinity,
-            height: 55,
+            height: 58,
             child: ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: primaryBtn,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                elevation: 0,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               ),
-              onPressed: () {
-                // Logic for risk mapping
-              },
-              child: const Text(
-                "Proceed Risk Mapping",
-                style: TextStyle(color: bgDark, fontWeight: FontWeight.bold, fontSize: 18),
+              onPressed: _submitReportToExpert,
+              child: Text(
+                "Submit to DA",
+                style: GoogleFonts.inter(color: bgDark, fontWeight: FontWeight.w900, fontSize: 15, letterSpacing: 1),
               ),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Dismiss Report", style: TextStyle(color: greyText, fontSize: 16)),
+            onPressed: () => Navigator.of(context).pop(), // This takes you back to SubmitPestReportPage
+            child: const Text("Dismiss and Retake", style: TextStyle(color: greyText, fontSize: 16)),
           ),
         ],
       ),

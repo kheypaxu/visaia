@@ -29,21 +29,31 @@ class BoundingBox {
 }
 
 class AnalysisResult {
-  final String pestName, lifeStage, fullPrediction, explanation, riskLevel;
+  final String pestName, lifeStage, fullPrediction, explanation, riskLevel, filename;
   final List<BoundingBox> boxes;
 
   AnalysisResult({
     required this.pestName, required this.lifeStage, required this.fullPrediction,
     required this.boxes, required this.explanation, required this.riskLevel,
+    required this.filename,
   });
 }
 
 class ApiService {
-  static const String baseUrl = "http://192.168.1.39:5000"; 
+  static const String baseUrl = "http://192.168.1.19:5000"; 
+
+  static Future<void> uploadImageToServer(File imageFile, String fileName) async {
+    var request = http.MultipartRequest('POST', Uri.parse('http://192.168.1.39:5000/upload'));
+    request.files.add(await http.MultipartFile.fromPath('file', imageFile.path, filename: fileName));
+    var response = await request.send();
+    if (response.statusCode != 200) {
+      throw Exception('Failed to upload image');
+    }
+  }
 
   static Future<AnalysisResult> sendImage(File imageFile) async {
     try {
-      debugPrint('🚀 Sending request to $baseUrl/predict');
+      debugPrint('Sending request to $baseUrl/predict');
       
       var request = http.MultipartRequest('POST', Uri.parse('$baseUrl/predict'));
       request.files.add(await http.MultipartFile.fromPath('image', imageFile.path));
@@ -76,10 +86,11 @@ class ApiService {
         fullPrediction: decoded['full_prediction'] ?? 'No prediction',
         boxes: boxes,
         explanation: decoded['explanation'] ?? '',
-        riskLevel: decoded['risk_level'] ?? 'N/A',
+        riskLevel: decoded['risk'] ?? 'N/A',
+        filename: decoded['filename'] ?? '',
       );
     } catch (e) {
-      debugPrint('❌ API Error: $e');
+      debugPrint('API Error: $e');
       rethrow;
     }
   }

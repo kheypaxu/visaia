@@ -1,28 +1,60 @@
-import 'dart:ui';
 import 'package:intl/intl.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:visaia/core/models/crop_type.dart';
 import 'package:visaia/screens/monitoring/farm_area_monitoring_screen.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+// Import the models from the core directory
+import 'package:visaia/core/models/crop_type.dart';
 
 class MonitoringDashboard extends StatefulWidget {
   final int cols;
 
   const MonitoringDashboard({
-    Key? key,
+    super.key,
     this.cols = 4,
-  }) : super(key: key);
+  });
 
   @override
-  _MonitoringDashboardState createState() => _MonitoringDashboardState();
+  MonitoringDashboardState createState() => MonitoringDashboardState();
 }
 
-class _MonitoringDashboardState extends State<MonitoringDashboard> {
+class MonitoringDashboardState extends State<MonitoringDashboard> {
   final List<FarmArea> _farmAreas = [];
   final List<Crop> _myCrops = [
     const Crop(name: 'Corn', color: Color(0xFF8DBA60), icon: Icons.grass),
-      ];
+  ];
   final TextEditingController _newCropController = TextEditingController();
+
+  // Firestore farm limit
+  double _totalFarmLimit = 0;
+  bool _isLoadingLimit = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchFarmLimit();
+  }
+
+  Future<void> _fetchFarmLimit() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    try {
+      final doc = await FirebaseFirestore.instance.collection('farmers').doc(uid).get();
+      final farmSize = doc.data()?['farmSize'] as num?;
+      setState(() {
+        _totalFarmLimit = farmSize?.toDouble() ?? 0;
+        _isLoadingLimit = false;
+      });
+    } catch (e) {
+      setState(() => _isLoadingLimit = false);
+      debugPrint('Error fetching farm size: $e');
+    }
+  }
+
+  double get _usedHectares => _farmAreas.fold(0, (previousValue, area) => previousValue + area.hectares);
+  double get _remainingHectares => (_totalFarmLimit - _usedHectares).clamp(0, double.infinity);
 
   @override
   void dispose() {
@@ -64,9 +96,10 @@ class _MonitoringDashboardState extends State<MonitoringDashboard> {
     }
 
     final nameController = TextEditingController();
+    final hectaresController = TextEditingController();
     Crop selectedCrop = _myCrops.first;
-    bool isLarge = false;
     DateTime selectedDate = DateTime.now();
+    String? hectaresError;
 
     showDialog(
       context: context,
@@ -99,6 +132,41 @@ class _MonitoringDashboardState extends State<MonitoringDashboard> {
                     focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(16),
                         borderSide: const BorderSide(color: Color(0xFF8DBA60))),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                TextField(
+                  controller: hectaresController,
+                  keyboardType: TextInputType.numberWithOptions(decimal: true),
+                  style: const TextStyle(color: Colors.white),
+                  onChanged: (value) {
+                    if (value.isNotEmpty && double.tryParse(value) == null) {
+                      setDialogState(() {
+                        hectaresError = 'Please enter a valid number';
+                      });
+                    } else {
+                      setDialogState(() {
+                        hectaresError = null;
+                      });
+                    }
+                  },
+                  decoration: InputDecoration(
+                    labelText: 'Hectares',
+                    labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
+                    hintText: 'e.g. 1.5',
+                    hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.2)),
+                    filled: true,
+                    fillColor: Colors.white.withValues(alpha: 0.05),
+                    enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        borderSide: BorderSide.none),
+                    focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        borderSide: const BorderSide(color: Color(0xFF8DBA60))),
+                    errorText: hectaresError,
+                    errorStyle: const TextStyle(color: Colors.red),
+                    suffixText: 'ha',
+                    suffixStyle: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
                   ),
                 ),
                 const SizedBox(height: 20),
@@ -174,18 +242,22 @@ class _MonitoringDashboardState extends State<MonitoringDashboard> {
                   ),
                 ),
                 const SizedBox(height: 20),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('Scale', style: GoogleFonts.inter(color: Colors.white70)),
-                    Row(
-                      children: [
-                        _buildChoiceChip('Small', !isLarge, () => setDialogState(() => isLarge = false)),
-                        const SizedBox(width: 8),
-                        _buildChoiceChip('Big', isLarge, () => setDialogState(() => isLarge = true)),
-                      ],
-                    ),
-                  ],
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.05),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.info_outline, color: Colors.white.withValues(alpha: 0.5), size: 16),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Areas > 2.0 ha will be displayed as large',
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 12),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -198,16 +270,26 @@ class _MonitoringDashboardState extends State<MonitoringDashboard> {
             ),
             ElevatedButton(
               onPressed: () {
+                final input = double.tryParse(hectaresController.text);
+                if (input == null) {
+                  setDialogState(() => hectaresError = 'Please enter a valid number');
+                  return;
+                }
+
+                if (input > _remainingHectares) {
+                  setDialogState(() => hectaresError = 'Exceeds remaining farm limit (${_remainingHectares.toStringAsFixed(1)} ha)');
+                  return;
+                }
+
                 if (nameController.text.isNotEmpty) {
                   setState(() {
                     final newArea = FarmArea(
                       id: _farmAreas.length,
                       name: nameController.text,
                       crop: selectedCrop,
-                      isLarge: isLarge,
+                      hectares: input,
                       plantingDate: selectedDate,
                     );
-                    // Add some default tasks
                     newArea.tasks = [
                       MonitoringTask(id: '1', title: 'Soil PH Test', status: TaskStatus.active),
                       MonitoringTask(id: '2', title: 'Nitrogen Level Check', status: TaskStatus.future),
@@ -231,28 +313,6 @@ class _MonitoringDashboardState extends State<MonitoringDashboard> {
     );
   }
 
-  Widget _buildChoiceChip(String label, bool selected, VoidCallback onSelected) {
-    return GestureDetector(
-      onTap: onSelected,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: selected ? const Color(0xFF8DBA60) : Colors.white.withValues(alpha: 0.05),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Text(
-          label,
-          style: GoogleFonts.inter(
-            color: selected ? Colors.black : Colors.white70,
-            fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-            fontSize: 12,
-          ),
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return CustomScrollView(
@@ -260,12 +320,37 @@ class _MonitoringDashboardState extends State<MonitoringDashboard> {
       slivers: [
         SliverToBoxAdapter(child: _buildCropSetupSection()),
         SliverToBoxAdapter(child: _buildActionBar()),
+        SliverToBoxAdapter(child: _buildFarmUsageBar()), // Progress bar added
         SliverPadding(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
           sliver: _buildFarmIllustration(),
         ),
         const SliverToBoxAdapter(child: SizedBox(height: 40)),
       ],
+    );
+  }
+
+  Widget _buildFarmUsageBar() {
+    if (_isLoadingLimit) return const LinearProgressIndicator();
+
+    final usageRatio = _totalFarmLimit == 0 ? 0.0 : _usedHectares / _totalFarmLimit;
+    final barColor = usageRatio > 0.9 ? Colors.red : const Color(0xFF8DBA60);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Farm Usage: ${_usedHectares.toStringAsFixed(1)} / $_totalFarmLimit ha', style: const TextStyle(color: Colors.white)),
+          const SizedBox(height: 6),
+          LinearProgressIndicator(
+            value: usageRatio,
+            color: barColor,
+            backgroundColor: Colors.white.withValues(alpha: 0.1),
+            minHeight: 8,
+          ),
+        ],
+      ),
     );
   }
 
@@ -491,16 +576,20 @@ class _MonitoringDashboardState extends State<MonitoringDashboard> {
 class GridBlueprintPainter extends CustomPainter {
   final Color color;
   final double spacing;
-  GridBlueprintPainter({required this.color, this.spacing = 15.0});
+
+  GridBlueprintPainter({required this.color, this.spacing = 20});
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = color..strokeWidth = 0.5;
-    for (double i = 0; i <= size.width; i += spacing) {
-      canvas.drawLine(Offset(i, 0), Offset(i, size.height), paint);
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 0.5;
+
+    for (double x = 0; x < size.width; x += spacing) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
     }
-    for (double i = 0; i <= size.height; i += spacing) {
-      canvas.drawLine(Offset(0, i), Offset(size.width, i), paint);
+    for (double y = 0; y < size.height; y += spacing) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
     }
   }
 
