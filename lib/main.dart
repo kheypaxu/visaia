@@ -41,7 +41,7 @@ class MyApp extends StatelessWidget {
         '/register': (context) => const RegistrationPage(),
 
         // MAIN APP
-        '/root': (context) => const RootLayout(),
+        '/root': (context) => const VisaiaAppRoot(),
         
       },
     );

@@ -1,16 +1,16 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
-import 'package:visaia/widgets/custom_nav_bar.dart';
-import 'package:visaia/screens/monitoring/monitoring_dashboard_screen.dart';
-import 'package:visaia/screens/reporting/pest_report_submission_screen.dart';
 import 'package:visaia/screens/map/map_screen.dart';
-import 'package:visaia/screens/history/action_history_screen.dart';
+import 'package:visaia/screens/main_screens/dashboard.dart';
 import 'package:visaia/screens/mitigation/mitigation_screen.dart';
 import 'package:visaia/screens/onboarding/farm_area_setup.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_fonts/google_fonts.dart';
 
+enum NavItem { mitigation, home, cycle, map, profile }
+
+// ─── App Root ────────────────────────────────────────────────────────────────
 class VisaiaAppRoot extends StatefulWidget {
   const VisaiaAppRoot({super.key});
 
@@ -19,7 +19,7 @@ class VisaiaAppRoot extends StatefulWidget {
 }
 
 class _VisaiaAppRootState extends State<VisaiaAppRoot> {
-  bool? _isFarmSetupComplete; // null = loading
+  bool? _isFarmSetupComplete;
 
   @override
   void initState() {
@@ -28,69 +28,19 @@ class _VisaiaAppRootState extends State<VisaiaAppRoot> {
   }
 
   Future<void> _checkFarmSetup() async {
-    // TODO: For debugging - disable checks to always show farm setup flow
-    // Comment out the logic below and uncomment this to always show FarmAreaSetup
-    setState(() {
-      _isFarmSetupComplete = false;
-    });
-    
-    /* ACTUAL CHECKS (DISABLED FOR DEBUGGING):
-    try {
-      final user = FirebaseAuth.instance.currentUser;
+    setState(() => _isFarmSetupComplete = false);
+  }
 
-      if (user == null) {
-        _isFarmSetupComplete = false;
-        return;
-      }
-
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-
-      if (!doc.exists) {
-        // ✅ If no document → assume no farm yet
-        setState(() {
-          _isFarmSetupComplete = false;
-        });
-        return;
-      }
-
-      final data = doc.data();
-
-      // Check if farm exists AND fields are created
-      final hasFarm = data?['hasFarm'] == true;
-      final hasFields = data?['hasFields'] == true;
-      
-      setState(() {
-        _isFarmSetupComplete = hasFarm && hasFields;
-      });
-    } catch (e) {
-      // ✅ If ANY error → fallback to setup (never hang)
-      setState(() {
-        _isFarmSetupComplete = false;
-      });
+  Future<void> _completeFarmSetup() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        'hasFarm': true,
+        'hasFields': false,
+      }, SetOptions(merge: true));
     }
-    */
+    setState(() => _isFarmSetupComplete = true);
   }
-
-Future<void> _completeFarmSetup() async {
-  final user = FirebaseAuth.instance.currentUser;
-
-  if (user != null) {
-    await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .set({
-      'hasFarm': true,
-      'hasFields': false, // Fields will be marked true after field setup is complete
-    }, SetOptions(merge: true));
-  }
-
-  setState(() {
-    _isFarmSetupComplete = true;
-  });
-}
 
   @override
   Widget build(BuildContext context) {
@@ -101,17 +51,14 @@ Future<void> _completeFarmSetup() async {
         ),
       );
     }
-
     if (_isFarmSetupComplete == false) {
-      return FarmAreaSetup(
-        onFinished: _completeFarmSetup,
-      );
+      return FarmAreaSetup(onFinished: _completeFarmSetup);
     }
-
     return const RootLayout();
   }
 }
 
+// ─── Root Layout ─────────────────────────────────────────────────────────────
 class RootLayout extends StatefulWidget {
   const RootLayout({super.key});
 
@@ -119,247 +66,311 @@ class RootLayout extends StatefulWidget {
   State<RootLayout> createState() => _RootLayoutState();
 }
 
-class _RootLayoutState extends State<RootLayout> {
-  int _selectedIndex = 2;
+class _RootLayoutState extends State<RootLayout>
+    with SingleTickerProviderStateMixin {
+  NavItem _selectedItem = NavItem.cycle;
+  NavItem _previousItem = NavItem.cycle;
+  late AnimationController _navController;
 
-  final List<Map<String, dynamic>> _pages = [
-    {
-      'title': 'Your Farm',
-      'label': 'Live Monitoring Active',
-      'widget': const MapViewScreen(),
-    },
-    {
-      'title': 'INFESTATION REPORT',
-      'label': 'Pest Analysis',
-      'widget': const SubmitPestReportPage(),
-    },
-    {
-      'title': 'FARM ECOSYSTEM',
-      'label': 'VISAAIA Monitor',
-      'widget': const MonitoringDashboard(),
-    },
-    {
-      'title': 'ACTION HISTORY',
-      'label': 'Treatment Logs',
-      'widget': const ActionHistoryScreen(),
-    },
-    {
-      'title': 'MITIGATION HUB',
-      'label': 'Risk Control',
-      'widget': const MitigationProtocolScreen(),
-    },
+  static const _navItems = [
+    NavItem.mitigation,
+    NavItem.home,
+    NavItem.cycle,
+    NavItem.map,
+    NavItem.profile,
   ];
 
-  void _onItemTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
-    });
+  static const List<Widget> _pages = [
+    MitigationProtocolScreen(),
+    VisaiaDashboard(),
+    Center(child: Text("Cycle")),
+    MapViewScreen(),
+    Center(child: Text("Profile")),
+  ];
+
+  // Each item: (inactive icon, active icon, label)
+  static const _itemMeta = [
+    (Icons.shield_outlined,       Icons.shield,               'MITIGATION'),
+    (Icons.eco_outlined,          Icons.eco,                  'HOME'),
+    (Icons.recycling_rounded,     Icons.recycling_rounded,    'CYCLE'),
+    (Icons.map_outlined,          Icons.map,                  'MAP'),
+    (Icons.person_outline_rounded,Icons.person_rounded,       'PROFILE'),
+  ];
+
+  bool get _isMapScreen => _selectedItem == NavItem.map;
+
+  @override
+  void initState() {
+    super.initState();
+    _navController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 350),
+    )..value = 1.0;
   }
 
-  String _capitalizeTitle(String text) {
-    if (text.isEmpty) return text;
-    return text.split(' ').map((word) {
-      if (word.isEmpty) return word;
-      return word[0].toUpperCase() + word.substring(1).toLowerCase();
-    }).join(' ');
+  @override
+  void dispose() {
+    _navController.dispose();
+    super.dispose();
+  }
+
+  void _onNavTapped(NavItem item) {
+    if (item == _selectedItem) return;
+    setState(() {
+      _previousItem = _selectedItem;
+      _selectedItem = item;
+    });
+    _navController.forward(from: 0);
   }
 
   @override
   Widget build(BuildContext context) {
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+
     return Scaffold(
       backgroundColor: const Color(0xFF102216),
-      extendBody: _selectedIndex == 0,
-      bottomNavigationBar: CustomBottomNavBar(
-        selectedIndex: _selectedIndex,
-        onItemTapped: _onItemTapped,
-      ),
+      appBar: _isMapScreen
+          ? null
+          : AppBar(
+              leading: const Icon(Icons.menu, color: Color(0xFF0C503C)),
+              title: const Text(
+                'VISAIA',
+                style: TextStyle(
+                  color: Color(0xFF0C503C),
+                  fontWeight: FontWeight.bold,
+                  fontSize: 22,
+                ),
+              ),
+              centerTitle: false,
+              backgroundColor: Colors.white,
+              elevation: 0,
+              actions: [
+                IconButton(
+                  icon: Stack(
+                    children: [
+                      const Icon(Icons.notifications_none, color: Colors.black54),
+                      Positioned(
+                        right: 0,
+                        top: 0,
+                        child: Container(
+                          padding: const EdgeInsets.all(2),
+                          decoration: const BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                          ),
+                          constraints: const BoxConstraints(
+                            minWidth: 10,
+                            minHeight: 10,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  onPressed: () {},
+                ),
+                const CircleAvatar(
+                  backgroundColor: Color(0xFFA6C9A2),
+                  child: Icon(Icons.person, color: Colors.white),
+                ),
+                const SizedBox(width: 16),
+              ],
+            ),
       body: Stack(
         children: [
-          // Background Glows (Shared)
-          Positioned(top: -150, left: -100, child: _buildBlurCircle(300, const Color(0xFF8DBA60).withValues(alpha: 0.03))),
-          Positioned(bottom: 50, right: -100, child: _buildBlurCircle(400, const Color(0xFF2E8B57).withValues(alpha: 0.05))),
-          
-          // Content Layer
-          Positioned.fill(
-            child: Column(
-              children: [
-                if (_selectedIndex != 0) 
-                  SafeArea(bottom: false, child: _buildDynamicHeader())
-                else
-                  const SizedBox.shrink(),
-                Expanded(
-                  child: IndexedStack(
-                    index: _selectedIndex,
-                    children: _pages.map((p) => p['widget'] as Widget).toList(),
-                  ),
-                ),
-              ],
-            ),
+          IndexedStack(
+            index: _navItems.indexOf(_selectedItem),
+            children: _pages,
           ),
-          
-          // Floating Header Overlay (Only for Map Screen to allow overlap)
-          if (_selectedIndex == 0)
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: SafeArea(bottom: false, child: _buildDynamicHeader()),
-            ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: bottomPadding,
+            child: _buildNavBar(),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildBlurCircle(double size, Color color) {
-    return ImageFiltered(
-      imageFilter: ImageFilter.blur(sigmaX: 80, sigmaY: 80),
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: color,
-        ),
-      ),
-    );
-  }
+  Widget _buildNavBar() {
+    // Bubble radius = 28, pill top = 28px from SizedBox top
+    // So bubble center sits exactly on the pill's top edge
+    const double bubbleRadius = 28.0;
+    const double barHeight = 68.0;
+    // Total height = bubble diameter + bar, minus the overlap
+    const double overlapAbovePill = bubbleRadius; // bubble peeks up by its radius
+    const double totalHeight = barHeight + overlapAbovePill;
 
-Widget _buildDynamicHeader() {
-    final page = _pages[_selectedIndex];
-
-    // Specialized Header for Map View (overlapping style)
-    if (_selectedIndex == 0) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(24, 32, 24, 12),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  page['title'],
-                  style: GoogleFonts.inter(
-                    fontSize: 26,
-                    letterSpacing: 1.5,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.white,
-                  ),
-                ),
-                Text(
-                  page['label'],
-                  style: GoogleFonts.inter(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    color: const Color(0xFF8DBA60),
-                  ),
-                ),
-              ],
-            ),
-            _buildTopActionGroup(),
-          ],
-        ),
-      );
-    }
-
-    // Centered Header for all other screens
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+    return SizedBox(
+      height: totalHeight,
       child: Stack(
-        alignment: Alignment.center,
+        clipBehavior: Clip.none,
         children: [
-          // Back Button (Left)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: GestureDetector(
-              onTap: () => setState(() => _selectedIndex = 2), // Navigate back to Dashboard
-              child: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.03),
-                  shape: BoxShape.circle,
+          // ── White pill — starts at overlapAbovePill from top ─────────────
+          Positioned(
+            top: overlapAbovePill,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(24),
                 ),
-                child: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 18),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.10),
+                    blurRadius: 16,
+                    offset: const Offset(0, -2),
+                  ),
+                ],
               ),
             ),
           ),
 
-          // Centered Title
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                _capitalizeTitle(page['title']),
-                style: GoogleFonts.inter(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800,
-                  color: Colors.white,
-                  letterSpacing: 0.5,
-                ),
-              ),
-              if (page['label'] != null)
-                Text(
-                  page['label'].toString().toUpperCase(),
-                  style: GoogleFonts.inter(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    color: const Color(0xFF8DBA60),
-                    letterSpacing: 1.2,
+          // ── Tap targets + labels row (inside the pill area) ──────────────
+          Positioned(
+            top: overlapAbovePill,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Row(
+              children: List.generate(_navItems.length, (i) {
+                return Expanded(
+                  child: GestureDetector(
+                    onTap: () => _onNavTapped(_navItems[i]),
+                    behavior: HitTestBehavior.opaque,
+                    child: _buildLabel(i),
                   ),
-                ),
-            ],
+                );
+              }),
+            ),
           ),
 
-          // Notification & Profile (Right)
-          Align(
-            alignment: Alignment.centerRight,
-            child: _buildTopActionGroup(),
+          // ── Sliding bubble + icon ─────────────────────────────────────────
+          Positioned.fill(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final itemWidth = constraints.maxWidth / _navItems.length;
+                final currentIndex = _navItems.indexOf(_selectedItem);
+                final previousIndex = _navItems.indexOf(_previousItem);
+
+                return AnimatedBuilder(
+                  animation: _navController,
+                  builder: (context, _) {
+                    final t = Curves.easeInOut.transform(_navController.value);
+                    final cx = _lerpD(
+                      previousIndex * itemWidth + itemWidth / 2,
+                      currentIndex * itemWidth + itemWidth / 2,
+                      t,
+                    );
+
+                    // Bubble top stays fixed at y=0 (peeks above pill)
+                    const double bubbleTop = 0;
+
+                    return Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        // Circle
+                        Positioned(
+                          left: cx - bubbleRadius,
+                          top: bubbleTop,
+                          child: Container(
+                            width: bubbleRadius * 2,
+                            height: bubbleRadius * 2,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF1A5C30),
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Color(0x551A5C30),
+                                  blurRadius: 10,
+                                  offset: Offset(0, 3),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        // Icon centered in bubble
+                        Positioned(
+                          left: cx - 13,
+                          top: bubbleTop + bubbleRadius - 13,
+                          child: Icon(
+                            _itemMeta[currentIndex].$2,
+                            color: Colors.white,
+                            size: 26,
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                );
+              },
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildTopActionGroup() {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Notification Icon with Badge
-        Stack(
+  Widget _buildLabel(int index) {
+    final item = _navItems[index];
+    final isNowActive = _selectedItem == item;
+    final wasActive = _previousItem == item;
+    final (inactiveIcon, _, label) = _itemMeta[index];
+
+    return AnimatedBuilder(
+      animation: _navController,
+      builder: (context, _) {
+        final t = Curves.easeInOut.transform(_navController.value);
+
+        double activeWeight;
+        if (isNowActive && wasActive) {
+          activeWeight = 1.0;
+        } else if (isNowActive) {
+          activeWeight = t;
+        } else if (wasActive) {
+          activeWeight = 1.0 - t;
+        } else {
+          activeWeight = 0.0;
+        }
+
+        // Active item: icon is hidden (bubble covers it), label turns green
+        // Inactive item: icon visible gray, label visible gray
+        final iconOpacity = (1.0 - activeWeight).clamp(0.0, 1.0);
+        final labelColor = Color.lerp(
+          const Color(0xFF9E9E9E),
+          const Color(0xFF1A5C30),
+          activeWeight,
+        )!;
+        final labelWeight = activeWeight > 0.5
+            ? FontWeight.w700
+            : FontWeight.w500;
+
+        return Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            IconButton(
-              icon: const Icon(Icons.notifications_none_outlined, color: Colors.white70, size: 24),
-              onPressed: () {},
+            // Reserve space for icon even when invisible (keeps layout stable)
+            Opacity(
+              opacity: iconOpacity,
+              child: Icon(inactiveIcon, color: const Color(0xFF9E9E9E), size: 22),
             ),
-            Positioned(
-              right: 12,
-              top: 12,
-              child: Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                  color: Color(0xFF8DBA60),
-                  shape: BoxShape.circle,
-                ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: GoogleFonts.inter(
+                color: labelColor,
+                fontSize: 9,
+                fontWeight: labelWeight,
+                letterSpacing: 0.3,
               ),
             ),
           ],
-        ),
-        const SizedBox(width: 4),
-        // Profile Placeholder
-        Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white.withValues(alpha: 0.1), width: 1.5),
-            image: const DecorationImage(
-              image: NetworkImage('https://via.placeholder.com/150'), // Placeholder
-              fit: BoxFit.cover,
-            ),
-          ),
-        ),
-      ],
+        );
+      },
     );
   }
 }
+
+double _lerpD(double a, double b, double t) => a + (b - a) * t;
