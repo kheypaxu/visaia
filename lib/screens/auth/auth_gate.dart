@@ -19,7 +19,7 @@ class AuthGate extends StatelessWidget {
 
           // If the stream receives a valid user, transition to App Home 
           if (snapshot.hasData && snapshot.data != null) {
-            return const RootLayout();
+            return const VisaiaAppRoot();
           }
 
           // Otherwise return login screen
