@@ -7,7 +7,9 @@ import 'package:visaia/screens/reporting/pest_report_submission_screen.dart';
 import 'package:visaia/screens/map/map_screen.dart';
 import 'package:visaia/screens/history/action_history_screen.dart';
 import 'package:visaia/screens/mitigation/mitigation_screen.dart';
-import 'package:visaia/screens/onboarding/onboarding_screens.dart';
+import 'package:visaia/screens/onboarding/farm_area_setup.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class VisaiaAppRoot extends StatefulWidget {
   const VisaiaAppRoot({super.key});
@@ -17,20 +19,95 @@ class VisaiaAppRoot extends StatefulWidget {
 }
 
 class _VisaiaAppRootState extends State<VisaiaAppRoot> {
-  bool _showOnboarding = true; // Set to true to start with onboarding
+  bool? _isFarmSetupComplete; // null = loading
 
-  void _completeOnboarding() {
-    setState(() {
-      _showOnboarding = false;
-    });
+  @override
+  void initState() {
+    super.initState();
+    _checkFarmSetup();
   }
+
+  Future<void> _checkFarmSetup() async {
+    // TODO: For debugging - disable checks to always show farm setup flow
+    // Comment out the logic below and uncomment this to always show FarmAreaSetup
+    setState(() {
+      _isFarmSetupComplete = false;
+    });
+    
+    /* ACTUAL CHECKS (DISABLED FOR DEBUGGING):
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+
+      if (user == null) {
+        _isFarmSetupComplete = false;
+        return;
+      }
+
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      if (!doc.exists) {
+        // ✅ If no document → assume no farm yet
+        setState(() {
+          _isFarmSetupComplete = false;
+        });
+        return;
+      }
+
+      final data = doc.data();
+
+      // Check if farm exists AND fields are created
+      final hasFarm = data?['hasFarm'] == true;
+      final hasFields = data?['hasFields'] == true;
+      
+      setState(() {
+        _isFarmSetupComplete = hasFarm && hasFields;
+      });
+    } catch (e) {
+      // ✅ If ANY error → fallback to setup (never hang)
+      setState(() {
+        _isFarmSetupComplete = false;
+      });
+    }
+    */
+  }
+
+Future<void> _completeFarmSetup() async {
+  final user = FirebaseAuth.instance.currentUser;
+
+  if (user != null) {
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .set({
+      'hasFarm': true,
+      'hasFields': false, // Fields will be marked true after field setup is complete
+    }, SetOptions(merge: true));
+  }
+
+  setState(() {
+    _isFarmSetupComplete = true;
+  });
+}
 
   @override
   Widget build(BuildContext context) {
-    if (_showOnboarding) {
-      // Pass the completion callback to your onboarding screen
-      return OnboardingScreen(onFinish: _completeOnboarding);
+    if (_isFarmSetupComplete == null) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(color: Color(0xFF8DBA60)),
+        ),
+      );
     }
+
+    if (_isFarmSetupComplete == false) {
+      return FarmAreaSetup(
+        onFinished: _completeFarmSetup,
+      );
+    }
+
     return const RootLayout();
   }
 }
