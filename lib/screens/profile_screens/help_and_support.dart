@@ -96,7 +96,7 @@ class HelpCenterScreen extends StatelessWidget {
                 );
               },
             ),
-            _buildFaqItem('Connecting a new sensor node?',
+            _buildFaqItem('Connecting a new sensor node??',
               () {
                   Navigator.push(
                     context,
