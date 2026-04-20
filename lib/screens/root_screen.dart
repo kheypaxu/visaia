@@ -1,9 +1,9 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:visaia/screens/map/map_screen.dart';
-import 'package:visaia/screens/main_screens/dashboard.dart';
+import 'package:visaia/screens/dashboard_screens/dashboard.dart';
 import 'package:visaia/screens/mitigation/mitigation_screen.dart';
 import 'package:visaia/screens/onboarding/farm_area_setup.dart';
+import 'package:visaia/screens/profile_screens/profile_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -28,7 +28,28 @@ class _VisaiaAppRootState extends State<VisaiaAppRoot> {
   }
 
   Future<void> _checkFarmSetup() async {
-    setState(() => _isFarmSetupComplete = false);
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        
+        if (doc.exists) {
+          final hasFarm = doc.data()?['hasFarm'] as bool? ?? false;
+          final hasFields = doc.data()?['hasFields'] as bool? ?? false;
+          
+          setState(() => _isFarmSetupComplete = hasFarm && hasFields);
+        } else {
+          setState(() => _isFarmSetupComplete = false);
+        }
+      } else {
+        setState(() => _isFarmSetupComplete = false);
+      }
+    } catch (e) {
+      setState(() => _isFarmSetupComplete = false);
+    }
   }
 
   Future<void> _completeFarmSetup() async {
@@ -85,7 +106,7 @@ class _RootLayoutState extends State<RootLayout>
     VisaiaDashboard(),
     Center(child: Text("Cycle")),
     MapViewScreen(),
-    Center(child: Text("Profile")),
+    ProfileScreen(),
   ];
 
   // Each item: (inactive icon, active icon, label)

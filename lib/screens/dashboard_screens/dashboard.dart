@@ -8,13 +8,12 @@ class VisaiaDashboard extends StatefulWidget {
 }
 
 class _VisaiaDashboardState extends State<VisaiaDashboard> {
-  int _selectedIndex = 2; // Default to 'Cycle'
 
   final List<PestCardData> _pestData = [
     PestCardData(
         icon: Icons.bug_report,
         name: 'Fall Armyworm',
-        location: 'Sector 7B',
+        location: 'Sector 7B',                                                        
         severity: 'High Severity',
         bgColor: Colors.red.shade100,
         iconColor: Colors.red.shade700),
@@ -30,7 +29,7 @@ class _VisaiaDashboardState extends State<VisaiaDashboard> {
         name: 'Aphids',
         location: 'South Greenhouse',
         severity: 'Low Severity',
-        bgColor: const Color(0xFF7E7D2E).withOpacity(0.2),
+        bgColor: const Color(0xFF7E7D2E).withValues(alpha: 0.2),
         iconColor: const Color(0xFF7E7D2E)),
     PestCardData(
         icon: Icons.camera,
