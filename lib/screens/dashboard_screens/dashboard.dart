@@ -49,7 +49,6 @@ class _VisaiaDashboardState extends State<VisaiaDashboard> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
 
     return Scaffold(
       body: SingleChildScrollView(
@@ -104,51 +103,6 @@ class _VisaiaDashboardState extends State<VisaiaDashboard> {
                   final pest = _pestData[index];
                   return PestListItem(pest: pest);
                 },
-              ),
-
-              const SizedBox(height: 32),
-
-              // Quick Actions Section
-              _buildSectionHeader(context, 'Quick Actions', ''),
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: ActionButton(
-                      icon: Icons.camera_alt_outlined,
-                      label: 'Upload Pest',
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: ActionButton(
-                      icon: Icons.bar_chart_outlined,
-                      label: 'Full Analysis',
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 32),
-
-              // New Cycle Button
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () {},
-                  icon: const Icon(Icons.add_circle_outline, color: Colors.white),
-                  label: const Text('NEW CYCLE',
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold, letterSpacing: 1)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: theme.primaryColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                  ),
-                ),
               ),
 
               const SizedBox(height: 32),

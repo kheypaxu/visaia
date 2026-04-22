@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'field_creation.dart';
 import 'package:visaia/screens/onboarding/welcome_screen.dart';
 import 'package:visaia/screens/root_screen.dart';
+import 'package:visaia/services/farm_service.dart';
 
 class FieldAreaSetupScreen extends StatefulWidget {
   final List<LatLng> farmBoundary;
@@ -24,6 +25,7 @@ class FieldAreaSetupScreen extends StatefulWidget {
 
 class _FieldAreaSetupState extends State<FieldAreaSetupScreen> {
   final List<Map<String, dynamic>> _fields = [];
+  final FarmService _farmService = FarmService();
 
   void _addField() async {
     final result = await Navigator.of(context).push(
@@ -31,6 +33,7 @@ class _FieldAreaSetupState extends State<FieldAreaSetupScreen> {
         builder: (context) => FieldCreation(
           farmBoundary: widget.farmBoundary,
           farmName: widget.farmName,
+          existingFields: _fields,
           onFinished: () {
             Navigator.pop(context, {'name': 'New Field', 'acres': 0});
           },
@@ -227,35 +230,46 @@ class _FieldAreaSetupState extends State<FieldAreaSetupScreen> {
                 child: ElevatedButton(
                   onPressed: _fields.isNotEmpty
                     ? () async {
-                        // Save fields to Firestore
-                        final user = FirebaseAuth.instance.currentUser;
-                        if (user != null) {
-                          await FirebaseFirestore.instance
-                              .collection('users')
-                              .doc(user.uid)
-                              .set({
-                            'hasFields': true,
-                          }, SetOptions(merge: true));
-                        }
+                        try {
+                          // 1. Save fields to Firestore
+                          await _farmService.saveFields(fields: _fields);
 
-                        // Fake save delay
-                        await Future.delayed(const Duration(milliseconds: 600));
+                          // 2. Update user document
+                          final user = FirebaseAuth.instance.currentUser;
+                          if (user != null) {
+                            await FirebaseFirestore.instance
+                                .collection('users')
+                                .doc(user.uid)
+                                .set({
+                              'hasFields': true,
+                            }, SetOptions(merge: true));
+                          }
 
-                        if (!context.mounted) return;
+                          // Fake save delay
+                          await Future.delayed(const Duration(milliseconds: 600));
 
-                        Navigator.of(context, rootNavigator: true).pushReplacement(
-                          MaterialPageRoute(
-                            builder: (_) => InitializationScreen(
-                              firstName: 'Axel',
-                              onFinished: () {
-                                Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-                                  MaterialPageRoute(builder: (_) => const RootLayout()),
-                                  (route) => false,
-                                );
-                              },
+                          if (!context.mounted) return;
+
+                          Navigator.of(context, rootNavigator: true).pushReplacement(
+                            MaterialPageRoute(
+                              builder: (_) => InitializationScreen(
+                                firstName: 'Axel',
+                                onFinished: () {
+                                  Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+                                    MaterialPageRoute(builder: (_) => const RootLayout()),
+                                    (route) => false,
+                                  );
+                                },
+                              ),
                             ),
-                          ),
-                        );
+                          );
+                        } catch (e) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text("Error saving fields: $e")),
+                            );
+                          }
+                        }
                       }
                     : null,
                   style: ElevatedButton.styleFrom(

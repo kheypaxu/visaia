@@ -57,7 +57,7 @@ class _VisaiaAppRootState extends State<VisaiaAppRoot> {
     if (user != null) {
       await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
         'hasFarm': true,
-        'hasFields': false,
+        'hasFields': true,
       }, SetOptions(merge: true));
     }
     setState(() => _isFarmSetupComplete = true);
@@ -87,38 +87,40 @@ class RootLayout extends StatefulWidget {
   State<RootLayout> createState() => _RootLayoutState();
 }
 
-class _RootLayoutState extends State<RootLayout>
-    with SingleTickerProviderStateMixin {
-  NavItem _selectedItem = NavItem.cycle;
-  NavItem _previousItem = NavItem.cycle;
+class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
+  NavItem _selectedItem = NavItem.home;
+  NavItem _previousItem = NavItem.home;
+  
+  // Animation for the sliding bubble
   late AnimationController _navController;
+  // Animation for the 4 emitting buttons
+  late AnimationController _menuController;
+  bool _isMenuOpen = false;
 
+  // Reordered Items (4 in the bar)
   static const _navItems = [
-    NavItem.mitigation,
     NavItem.home,
     NavItem.cycle,
     NavItem.map,
-    NavItem.profile,
+    NavItem.mitigation,
   ];
 
+  // All possible pages (including Profile)
   static const List<Widget> _pages = [
-    MitigationProtocolScreen(),
     VisaiaDashboard(),
     Center(child: Text("Cycle")),
     MapViewScreen(),
+    MitigationProtocolScreen(),
     ProfileScreen(),
   ];
 
-  // Each item: (inactive icon, active icon, label)
+  // Meta for the 4 bottom items
   static const _itemMeta = [
-    (Icons.shield_outlined,       Icons.shield,               'MITIGATION'),
-    (Icons.eco_outlined,          Icons.eco,                  'HOME'),
-    (Icons.recycling_rounded,     Icons.recycling_rounded,    'CYCLE'),
-    (Icons.map_outlined,          Icons.map,                  'MAP'),
-    (Icons.person_outline_rounded,Icons.person_rounded,       'PROFILE'),
+    (Icons.eco_outlined, Icons.eco, 'HOME'),
+    (Icons.recycling_rounded, Icons.recycling_rounded, 'CYCLE'),
+    (Icons.map_outlined, Icons.map, 'MAP'),
+    (Icons.shield_outlined, Icons.shield, 'MITIGATION'),
   ];
-
-  bool get _isMapScreen => _selectedItem == NavItem.map;
 
   @override
   void initState() {
@@ -127,16 +129,23 @@ class _RootLayoutState extends State<RootLayout>
       vsync: this,
       duration: const Duration(milliseconds: 350),
     )..value = 1.0;
+
+    _menuController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 400),
+    );
   }
 
   @override
   void dispose() {
     _navController.dispose();
+    _menuController.dispose();
     super.dispose();
   }
 
   void _onNavTapped(NavItem item) {
     if (item == _selectedItem) return;
+    if (_isMenuOpen) _toggleMenu(); // Close menu if navigating
     setState(() {
       _previousItem = _selectedItem;
       _selectedItem = item;
@@ -144,60 +153,61 @@ class _RootLayoutState extends State<RootLayout>
     _navController.forward(from: 0);
   }
 
+  void _toggleMenu() {
+    setState(() {
+      _isMenuOpen = !_isMenuOpen;
+      _isMenuOpen ? _menuController.forward() : _menuController.reverse();
+    });
+  }
+
+  int _getCurrentStackIndex() {
+    if (_selectedItem == NavItem.profile) return 4;
+    return _navItems.indexOf(_selectedItem);
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
+    final bool isMapScreen = _selectedItem == NavItem.map;
 
     return Scaffold(
       backgroundColor: const Color(0xFF102216),
-      appBar: _isMapScreen
-          ? null
-          : AppBar(
-              leading: const Icon(Icons.menu, color: Color(0xFF0C503C)),
-              title: const Text(
-                'VISAIA',
-                style: TextStyle(
-                  color: Color(0xFF0C503C),
-                  fontWeight: FontWeight.bold,
-                  fontSize: 22,
-                ),
+      appBar: isMapScreen ? null : AppBar(
+        leading: const Icon(Icons.menu, color: Color(0xFF0C503C)),
+        title: Text('VISAIA', style: GoogleFonts.inter(color: const Color(0xFF0C503C), fontWeight: FontWeight.bold, fontSize: 22)),
+        centerTitle: false,
+        backgroundColor: Colors.white,
+        elevation: 0,
+        actions: [
+          IconButton(icon: const Icon(Icons.notifications_none, color: Colors.black54), onPressed: () {}),
+          // Profile Action Placeholder
+          GestureDetector(
+            onTap: () => _onNavTapped(NavItem.profile),
+            child: Container(
+              margin: const EdgeInsets.only(right: 16, left: 8),
+              child: CircleAvatar(
+                radius: 16,
+                backgroundColor: const Color(0xFFF0F0F0),
+                child: Icon(Icons.person_outline, size: 20, color: _selectedItem == NavItem.profile ? const Color(0xFF1A5C30) : Colors.black54),
               ),
-              centerTitle: false,
-              backgroundColor: Colors.white,
-              elevation: 0,
-              actions: [
-                IconButton(
-                  icon: Stack(
-                    children: [
-                      const Icon(Icons.notifications_none, color: Colors.black54),
-                      Positioned(
-                        right: 0,
-                        top: 0,
-                        child: Container(
-                          padding: const EdgeInsets.all(2),
-                          decoration: const BoxDecoration(
-                            color: Colors.red,
-                            shape: BoxShape.circle,
-                          ),
-                          constraints: const BoxConstraints(
-                            minWidth: 10,
-                            minHeight: 10,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  onPressed: () {},
-                ),
-                const SizedBox(width: 16),
-              ],
             ),
+          ),
+        ],
+      ),
       body: Stack(
         children: [
           IndexedStack(
-            index: _navItems.indexOf(_selectedItem),
+            index: _getCurrentStackIndex(),
             children: _pages,
           ),
+          
+          // The Circular Menu overlay
+          if (_isMenuOpen || _menuController.isAnimating)
+            IgnorePointer(
+              ignoring: !_isMenuOpen,
+              child: _buildCircularMenu(bottomPadding),
+            ),
+
           Positioned(
             left: 0,
             right: 0,
@@ -209,121 +219,154 @@ class _RootLayoutState extends State<RootLayout>
     );
   }
 
+  Widget _buildCircularMenu(double bottomPadding) {
+    return AnimatedBuilder(
+      animation: _menuController,
+      builder: (context, child) {
+        final progress = Curves.easeOutBack.transform(_menuController.value);
+        final List<(IconData, String)> actions = [
+          (Icons.shutter_speed_outlined, "Upload\nPest"),
+          (Icons.description_outlined, "Add Logs"),
+          (Icons.eco_outlined, "Start Cycle"),
+          (Icons.pie_chart_outline, "Full\nAnalysis"),
+        ];
+
+        return Stack(
+          children: [
+            GestureDetector(
+              onTap: _toggleMenu,
+              child: Container(color: Colors.black.withOpacity(0.3 * _menuController.value)),
+            ),
+            ...List.generate(actions.length, (index) {
+              final offsets = [
+                const Offset(-110, -50),
+                const Offset(-45, -110),
+                const Offset(45, -110),
+                const Offset(110, -50),
+              ];
+              final offset = offsets[index];
+
+              return Positioned(
+                bottom: 80 + (offset.dy * progress).abs(),
+                left: MediaQuery.of(context).size.width / 2 + (offset.dx * progress) - 30,
+                child: Opacity(
+                  opacity: _menuController.value,
+                  child: Transform.scale(
+                    scale: progress,
+                    child: Column(
+                      children: [
+                        Text(actions[index].$2, textAlign: TextAlign.center, style: GoogleFonts.inter(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 8),
+                        Container(
+                          width: 54, height: 54,
+                          decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                          child: Icon(actions[index].$1, color: const Color(0xFF1A5C30)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildNavBar() {
-    // Bubble radius = 28, pill top = 28px from SizedBox top
-    // So bubble center sits exactly on the pill's top edge
     const double bubbleRadius = 28.0;
     const double barHeight = 68.0;
-    // Total height = bubble diameter + bar, minus the overlap
-    const double overlapAbovePill = bubbleRadius; // bubble peeks up by its radius
-    const double totalHeight = barHeight + overlapAbovePill;
+    const double totalHeight = barHeight + bubbleRadius;
 
     return SizedBox(
       height: totalHeight,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          // ── White pill — starts at overlapAbovePill from top ─────────────
+          // White Pill Background
           Positioned(
-            top: overlapAbovePill,
-            left: 0,
-            right: 0,
-            bottom: 0,
+            top: bubbleRadius,
+            left: 0, right: 0, bottom: 0,
             child: Container(
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(24),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.10),
-                    blurRadius: 16,
-                    offset: const Offset(0, -2),
-                  ),
-                ],
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 16, offset: const Offset(0, -2))],
               ),
             ),
           ),
 
-          // ── Tap targets + labels row (inside the pill area) ──────────────
+          // Tap targets with labels
           Positioned(
-            top: overlapAbovePill,
-            left: 0,
-            right: 0,
-            bottom: 0,
+            top: bubbleRadius,
+            left: 0, right: 0, bottom: 0,
             child: Row(
-              children: List.generate(_navItems.length, (i) {
-                return Expanded(
-                  child: GestureDetector(
-                    onTap: () => _onNavTapped(_navItems[i]),
-                    behavior: HitTestBehavior.opaque,
-                    child: _buildLabel(i),
-                  ),
-                );
-              }),
+              children: [
+                Expanded(child: _buildNavItem(0)), // Home
+                Expanded(child: _buildNavItem(1)), // Cycle
+                const Expanded(child: SizedBox()), // Hole for Add Button
+                Expanded(child: _buildNavItem(2)), // Map
+                Expanded(child: _buildNavItem(3)), // Mitigation
+              ],
             ),
           ),
 
-          // ── Sliding bubble + icon ─────────────────────────────────────────
+          // Sliding Bubble Logic
           Positioned.fill(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final itemWidth = constraints.maxWidth / _navItems.length;
-                final currentIndex = _navItems.indexOf(_selectedItem);
-                final previousIndex = _navItems.indexOf(_previousItem);
+            child: LayoutBuilder(builder: (context, constraints) {
+              final slotWidth = constraints.maxWidth / 5;
+              final currentIndex = _navItems.indexOf(_selectedItem);
+              final previousIndex = _navItems.indexOf(_previousItem);
+              
+              // We adjust the index to skip the middle slot (index 2)
+              double getSlotX(int navIndex) => (navIndex < 2 ? navIndex : navIndex + 1) * slotWidth + (slotWidth / 2);
 
-                return AnimatedBuilder(
-                  animation: _navController,
-                  builder: (context, _) {
-                    final t = Curves.easeInOut.transform(_navController.value);
-                    final cx = _lerpD(
-                      previousIndex * itemWidth + itemWidth / 2,
-                      currentIndex * itemWidth + itemWidth / 2,
-                      t,
-                    );
+              return AnimatedBuilder(
+                animation: _navController,
+                builder: (context, _) {
+                  if (_selectedItem == NavItem.profile) return const SizedBox.shrink();
 
-                    // Bubble top stays fixed at y=0 (peeks above pill)
-                    const double bubbleTop = 0;
+                  final t = Curves.easeInOut.transform(_navController.value);
+                  final cx = _lerpD(getSlotX(previousIndex), getSlotX(currentIndex), t);
 
-                    return Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        // Circle
-                        Positioned(
-                          left: cx - bubbleRadius,
-                          top: bubbleTop,
-                          child: Container(
-                            width: bubbleRadius * 2,
-                            height: bubbleRadius * 2,
-                            decoration: const BoxDecoration(
-                              color: Color(0xFF1A5C30),
-                              shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Color(0x551A5C30),
-                                  blurRadius: 10,
-                                  offset: Offset(0, 3),
-                                ),
-                              ],
-                            ),
-                          ),
+                  return Stack(
+                    children: [
+                      Positioned(
+                        left: cx - bubbleRadius,
+                        top: 0,
+                        child: Container(
+                          width: bubbleRadius * 2, height: bubbleRadius * 2,
+                          decoration: const BoxDecoration(color: Color(0xFF1A5C30), shape: BoxShape.circle, boxShadow: [BoxShadow(color: Color(0x551A5C30), blurRadius: 10, offset: Offset(0, 3))]),
                         ),
-                        // Icon centered in bubble
-                        Positioned(
-                          left: cx - 13,
-                          top: bubbleTop + bubbleRadius - 13,
-                          child: Icon(
-                            _itemMeta[currentIndex].$2,
-                            color: Colors.white,
-                            size: 26,
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                );
-              },
+                      ),
+                      Positioned(
+                        left: cx - 13,
+                        top: bubbleRadius - 13,
+                        child: Icon(_itemMeta[currentIndex].$2, color: Colors.white, size: 26),
+                      ),
+                    ],
+                  );
+                },
+              );
+            }),
+          ),
+
+          // The Permanent Add Button (Centered)
+          Positioned(
+            top: 0,
+            left: MediaQuery.of(context).size.width / 2 - 32,
+            child: GestureDetector(
+              onTap: _toggleMenu,
+              child: AnimatedRotation(
+                duration: const Duration(milliseconds: 300),
+                turns: _isMenuOpen ? 0.125 : 0,
+                child: Container(
+                  width: 64, height: 64,
+                  decoration: const BoxDecoration(color: Color(0xFF0C503C), shape: BoxShape.circle, boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 12, offset: Offset(0, 4))]),
+                  child: const Icon(Icons.add, color: Colors.white, size: 32),
+                ),
+              ),
             ),
           ),
         ],
@@ -331,61 +374,34 @@ class _RootLayoutState extends State<RootLayout>
     );
   }
 
-  Widget _buildLabel(int index) {
+  Widget _buildNavItem(int index) {
     final item = _navItems[index];
     final isNowActive = _selectedItem == item;
     final wasActive = _previousItem == item;
     final (inactiveIcon, _, label) = _itemMeta[index];
 
-    return AnimatedBuilder(
-      animation: _navController,
-      builder: (context, _) {
-        final t = Curves.easeInOut.transform(_navController.value);
+    return GestureDetector(
+      onTap: () => _onNavTapped(item),
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedBuilder(
+        animation: _navController,
+        builder: (context, _) {
+          final t = Curves.easeInOut.transform(_navController.value);
+          double activeWeight = isNowActive && wasActive ? 1.0 : isNowActive ? t : wasActive ? 1.0 - t : 0.0;
 
-        double activeWeight;
-        if (isNowActive && wasActive) {
-          activeWeight = 1.0;
-        } else if (isNowActive) {
-          activeWeight = t;
-        } else if (wasActive) {
-          activeWeight = 1.0 - t;
-        } else {
-          activeWeight = 0.0;
-        }
+          final iconOpacity = (1.0 - activeWeight).clamp(0.0, 1.0);
+          final labelColor = Color.lerp(const Color(0xFF9E9E9E), const Color(0xFF1A5C30), activeWeight)!;
 
-        // Active item: icon is hidden (bubble covers it), label turns green
-        // Inactive item: icon visible gray, label visible gray
-        final iconOpacity = (1.0 - activeWeight).clamp(0.0, 1.0);
-        final labelColor = Color.lerp(
-          const Color(0xFF9E9E9E),
-          const Color(0xFF1A5C30),
-          activeWeight,
-        )!;
-        final labelWeight = activeWeight > 0.5
-            ? FontWeight.w700
-            : FontWeight.w500;
-
-        return Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // Reserve space for icon even when invisible (keeps layout stable)
-            Opacity(
-              opacity: iconOpacity,
-              child: Icon(inactiveIcon, color: const Color(0xFF9E9E9E), size: 22),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              style: GoogleFonts.inter(
-                color: labelColor,
-                fontSize: 9,
-                fontWeight: labelWeight,
-                letterSpacing: 0.3,
-              ),
-            ),
-          ],
-        );
-      },
+          return Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Opacity(opacity: iconOpacity, child: Icon(inactiveIcon, color: const Color(0xFF9E9E9E), size: 22)),
+              const SizedBox(height: 4),
+              Text(label, style: GoogleFonts.inter(color: labelColor, fontSize: 9, fontWeight: activeWeight > 0.5 ? FontWeight.w700 : FontWeight.w500)),
+            ],
+          );
+        },
+      ),
     );
   }
 }

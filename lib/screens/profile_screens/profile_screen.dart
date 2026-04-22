@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:visaia/screens/profile_screens/manage_account.dart';
 import 'package:visaia/screens/profile_screens/preferences.dart';
 import 'package:visaia/screens/profile_screens/help_and_support.dart';
+import 'package:visaia/screens/profile_screens/privacy_data_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -217,7 +218,7 @@ class ProfileScreen extends StatelessWidget {
               const Divider(height: 1, indent: 56, endIndent: 20),
               _SystemTile(icon: Icons.headset_mic_outlined, title: 'Help & Support', onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HelpCenterScreen()))),
               const Divider(height: 1, indent: 56, endIndent: 20),
-              _SystemTile(icon: Icons.shield_outlined, title: 'Privacy & Data', onTap: () => {}),
+              _SystemTile(icon: Icons.shield_outlined, title: 'Privacy & Data', onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const PrivacyDataScreen()))),
               const Divider(height: 1, indent: 56, endIndent: 20),
               _SystemTile(
                 icon: Icons.logout_rounded,

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:visaia/services/farm_service.dart';
 import 'package:visaia/screens/onboarding/field_area_setup_screen.dart';
 
@@ -34,13 +36,21 @@ class _FarmAreaSetupState extends State<FarmAreaSetup> {
     if (_points.length < 3 || _nameController.text.isEmpty) return;
 
     try {
-      // 1. Save to Firestore
-      await _farmService.saveField(
+      // 1. Save farm to Firestore
+      await _farmService.saveFarm(
         name: _nameController.text,
         points: _points,
       );
 
-      // 2. Navigate to the Field Setup Screen with farm data
+      // 2. Update user document - set hasFarm to true
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+          'hasFarm': true,
+        }, SetOptions(merge: true));
+      }
+
+      // 3. Navigate to the Field Setup Screen with farm data
       if (mounted) {
         Navigator.push(
           context,

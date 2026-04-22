@@ -5,12 +5,14 @@ import 'package:latlong2/latlong.dart';
 class FieldCreation extends StatefulWidget {
   final List<LatLng> farmBoundary;
   final String farmName;
+  final List<Map<String, dynamic>> existingFields;
   final VoidCallback onFinished;
 
   const FieldCreation({
     super.key,
     required this.farmBoundary,
     required this.farmName,
+    required this.existingFields,
     required this.onFinished,
   });
 
@@ -150,15 +152,32 @@ class _FieldCreationState extends State<FieldCreation> {
                   ],
                 ),
 
+                // ================= EXISTING FIELDS =================
+                if (widget.existingFields.isNotEmpty)
+                  PolygonLayer(
+                    polygons: widget.existingFields
+                        .where((field) => (field['boundaries'] as List?)?.isNotEmpty ?? false)
+                        .map((field) {
+                          final boundaries = field['boundaries'] as List<LatLng>;
+                          return Polygon(
+                            points: boundaries,
+                            color: Colors.grey.withValues(alpha: 0.15),
+                            borderColor: Colors.grey,
+                            borderStrokeWidth: 2,
+                          );
+                        })
+                        .toList(),
+                  ),
+
                 // ================= FIELD POLYGON =================
                 if (_fieldPoints.length >= 3)
                   PolygonLayer(
                     polygons: [
                       Polygon(
                         points: _fieldPoints,
-                        color: Colors.green.withValues(alpha: 0.25),
+                        color: Colors.green.withValues(alpha: 0.35),
                         borderColor: Colors.green,
-                        borderStrokeWidth: 3,
+                        borderStrokeWidth: 4,
                       ),
                     ],
                   ),
@@ -287,7 +306,12 @@ class _FieldCreationState extends State<FieldCreation> {
                     child: ElevatedButton(
                       onPressed: _fieldPoints.length >= 3 &&
                               _fieldNameController.text.isNotEmpty
-                          ? widget.onFinished
+                          ? () {
+                              Navigator.pop(context, {
+                                'name': _fieldNameController.text,
+                                'acres': 0,
+                                'crop': null,                                  'boundaries': _fieldPoints,                              });
+                            }
                           : null,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF2E8B57),
