@@ -4,6 +4,8 @@ import 'package:visaia/screens/dashboard_screens/dashboard.dart';
 import 'package:visaia/screens/mitigation/mitigation_screen.dart';
 import 'package:visaia/screens/onboarding/farm_area_setup.dart';
 import 'package:visaia/screens/profile_screens/profile_screen.dart';
+import 'package:visaia/screens/dashboard_screens/notifications.dart';
+import 'package:visaia/screens/dashboard_screens/full_analysis.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -161,8 +163,18 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
   }
 
   int _getCurrentStackIndex() {
-    if (_selectedItem == NavItem.profile) return 4;
-    return _navItems.indexOf(_selectedItem);
+    switch (_selectedItem) {
+      case NavItem.home:
+        return 0;
+      case NavItem.cycle:
+        return 1;
+      case NavItem.map:
+        return 2;
+      case NavItem.mitigation:
+        return 3;
+      case NavItem.profile:
+        return 4;
+    }
   }
 
   @override
@@ -179,7 +191,15 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
         backgroundColor: Colors.white,
         elevation: 0,
         actions: [
-          IconButton(icon: const Icon(Icons.notifications_none, color: Colors.black54), onPressed: () {}),
+          IconButton(icon: const Icon(Icons.notifications_none, color: Colors.black54), onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => AlertsPage(),
+              ),
+            ),
+          },
+        ),
           // Profile Action Placeholder
           GestureDetector(
             onTap: () => _onNavTapped(NavItem.profile),
@@ -223,46 +243,102 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
     return AnimatedBuilder(
       animation: _menuController,
       builder: (context, child) {
-        final progress = Curves.easeOutBack.transform(_menuController.value);
-        final List<(IconData, String)> actions = [
-          (Icons.shutter_speed_outlined, "Upload\nPest"),
-          (Icons.description_outlined, "Add Logs"),
-          (Icons.eco_outlined, "Start Cycle"),
-          (Icons.pie_chart_outline, "Full\nAnalysis"),
+        final progress = Curves.easeOutCubic.transform(_menuController.value);
+
+        final List<Map<String, dynamic>> actions = [
+          {
+            "icon": Icons.shutter_speed_outlined,
+            "label": "Upload\nPest",
+            "onTap": null, // safe placeholder
+          },
+          {
+            "icon": Icons.description_outlined,
+            "label": "Add Logs",
+            "onTap": null,
+          },
+          {
+            "icon": Icons.eco_outlined,
+            "label": "Start Cycle",
+            "onTap": null,
+          },
+          {
+            "icon": Icons.pie_chart_outline,
+            "label": "Full\nAnalysis",
+            "onTap": () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const IncomeEstimationScreen(),
+                ),
+              );
+            }
+          },
+        ];
+
+        final offsets = [
+          const Offset(-110, -50),
+          const Offset(-45, -110),
+          const Offset(45, -110),
+          const Offset(110, -50),
         ];
 
         return Stack(
           children: [
+            // BACKDROP (safe touch blocker)
             GestureDetector(
               onTap: _toggleMenu,
-              child: Container(color: Colors.black.withOpacity(0.3 * _menuController.value)),
+              child: Container(
+                color: Colors.black.withOpacity(0.3 * _menuController.value),
+              ),
             ),
+
+            // BUTTONS
             ...List.generate(actions.length, (index) {
-              final offsets = [
-                const Offset(-110, -50),
-                const Offset(-45, -110),
-                const Offset(45, -110),
-                const Offset(110, -50),
-              ];
+              final action = actions[index];
               final offset = offsets[index];
 
               return Positioned(
                 bottom: 80 + (offset.dy * progress).abs(),
-                left: MediaQuery.of(context).size.width / 2 + (offset.dx * progress) - 30,
+                left: MediaQuery.of(context).size.width / 2 +
+                    (offset.dx * progress) -
+                    30,
                 child: Opacity(
                   opacity: _menuController.value,
                   child: Transform.scale(
                     scale: progress,
-                    child: Column(
-                      children: [
-                        Text(actions[index].$2, textAlign: TextAlign.center, style: GoogleFonts.inter(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600)),
-                        const SizedBox(height: 8),
-                        Container(
-                          width: 54, height: 54,
-                          decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-                          child: Icon(actions[index].$1, color: const Color(0xFF1A5C30)),
-                        ),
-                      ],
+                    child: GestureDetector(
+                      onTap: () {
+                        _toggleMenu();
+                        final VoidCallback? onTap = action["onTap"];
+                        onTap?.call();
+                      },
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            action["label"],
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.inter(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            width: 54,
+                            height: 54,
+                            decoration: const BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              action["icon"],
+                              color: const Color(0xFF1A5C30),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -317,7 +393,9 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
             child: LayoutBuilder(builder: (context, constraints) {
               final slotWidth = constraints.maxWidth / 5;
               final currentIndex = _navItems.indexOf(_selectedItem);
+              if (currentIndex < 0) return const SizedBox.shrink();
               final previousIndex = _navItems.indexOf(_previousItem);
+              if (previousIndex < 0) return const SizedBox.shrink();
               
               // We adjust the index to skip the middle slot (index 2)
               double getSlotX(int navIndex) => (navIndex < 2 ? navIndex : navIndex + 1) * slotWidth + (slotWidth / 2);
@@ -325,7 +403,7 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
               return AnimatedBuilder(
                 animation: _navController,
                 builder: (context, _) {
-                  if (_selectedItem == NavItem.profile) return const SizedBox.shrink();
+                  if (!_navItems.contains(_selectedItem)) return const SizedBox.shrink();
 
                   final t = Curves.easeInOut.transform(_navController.value);
                   final cx = _lerpD(getSlotX(previousIndex), getSlotX(currentIndex), t);
