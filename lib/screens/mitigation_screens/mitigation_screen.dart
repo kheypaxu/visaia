@@ -9,24 +9,6 @@ class MitigationScreen extends StatelessWidget {
       length: 3,
       child: Scaffold(
         backgroundColor: const Color(0xFFF4F6F4),
-        appBar: AppBar(
-          backgroundColor: const Color(0xFF0D4D33),
-          elevation: 0,
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back, color: Colors.white),
-            onPressed: () => Navigator.pop(context),
-          ),
-          title: const Text(
-            'Suppression',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-          ),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.account_circle_outlined, color: Colors.white),
-              onPressed: () {},
-            ),
-          ],
-        ),
         body: Column(
           children: [
             // Top Recommendation Header
@@ -109,18 +91,6 @@ class MitigationScreen extends StatelessWidget {
 // Helper to style the active tab background since TabBar lacks a simple "pill" background for active
 // We override the theme specifically for this bar in a real app, or use a custom Container.
 // For this demo, let's use a standard decoration:
-Widget _buildTab(String label) {
-  return Tab(
-    child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.grey.shade300),
-      ),
-      child: Text(label),
-    ),
-  );
-}
 
 // --- TAB 1: PHYSICAL & CULTURAL ---
 class PhysicalCulturalTab extends StatelessWidget {

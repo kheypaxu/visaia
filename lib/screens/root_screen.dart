@@ -10,83 +10,10 @@ import 'package:visaia/screens/dashboard_screens/notifications.dart';
 import 'package:visaia/screens/dashboard_screens/full_analysis.dart';
 import 'package:visaia/screens/mitigation_screens/mitigation_screen.dart';
 import 'package:visaia/screens/logging_screens/daily_log_screen.dart';
-
+import 'package:visaia/screens/logging_screens/field_scouting_screen.dart';
+import 'package:visaia/screens/logging_screens/inspect_trap_screen.dart';
 
 enum NavItem { mitigation, home, cycle, map, profile }
-
-class FieldScoutingFormScreen extends StatelessWidget {
-  const FieldScoutingFormScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F7F2),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Color(0xFF0C503C)),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Text(
-          'Field Scouting Form',
-          style: GoogleFonts.inter(
-            color: const Color(0xFF0C503C),
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-          ),
-        ),
-      ),
-      body: Center(
-        child: Text(
-          'Field Scouting Form',
-          style: GoogleFonts.inter(
-            color: const Color(0xFF1A5C30),
-            fontSize: 28,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class InspectTrapFormScreen extends StatelessWidget {
-  const InspectTrapFormScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F7F2),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Color(0xFF0C503C)),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Text(
-          'Inspect Trap Form',
-          style: GoogleFonts.inter(
-            color: const Color(0xFF0C503C),
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-          ),
-        ),
-      ),
-      body: Center(
-        child: Text(
-          'Inspect Trap Form',
-          style: GoogleFonts.inter(
-            color: const Color(0xFF1A5C30),
-            fontSize: 28,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 // ─── Add Log Modal ────────────────────────────────────────────────────────────
 
@@ -170,10 +97,9 @@ class _AddLogModal extends StatelessWidget {
             title: 'Field Scouting',
             description: 'Weekly crop inspection',
             onTap: () {
-              Navigator.pop(context);
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const FieldScoutingFormScreen()),
+                MaterialPageRoute(builder: (context) => const FieldScoutingFormScreen()),
               );
             },
           ),
@@ -183,10 +109,9 @@ class _AddLogModal extends StatelessWidget {
             title: 'Inspect Trap',
             description: 'Weekly pheromone trap check',
             onTap: () {
-              Navigator.pop(context);
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const InspectTrapFormScreen()),
+                MaterialPageRoute(builder: (context) => const InspectTrapScreen()),
               );
             },
           ),
@@ -447,7 +372,7 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
             centerTitle: false,
 
               leading: IconButton(
-                icon: const Icon(Icons.menu_rounded, color: Color(0xFF0C503C), size: 27),
+                icon: const Icon(Icons.menu_rounded, color: Color(0xFF0C503C), size: 28),
                 onPressed: () {},
               ),
               title: Text('VISAIA',

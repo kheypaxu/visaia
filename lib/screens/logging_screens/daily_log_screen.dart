@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:visaia/screens/logging_screens/assign_log_modal.dart';
 
 // ─── Activity Type Model ──────────────────────────────────────────────────────
 
@@ -94,9 +95,7 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
   // Colors
   static const _green = Color(0xFF1A5C30);
   static const _darkGreen = Color(0xFF0C503C);
-  static const _lightGreen = Color(0xFF8DBA60);
   static const _bgColor = Color(0xFFF4F8F5);
-  static const _cardColor = Colors.white;
   static const _mutedText = Color(0xFF9E9E9E);
   static const _borderColor = Color(0xFFDDEEE4);
 
@@ -160,36 +159,6 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
     setState(() => _pickedImages.removeAt(index));
   }
 
-  Future<void> _saveLog() async {
-    if (_selectedActivity == null) {
-      _showSnack('Please select an activity type.');
-      return;
-    }
-    setState(() => _isSaving = true);
-    // Simulate async save
-    await Future.delayed(const Duration(milliseconds: 1200));
-    setState(() => _isSaving = false);
-    if (mounted) {
-      _showSnack('Daily log saved!', success: true);
-      await Future.delayed(const Duration(milliseconds: 700));
-      if (mounted) Navigator.pop(context);
-    }
-  }
-
-  void _showSnack(String msg, {bool success = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg,
-            style: GoogleFonts.inter(color: Colors.white, fontSize: 13)),
-        backgroundColor: success ? _green : Colors.red.shade700,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        margin: const EdgeInsets.all(16),
-        duration: const Duration(seconds: 2),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
@@ -213,57 +182,62 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
                   onPressed: () => Navigator.pop(context),
                 ),
                 flexibleSpace: FlexibleSpaceBar(
-                  background: Container(
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [Color(0xFF0C503C), Color(0xFF1A5C30)],
+                  background: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      // Background image
+                      Image.asset(
+                        'assets/images/bg.png',
+                        fit: BoxFit.cover,
                       ),
-                    ),
-                    child: SafeArea(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 48, 20, 16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.15),
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: const Icon(Icons.edit_note_rounded,
-                                      color: Colors.white, size: 20),
-                                ),
-                                const SizedBox(width: 12),
-                                Text(
-                                  'Daily Log',
-                                  style: GoogleFonts.inter(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 22,
-                                    letterSpacing: -0.3,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 10),
-                            Text(
-                              'Track what happens on your farm every day — from watering to harvest. One entry at a time builds a complete picture of your season.',
-                              style: GoogleFonts.inter(
-                                color: Colors.white.withOpacity(0.78),
-                                fontSize: 12,
-                                height: 1.5,
-                                fontWeight: FontWeight.w400,
-                              ),
-                            ),
-                          ],
+                      // Dark overlay for text readability
+                      Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              const Color(0xFF0C503C).withOpacity(0.78),
+                              const Color(0xFF1A5C30).withOpacity(0.72),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
+                      // Content
+                      SafeArea(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 48, 20, 16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Text(
+                                    'Daily Log',
+                                    style: GoogleFonts.inter(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 22,
+                                      letterSpacing: -0.3,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                'Track what happens on your farm every day — from watering to harvest. One entry at a time builds a complete picture of your season.',
+                                style: GoogleFonts.inter(
+                                  color: Colors.white.withValues(alpha: 0.88),
+                                  fontSize: 12,
+                                  height: 1.5,
+                                  fontWeight: FontWeight.w400,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -474,12 +448,13 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
           ),
         ),
 
-        // ── Save Button ───────────────────────────────────────────────────
+        // ── Next Button ───────────────────────────────────────────────────
         bottomNavigationBar: Container(
           color: _bgColor,
           padding: EdgeInsets.fromLTRB(16, 12, 16, bottomPadding + 16),
           child: GestureDetector(
-            onTap: _isSaving ? null : _saveLog,
+            // ✅ CHANGED: Calls the bottom sheet snackbar instead of Navigator.push
+            onTap: () => showAssignLogSheet(context),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
               height: 54,
@@ -490,7 +465,7 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: [
                   BoxShadow(
-                    color: _green.withOpacity(0.35),
+                    color: _green.withValues(alpha: 0.35),
                     blurRadius: 12,
                     offset: const Offset(0, 4),
                   ),
@@ -507,11 +482,8 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
                     : Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.save_alt_rounded,
-                              color: Colors.white, size: 18),
-                          const SizedBox(width: 8),
                           Text(
-                            'Save Daily Log',
+                            'Next',
                             style: GoogleFonts.inter(
                               color: Colors.white,
                               fontWeight: FontWeight.w700,
@@ -519,6 +491,9 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
                               letterSpacing: 0.2,
                             ),
                           ),
+                          const SizedBox(width: 8),
+                          const Icon(Icons.arrow_forward_rounded,
+                              color: Colors.white, size: 18),
                         ],
                       ),
               ),
