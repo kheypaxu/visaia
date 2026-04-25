@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:visaia/screens/profile_screens/deletion_confirmation_screens.dart';
 
 class PrivacyDataScreen extends StatelessWidget {
   const PrivacyDataScreen({super.key});
@@ -180,7 +181,14 @@ class PrivacyDataScreen extends StatelessWidget {
                     width: double.infinity,
                     height: 54,
                     child: ElevatedButton(
-                      onPressed: () {},
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => AccountDeletionFlow(),
+                          ),
+                        );
+                      },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: dangerRed,
                         shape: RoundedRectangleBorder(

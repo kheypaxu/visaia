@@ -1,360 +1,377 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
-class VisaiaDashboard extends StatefulWidget {
-  const VisaiaDashboard({super.key});
+class HomeDashboard extends StatelessWidget {
+  const HomeDashboard({super.key});
 
-  @override
-  State<VisaiaDashboard> createState() => _VisaiaDashboardState();
-}
-
-class _VisaiaDashboardState extends State<VisaiaDashboard> {
-
-  final List<PestCardData> _pestData = [
-    PestCardData(
-        icon: Icons.bug_report,
-        name: 'Fall Armyworm',
-        location: 'Sector 7B',                                                        
-        severity: 'High Severity',
-        bgColor: Colors.red.shade100,
-        iconColor: Colors.red.shade700),
-    PestCardData(
-        icon: Icons.bug_report_outlined,
-        name: 'Corn Borer',
-        location: 'North Plot',
-        severity: 'Moderate Severity',
-        bgColor: Colors.pink.shade50,
-        iconColor: Colors.pink.shade400),
-    PestCardData(
-        icon: Icons.grass,
-        name: 'Aphids',
-        location: 'South Greenhouse',
-        severity: 'Low Severity',
-        bgColor: const Color(0xFF7E7D2E).withValues(alpha: 0.2),
-        iconColor: const Color(0xFF7E7D2E)),
-    PestCardData(
-        icon: Icons.camera,
-        name: 'Spider Mites',
-        location: 'East Field',
-        severity: 'Monitoring',
-        bgColor: const Color(0xFF8D7F5C).withOpacity(0.2),
-        iconColor: const Color(0xFF8D7F5C)),
-    PestCardData(
-        icon: Icons.flight,
-        name: 'Locusts',
-        location: 'Regional Warning',
-        severity: 'Alert Only',
-        bgColor: Colors.grey.shade200,
-        iconColor: Colors.grey.shade600),
-  ];
+  // Strict Brand Colors from Figma/Images
+  static const Color darkGreen = Color(0xFF0D4D33);
+  static const Color forestGreen = Color(0xFF173408);
+  static const Color textGray = Color(0xFF43483E);
+  static const Color headingBlack = Color(0xFF1A1C18);
 
   @override
   Widget build(BuildContext context) {
-
     return Scaffold(
       body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Top Stats Cards Row
-              const Row(
-                children: [
-                  Expanded(
-                      child: StatCard(
-                          title: 'NET INCOME',
-                          value: '\$12,450',
-                          icon: Icons.account_balance_wallet_outlined,
-                          isLarge: true)),
-                  SizedBox(width: 16),
-                  Expanded(
-                      child: StatCard(
-                          title: 'TOTAL YIELD',
-                          value: '2,840 kg',
-                          icon: Icons.agriculture)),
-                ],
-              ),
-              const SizedBox(height: 16),
-              const Row(
-                children: [
-                  Expanded(
-                      child: StatCard(
-                          title: 'ACTIVE CYCLE',
-                          value: '14 days',
-                          icon: Icons.show_chart)),
-                  SizedBox(width: 16),
-                  Expanded(
-                      child: StatCard(
-                          title: 'FIELD COUNT', value: '42', icon: Icons.crop)),
-                ],
-              ),
-
-              const SizedBox(height: 32),
-
-              // Active Pests Section
-              _buildSectionHeader(
-                  context, 'Active Pests', 'Critical monitoring required'),
-              const SizedBox(height: 12),
-              ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: _pestData.length,
-                itemBuilder: (context, index) {
-                  final pest = _pestData[index];
-                  return PestListItem(pest: pest);
-                },
-              ),
-
-              const SizedBox(height: 32),
-
-              // Recent Activity Section
-              _buildSectionHeader(context, 'Recent Activity', ''),
-              const SizedBox(height: 12),
-              ActivityListItem(
-                icon: Icons.water_drop,
-                title: 'Irrigation Cycle Completed',
-                subtitle: 'Sector 7B • Optimal Soil Health',
-                time: '2H AGO',
-                iconColor: Colors.lightGreen,
-              ),
-              const SizedBox(height: 8),
-              ActivityListItem(
-                icon: Icons.grass,
-                title: 'Fertilizer Applied',
-                subtitle: 'North Plot • Nitrogen Mix',
-                time: '5H AGO',
-                iconColor: const Color(0xFFA5926B),
-              ),
-              const SizedBox(height: 80),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSectionHeader(BuildContext context, String title, String subtitle) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(title,
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-        if (subtitle.isNotEmpty)
-          Text(subtitle,
-              style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
-      ],
-    );
-  }
-}
-
-class StatCard extends StatelessWidget {
-  final String title;
-  final String value;
-  final IconData icon;
-  final bool isLarge;
-
-  const StatCard({
-    required this.title,
-    required this.value,
-    required this.icon,
-    this.isLarge = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    Color cardColor;
-    Color textColor;
-    if (isLarge) {
-      cardColor = const Color(0xFF0C503C); // Dark green
-      textColor = Colors.white;
-    } else if (title.contains('FIELD')) {
-      cardColor = const Color(0xFFF7E9AA); // Yellowish
-      textColor = Colors.black;
-    } else {
-      cardColor = const Color(0xFFA6C9A2); // Light green
-      textColor = Colors.black;
-    }
-
-    return AspectRatio(
-      aspectRatio: 1.1, // Control the card shape
-      child: Container(
-        padding: const EdgeInsets.all(16.0),
-        decoration: BoxDecoration(
-          color: cardColor,
-          borderRadius: BorderRadius.circular(16),
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(icon, color: textColor.withOpacity(isLarge ? 0.7 : 0.5)),
-            const Spacer(),
-            Text(
-              title,
-              style: TextStyle(
-                color: textColor.withOpacity(0.8),
-                fontSize: 10,
-                letterSpacing: 0.5,
-              ),
-            ),
+            // --- Main Metrics Grid ---
             Row(
               children: [
-                Text(
-                  value.contains(' ') ? value.split(' ')[0] : value,
-                  style: TextStyle(
-                      color: textColor,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 22),
+                Expanded(
+                  child: _buildMetricCard(
+                    title: "NET INCOME",
+                    value: "\$12,450",
+                    icon: Icons.payments_outlined,
+                    bgColor: darkGreen,
+                    textColor: Colors.white,
+                  ),
                 ),
-                if (value.contains(' ')) const SizedBox(width: 4),
-                if (value.contains(' '))
-                  Text(
-                    value.split(' ')[1],
-                    style: TextStyle(
-                        color: textColor.withOpacity(0.6), fontSize: 12),
-                  )
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildMetricCard(
+                    title: "TOTAL YIELD",
+                    value: "2,840",
+                    unit: "kg",
+                    icon: Icons.agriculture_rounded,
+                    bgColor: const Color(0xFFC5E1A5),
+                    textColor: darkGreen,
+                  ),
+                ),
               ],
             ),
-            const SizedBox(height: 8),
+   const SizedBox(height: 15), // Matching Figma layout spacing
+Row(
+  children: [
+    Expanded(
+      child: _buildSmallMetricCard(
+        "ACTIVE CYCLE",
+        "14",
+        "days",
+        const Color(0xFF7BC72E).withValues(alpha:0.6), // Matching Figma Fill: 7BC72E @ 60%
+      ),
+    ),
+    const SizedBox(width: 15), // Spacing: 15 from Figma
+    Expanded(
+      child: _buildSmallMetricCard(
+        "FIELD COUNT",
+        "42",
+        "",
+        const Color(0xFFF7E594),
+      ),
+    ),
+  ],
+),
+            const SizedBox(height: 40),
+
+            // --- Active Pests Section ---
             Text(
-              'VIEW DETAILS',
-              style: TextStyle(
-                color: textColor.withOpacity(0.8),
-                fontSize: 10,
+              "Active Pests",
+              style: GoogleFonts.epilogue(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w800,
+                  color: headingBlack),
+            ),
+            Text(
+              "Critical monitoring required",
+              style: GoogleFonts.manrope(
+                  fontSize: 16,
+                  color: textGray,
+                  fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 24),
+
+            _buildPestPill(
+                "Fall Armyworm",
+                "Detected in Sector 7B • High Severity",
+                const Color.fromARGB(255, 247, 206, 206),
+                const Color(0xFFBA1A1A)),
+            _buildPestPill(
+                "Corn Borer",
+                "North Plot • Moderate Severity",
+                const Color.fromARGB(166, 255, 221, 221),
+                const Color(0xFFBA1A1A)),
+            _buildPestPill(
+                "Aphids",
+                "South Greenhouse • Low Severity",
+                const Color(0xFF7E5800),
+                const Color.fromARGB(255, 255, 235, 200)),
+            _buildPestPill(
+                "Spider Mites",
+                "East Field • Monitoring",
+                const Color.fromARGB(197, 144, 118, 56),
+                const Color.fromARGB(249, 255, 225, 168)),
+            _buildPestPill(
+                "Locusts",
+                "Regional Warning • Alert Only",
+                const Color.fromARGB(255, 240, 240, 240),
+                const Color.fromARGB(216, 64, 73, 67)),
+
+            const SizedBox(height: 40),
+
+            // --- Recent Activity Section ---
+            Text(
+              'Recent Activity',
+              style: GoogleFonts.epilogue(
+                fontSize: 24,
+                fontWeight: FontWeight.w800,
+                color: headingBlack,
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            _buildActivityCard(
+                "Irrigation Cycle Completed",
+                "Sector 7B • Optimal Soil Health",
+                "2H AGO",
+                Icons.water_drop,
+                const Color.fromARGB(255, 228, 248, 229)),
+            _buildActivityCard(
+                "Fertilizer Applied",
+                "North Plot • Nitrogen Mix",
+                "5H AGO",
+                Icons.center_focus_strong,
+                const Color.fromARGB(223, 235, 216, 179)),
+
+            const SizedBox(height: 40),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- UI Components ---
+
+  Widget _buildMetricCard({
+    required String title,
+    required String value,
+    String? unit,
+    required IconData icon,
+    required Color bgColor,
+    required Color textColor,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(32),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: textColor, size: 24),
+          ),
+          const SizedBox(height: 24),
+          Text(title,
+              style: GoogleFonts.manrope(
+                  color: textColor.withOpacity(0.7),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.5)),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(value,
+                  style: GoogleFonts.manrope(
+                      color: textColor,
+                      fontSize: 32,
+                      fontWeight: FontWeight.w800)),
+              if (unit != null) ...[
+                const SizedBox(width: 4),
+                Text(unit,
+                    style: GoogleFonts.manrope(
+                        color: textColor.withOpacity(0.7),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600)),
+              ]
+            ],
+          ),
+          const SizedBox(height: 20),
+          Text(
+            "VIEW DETAILS",
+            style: GoogleFonts.manrope(
+              color: textColor,
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSmallMetricCard(String title, String value, String unit, Color color) {
+  // Maintaining icons from your requested images
+  IconData displayIcon = title.contains("CYCLE") 
+      ? Icons.stacked_line_chart_rounded 
+      : Icons.grid_view_rounded;
+
+  return Container(
+    width: 167, // Fixed Width from Figma
+    height: 131, // Fixed Height from Figma
+    padding: const EdgeInsets.all(16), 
+    decoration: BoxDecoration(
+      color: color,
+      borderRadius: BorderRadius.circular(24), // Corner Radius: 24
+      border: Border.all(
+        color: Colors.white.withValues(alpha: 0.5), // 50% White Stroke
+        width: 1,
+      ),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisAlignment: MainAxisAlignment.spaceBetween, 
+      children: [
+        // Top Icon
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.06),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(displayIcon, size: 18, color: Colors.black.withValues(alpha: 0.7)),
+        ),
+        
+        // Bottom Content
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: GoogleFonts.manrope(
+                color: Colors.black.withValues(alpha: 0.6),
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
                 letterSpacing: 0.5,
               ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class PestCardData {
-  final IconData icon;
-  final String name;
-  final String location;
-  final String severity;
-  final Color bgColor;
-  final Color iconColor;
-
-  PestCardData({
-    required this.icon,
-    required this.name,
-    required this.location,
-    required this.severity,
-    required this.bgColor,
-    required this.iconColor,
-  });
-}
-
-class PestListItem extends StatelessWidget {
-  final PestCardData pest;
-
-  const PestListItem({required this.pest});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade100, width: 1),
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
-        leading: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(color: pest.bgColor, shape: BoxShape.circle),
-          child: Icon(pest.icon, color: pest.iconColor),
-        ),
-        title: Text(pest.name,
-            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-        subtitle: Text('${pest.location} • ${pest.severity}',
-            style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
-        trailing: Icon(Icons.chevron_right, color: Colors.grey.shade400),
-      ),
-    );
-  }
-}
-
-class ActionButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-
-  const ActionButton({required this.icon, required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 100, // Explicit height as in design
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade100, width: 1),
-      ),
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircleAvatar(
-              backgroundColor: const Color(0xFFF7F8F7), // Match Scaffold
-              child: Icon(icon, color: const Color(0xFF0C503C)),
+            const SizedBox(height: 2),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                Text(
+                  value,
+                  style: GoogleFonts.manrope(
+                    color: const Color(0xFF1A1C18),
+                    fontSize: 28, // Scaled to fit H:131 perfectly
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                if (unit.isNotEmpty) ...[
+                  const SizedBox(width: 4),
+                  Text(
+                    unit,
+                    style: GoogleFonts.manrope(
+                      color: Colors.black.withValues(alpha: 0.4),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ]
+              ],
             ),
-            const SizedBox(height: 12),
-            Text(label,
-                style:
-                    const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
           ],
         ),
+      ],
+    ),
+  );
+}
+
+  Widget _buildPestPill(String title, String subtitle, Color circleBg, Color iconColor) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(100),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 58,
+            height: 58,
+            decoration: BoxDecoration(
+              color: circleBg,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.bug_report, color: iconColor, size: 26),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    style: GoogleFonts.manrope(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 18,
+                        color: headingBlack)),
+                Text(subtitle,
+                    style: GoogleFonts.manrope(
+                        color: textGray,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500)),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
-}
 
-class ActivityListItem extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final String time;
-  final Color iconColor;
-
-  const ActivityListItem({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.time,
-    required this.iconColor,
-  });
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildActivityCard(String title, String subtitle, String time, IconData icon, Color iconBg) {
     return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade100, width: 1),
+        color: const Color(0xFFF9FAF9),
+        borderRadius: BorderRadius.circular(32),
       ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        leading: Container(
-          width: 48,
-          height: 48,
-          decoration: BoxDecoration(
-              color: iconColor.withOpacity(0.15), shape: BoxShape.circle),
-          child: Icon(icon, color: iconColor),
-        ),
-        title: Text(title,
-            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-        subtitle: Text(subtitle,
-            style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
-        trailing: Text(time,
-            style: TextStyle(
-                color: Colors.grey.shade400,
-                fontSize: 10,
-                letterSpacing: 0.5)),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+                color: iconBg, borderRadius: BorderRadius.circular(18)),
+            child: Icon(icon, color: darkGreen, size: 24),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    style: GoogleFonts.manrope(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                        color: headingBlack)),
+                const SizedBox(height: 2),
+                Text(subtitle,
+                    style: GoogleFonts.manrope(
+                        color: textGray,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500)),
+              ],
+            ),
+          ),
+          Text(time,
+              style: GoogleFonts.manrope(
+                  color: Colors.grey.shade500,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700)),
+        ],
       ),
     );
   }

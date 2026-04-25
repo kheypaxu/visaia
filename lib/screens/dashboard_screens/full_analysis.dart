@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:visaia/screens/dashboard_screens/view_income.dart';
 
 class IncomeEstimationScreen extends StatelessWidget {
   const IncomeEstimationScreen({super.key});
@@ -128,9 +129,9 @@ class IncomeEstimationScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 20),
-            _buildCropItem("Glutinous Corn", "Plot 4B", "92% Mature", const Color(0xFFC5E1A5)),
-            _buildCropItem("Soybean", "East Ridge", "Early Growth", const Color(0xFFE1E3E1)),
-            _buildCropItem("Yellow Corn", "Section 2", "Mid Stage", const Color(0xFFC5E1A5)),
+            _buildCropItem(context, "Glutinous Corn", "Plot 4B", "92% Mature", const Color(0xFFC5E1A5)),
+            _buildCropItem(context, "Soybean", "East Ridge", "Early Growth", const Color(0xFFE1E3E1)),
+            _buildCropItem(context, "Yellow Corn", "Section 2", "Mid Stage", const Color(0xFFC5E1A5)),
             
             const SizedBox(height: 40), 
           ],
@@ -216,7 +217,7 @@ class IncomeEstimationScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildCropItem(String name, String plot, String stage, Color stageBg) {
+  Widget _buildCropItem(BuildContext context, String name, String plot, String stage, Color stageBg) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(20),
@@ -233,26 +234,26 @@ class IncomeEstimationScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    name, 
+                    name,
                     style: GoogleFonts.manrope(
-                      fontSize: 16, 
-                      fontWeight: FontWeight.w800
-                    )
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                   Row(
                     children: [
                       const Icon(
-                        Icons.location_on_outlined, 
-                        size: 14, 
-                        color: textGray
+                        Icons.location_on_outlined,
+                        size: 14,
+                        color: textGray,
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        plot, 
+                        plot,
                         style: GoogleFonts.manrope(
-                          fontSize: 13, 
-                          color: textGray
-                        )
+                          fontSize: 13,
+                          color: textGray,
+                        ),
                       ),
                     ],
                   ),
@@ -261,46 +262,59 @@ class IncomeEstimationScreen extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 decoration: BoxDecoration(
-                  color: stageBg, 
-                  borderRadius: BorderRadius.circular(25)
+                  color: stageBg,
+                  borderRadius: BorderRadius.circular(25),
                 ),
                 child: Text(
-                  stage, 
+                  stage,
                   style: GoogleFonts.manrope(
-                    fontSize: 12, 
-                    fontWeight: FontWeight.w700
-                  )
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               )
             ],
           ),
+
           const SizedBox(height: 30),
-          Container(
-            width: double.infinity,
-            height: 45,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF3F5EE),
-              borderRadius: BorderRadius.circular(25),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  'View Income', 
-                  style: GoogleFonts.manrope(
-                    fontWeight: FontWeight.w900, 
-                    color: darkGreen
-                  )
+
+          InkWell(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const CropFinanceScreen(),
                 ),
-                const SizedBox(width: 8),
-                const Icon(
-                  Icons.arrow_forward, 
-                  size: 16, 
-                  color: Color.fromARGB(255, 1, 39, 24)
-                ),
-              ],
+              );
+            },
+            borderRadius: BorderRadius.circular(25),
+            child: Container(
+              width: double.infinity,
+              height: 45,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF3F5EE),
+                borderRadius: BorderRadius.circular(25),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'View Income',
+                    style: GoogleFonts.manrope(
+                      fontWeight: FontWeight.w900,
+                      color: darkGreen,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  const Icon(
+                    Icons.arrow_forward,
+                    size: 16,
+                    color: Color.fromARGB(255, 1, 39, 24),
+                  ),
+                ],
+              ),
             ),
-          )
+          ),
         ],
       ),
     );
