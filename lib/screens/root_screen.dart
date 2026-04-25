@@ -447,7 +447,7 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
             centerTitle: false,
 
               leading: IconButton(
-                icon: const Icon(Icons.menu_rounded, color: Color(0xFF0C503C), size: 28),
+                icon: const Icon(Icons.menu_rounded, color: Color(0xFF0C503C), size: 27),
                 onPressed: () {},
               ),
               title: Text('VISAIA',
