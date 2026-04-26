@@ -12,6 +12,8 @@ import 'package:visaia/screens/mitigation_screens/mitigation_screen.dart';
 import 'package:visaia/screens/logging_screens/daily_log_screen.dart';
 import 'package:visaia/screens/logging_screens/field_scouting_screen.dart';
 import 'package:visaia/screens/logging_screens/inspect_trap_screen.dart';
+import 'package:visaia/screens/cycle_screens/start_cycle.dart';
+import 'package:visaia/screens/dashboard_screens/cycles_screen.dart';
 
 enum NavItem { mitigation, home, cycle, map, profile }
 
@@ -290,7 +292,7 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
 
   static const List<Widget> _pages = [
     HomeDashboard(),
-    Center(child: Text("Cycle")),
+    CroppingCyclesScreen(),
     MapViewScreen(),
     MitigationScreen(),
     ProfileScreen(),
@@ -479,8 +481,10 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
           },
           {
             "icon": Icons.eco_outlined,
-            "label": "Start Cycle",
-            "onTap": null,
+            "label": "Start New Cycle",
+            "onTap": () {
+              Navigator.push(context, MaterialPageRoute(builder: (context) => StartCroppingCycleScreen()));
+            },
           },
           {
             "icon": Icons.pie_chart_outline,
@@ -675,23 +679,27 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
             left: MediaQuery.of(context).size.width / 2 - 32,
             child: GestureDetector(
               onTap: _toggleMenu,
-              child: AnimatedRotation(
-                duration: const Duration(milliseconds: 300),
-                turns: _isMenuOpen ? 0.125 : 0,
-                child: Container(
-                  width: 64,
-                  height: 64,
-                  decoration: const BoxDecoration(
-                      color: Color(0xFF0C503C),
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                            color: Colors.black26,
-                            blurRadius: 12,
-                            offset: Offset(0, 4))
-                      ]),
-                  child:
-                      const Icon(Icons.add, color: Colors.white, size: 32),
+              child: Container(
+                width: 64,
+                height: 64,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF0C503C),
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 12,
+                      offset: Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Center(
+                  child: AnimatedIcon(
+                    icon: AnimatedIcons.add_event,
+                    progress: _menuController,
+                    color: Colors.white,
+                    size: 32,
+                  ),
                 ),
               ),
             ),

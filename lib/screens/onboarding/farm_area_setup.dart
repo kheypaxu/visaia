@@ -3,7 +3,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:visaia/services/farm_service.dart';
+import 'package:visaia/utils/geo_utils.dart';
 import 'package:visaia/screens/onboarding/field_area_setup_screen.dart';
 
 enum MapMode { idle, add, drag, delete }
@@ -27,8 +27,6 @@ class _FarmAreaSetupState extends State<FarmAreaSetup> {
 
   final LatLng _center = const LatLng(10.7202, 122.5621);
 
-  final FarmService _farmService = FarmService();
-
   MapMode _mode = MapMode.idle;
   int? _draggingIndex;
 
@@ -36,21 +34,34 @@ class _FarmAreaSetupState extends State<FarmAreaSetup> {
     if (_points.length < 3 || _nameController.text.isEmpty) return;
 
     try {
-      // 1. Save farm to Firestore
-      await _farmService.saveFarm(
-        name: _nameController.text,
-        points: _points,
-      );
-
-      // 2. Update user document - set hasFarm to true
       final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-          'hasFarm': true,
-        }, SetOptions(merge: true));
-      }
+      if (user == null) return;
 
-      // 3. Navigate to the Field Setup Screen with farm data
+      // 🧠 1. CALCULATE AREA HERE (THIS IS THE CORRECT PLACE)
+      final areaSqm = GeoUtils.calculateAreaSqm(_points);
+      final acres = GeoUtils.toAcres(areaSqm);
+
+      // 🧾 2. SAVE FARM (include acres if your service supports it OR store separately)
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('farms')
+          .add({
+        'name': _nameController.text,
+        'acres': acres, // ✅ NOW REAL VALUE
+        'boundaries': _points
+            .map((p) => {'lat': p.latitude, 'lng': p.longitude})
+            .toList(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // 👤 3. Update user flag
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .set({'hasFarm': true}, SetOptions(merge: true));
+
+      // 🚀 4. Navigate
       if (mounted) {
         Navigator.push(
           context,
@@ -64,7 +75,6 @@ class _FarmAreaSetupState extends State<FarmAreaSetup> {
         );
       }
     } catch (e) {
-      // Handle error (e.g., show SnackBar)
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Error saving farm: $e")),
