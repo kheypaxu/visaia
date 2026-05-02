@@ -24,12 +24,12 @@ void showAddLogModal(BuildContext context) {
     context: context,
     backgroundColor: Colors.transparent,
     isScrollControlled: true,
-    builder: (_) => const _AddLogModal(),
+    builder: (_) => _AddLogModal(),
   );
 }
 
 class _AddLogModal extends StatelessWidget {
-  const _AddLogModal();
+  final user = FirebaseAuth.instance.currentUser;
 
   @override
   Widget build(BuildContext context) {
@@ -87,9 +87,15 @@ class _AddLogModal extends StatelessWidget {
             title: 'Daily Log',
             description: 'Record routine farm activities',
             onTap: () {
+              Navigator.pop(context);
+
               Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => DailyLogFormScreen()),
+                  MaterialPageRoute(builder: (context) => DailyLogFormScreen(
+                    userId: user!.uid,
+                    cycleId: '',
+                    shouldAssignCycle: true,
+                    )),
               );
             },
           ),
@@ -101,7 +107,10 @@ class _AddLogModal extends StatelessWidget {
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const FieldScoutingFormScreen()),
+                MaterialPageRoute(builder: (context) => FieldScoutingFormScreen(
+                  userId: user!.uid,
+                  cycleId: '',
+                )),
               );
             },
           ),

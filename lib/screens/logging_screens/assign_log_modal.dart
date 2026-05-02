@@ -1,83 +1,90 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
-void main() {
-  runApp(const MyApp());
-}
-
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(scaffoldBackgroundColor: const Color(0xFFF9FBF7)),
-      home: const HomeScreen(),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────
-// YOUR EXISTING SCREENS GO HERE (Example below)
-// ─────────────────────────────────────────────────────────────
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('My Agritech App')),
-      body: Center(
-        child: ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF162B0D),
-            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(50)),
-          ),
-          onPressed: () => showAssignLogSheet(context), // <--- TRIGGER IT HERE
-          child: Text(
-            'Open Assign Log',
-            style: GoogleFonts.manrope(color: Colors.white, fontWeight: FontWeight.w600),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────
-// REUSABLE SNACKBAR / BOTTOM SHEET COMPONENT
-// ─────────────────────────────────────────────────────────────
-
-/// Call this function from any button's onTap:
-/// `showAssignLogSheet(context);`
-void showAssignLogSheet(BuildContext context) {
+void showAssignLogSheet(
+  BuildContext context, {
+  required String userId,
+  required String cycleId,
+  required Function(String selectedCycleId) onCycleSelected,
+}) {
   showModalBottomSheet(
     context: context,
-    isScrollControlled: true, // Allows taking up full height
-    backgroundColor: Colors.transparent, // Removes default dark background
-    builder: (context) => const AssignLogSheetContent(),
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) => AssignLogSheetContent(
+      userId: userId,
+      cycleId: cycleId,
+      onCycleSelected: onCycleSelected,
+    ),
   );
 }
 
 class AssignLogSheetContent extends StatefulWidget {
-  const AssignLogSheetContent({super.key});
+  final String userId;
+  final String cycleId;
+  final Function(String selectedCycleId) onCycleSelected;
+
+  const AssignLogSheetContent({
+    super.key,
+    required this.userId,
+    required this.cycleId,
+    required this.onCycleSelected,
+  });
 
   @override
   State<AssignLogSheetContent> createState() => _AssignLogSheetContentState();
 }
 
 class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
-  String? selectedField;
   String? selectedCycle;
+  List<Map<String, dynamic>> cycles = [];
+  bool _isLoading = true;
 
-  final List<String> fields = ['North Wheat Block', 'South Corn Plot', 'East Rice Paddy', 'West Soybean Field'];
-  final List<String> cycles = ['Rabi 2024–2025', 'Kharif 2024', 'Zaid 2024'];
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    try {
+      // Fetch cycles
+      final cyclesSnapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('cycles')
+          .get();
+
+      cycles = cyclesSnapshot.docs.map((doc) {
+        return {
+          'id': doc.id,
+          'name': doc['cycleName'] ?? 'Unknown Cycle',
+          'fieldName': doc['fieldName'] ?? '',
+        };
+      }).toList();
+
+      // Only pre-select if widget.cycleId is not empty AND exists in cycles
+      String? preSelected;
+      if (widget.cycleId.isNotEmpty) {
+        final exists = cycles.any((c) => c['id'] == widget.cycleId);
+        if (exists) {
+          preSelected = widget.cycleId;
+        }
+      }
+      
+      setState(() {
+        selectedCycle = preSelected;
+        _isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Error loading data: $e');
+      setState(() => _isLoading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    // Takes up 95% of the screen height to eliminate whitespace
     final screenHeight = MediaQuery.of(context).size.height;
     final topPadding = MediaQuery.of(context).padding.top;
 
@@ -107,78 +114,115 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
             child: SingleChildScrollView(
               physics: const BouncingScrollPhysics(),
               padding: const EdgeInsets.symmetric(horizontal: 28.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 24),
+              child: _isLoading
+                  ? const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 40),
+                      child: CircularProgressIndicator(color: Color(0xFF162B0D)),
+                    )
+                  : cycles.isEmpty
+                      ? _buildEmptyState()
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const SizedBox(height: 24),
 
-                  // ── Header ──
-                  Text(
-                    'Assign Log',
-                    style: GoogleFonts.epilogue(
-                      fontSize: 32, // Enlarged
-                      fontWeight: FontWeight.w700,
-                      color: const Color(0xFF162B0D),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Select where this record belongs',
-                    style: GoogleFonts.manrope(
-                      fontSize: 15, // Enlarged
-                      fontWeight: FontWeight.w400,
-                      color: const Color(0xFF8E9A88),
-                    ),
-                  ),
-                  const SizedBox(height: 40), // Extra space
+                            // ── Header ──
+                            Text(
+                              'Assign Log',
+                              style: GoogleFonts.epilogue(
+                                fontSize: 32,
+                                fontWeight: FontWeight.w700,
+                                color: const Color(0xFF162B0D),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              'Select where this record belongs',
+                              style: GoogleFonts.manrope(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w400,
+                                color: const Color(0xFF8E9A88),
+                              ),
+                            ),
+                            const SizedBox(height: 40),
 
-                  // ── Report Card ──
-                  _buildReportCard(),
-                  const SizedBox(height: 44), // Extra space
+                            // ── Report Card ──
+                            _buildReportCard(),
+                            const SizedBox(height: 44),
 
-                  // ── Field Selection Dropdown ──
-                  _buildDropdownLabel('FIELD SELECTION'),
-                  const SizedBox(height: 12),
-                  _buildDropdown(
-                    value: selectedField,
-                    hint: 'Choose specific field',
-                    items: fields,
-                    onChanged: (val) => setState(() => selectedField = val),
-                  ),
-                  const SizedBox(height: 32), // Extra space
-
-                  // ── Active Cropping Cycle Dropdown ──
-                  _buildDropdownLabel('ACTIVE CROPPING CYCLE'),
-                  const SizedBox(height: 12),
-                  _buildDropdown(
-                    value: selectedCycle,
-                    hint: 'Select active cycle',
-                    items: cycles,
-                    onChanged: (val) => setState(() => selectedCycle = val),
-                  ),
-                  const SizedBox(height: 100), // Space for button
-                ],
-              ),
+                            // ── Active Cropping Cycle Dropdown ──
+                            _buildDropdownLabel('ACTIVE CROPPING CYCLE'),
+                            const SizedBox(height: 12),
+                            _buildDropdown(
+                              value: selectedCycle,
+                              hint: 'Select active cycle',
+                              items: cycles
+                                  .map((c) => {'id': c['id'], 'name': c['name']})
+                                  .toList(),
+                              onChanged: (val) => setState(() => selectedCycle = val),
+                            ),
+                            const SizedBox(height: 100),
+                          ],
+                        ),
             ),
           ),
 
           // ── Pinned Save Button at very bottom ──
-          Container(
-            width: double.infinity,
-            color: const Color(0xFFF9FBF7),
-            padding: EdgeInsets.fromLTRB(28, 16, 28, 24 + MediaQuery.of(context).padding.bottom),
-            child: _buildSaveButton(),
-          ),
+          if (!_isLoading && cycles.isNotEmpty)
+            Container(
+              width: double.infinity,
+              color: const Color(0xFFF9FBF7),
+              padding: EdgeInsets.fromLTRB(28, 16, 28, 24 + MediaQuery.of(context).padding.bottom),
+              child: _buildSaveButton(),
+            ),
         ],
       ),
     );
   }
 
-  // ────────────────────────── Report Card ──────────────────────────
+  Widget _buildEmptyState() {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        const SizedBox(height: 100),
+        const Icon(Icons.agriculture_outlined, size: 80, color: Color(0xFFBDBDBD)),
+        const SizedBox(height: 20),
+        Text(
+          'No Cropping Cycles Found',
+          style: GoogleFonts.manrope(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: const Color(0xFF162B0D),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          'Please create a cropping cycle first',
+          style: GoogleFonts.manrope(
+            fontSize: 14,
+            color: const Color(0xFF8E9A88),
+          ),
+        ),
+        const SizedBox(height: 30),
+        ElevatedButton(
+          onPressed: () => Navigator.pop(context),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF162B0D),
+            padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(30),
+            ),
+          ),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+
   Widget _buildReportCard() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(24), // Enlarged padding
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(24),
@@ -195,7 +239,7 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 52, // Enlarged icon
+            width: 52,
             height: 52,
             decoration: BoxDecoration(
               color: const Color(0xFFC6F097),
@@ -226,18 +270,18 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
                 ),
                 const SizedBox(height: 14),
                 Text(
-                  'Soil Analysis Report #024',
+                  'Daily Activity Log',
                   style: GoogleFonts.manrope(
-                    fontSize: 17, // Enlarged
+                    fontSize: 17,
                     fontWeight: FontWeight.w700,
                     color: const Color(0xFF162B0D),
                   ),
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'Recorded: Today, 08:45 AM',
+                  'Recorded: Today',
                   style: GoogleFonts.manrope(
-                    fontSize: 14, // Enlarged
+                    fontSize: 14,
                     fontWeight: FontWeight.w400,
                     color: const Color(0xFF8E9A88),
                   ),
@@ -250,7 +294,6 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
     );
   }
 
-  // ────────────────────────── Dropdown Label ──────────────────────────
   Widget _buildDropdownLabel(String text) {
     return Text(
       text,
@@ -263,73 +306,90 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
     );
   }
 
-  // ────────────────────────── Styled Dropdown ──────────────────────────
   Widget _buildDropdown({
     required String? value,
     required String hint,
-    required List<String> items,
+    required List<Map<String, dynamic>> items,
     required ValueChanged<String?> onChanged,
   }) {
+    // Validate that the value exists in items to avoid the "exactly one item" error
+    final isValidValue = value != null && items.any((item) => item['id'] == value);
+    final effectiveValue = isValidValue ? value : null;
+    
     return Container(
       decoration: BoxDecoration(
         color: const Color(0xFFF2F4F0),
-        borderRadius: BorderRadius.circular(14), // Enlarged radius
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: value != null
+          color: effectiveValue != null
               ? const Color(0xFF162B0D).withOpacity(0.3)
               : const Color(0xFFE2E8DE),
           width: 1.5,
         ),
       ),
       child: DropdownButtonFormField<String>(
-        value: value,
-        hint: Text(hint, style: GoogleFonts.manrope(fontSize: 15, fontWeight: FontWeight.w400, color: const Color(0xFF8E9A88))),
-        icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF162B0D), size: 24),
+        value: effectiveValue,  // Use validated value
+        hint: Text(hint,
+            style: GoogleFonts.manrope(
+                fontSize: 15,
+                fontWeight: FontWeight.w400,
+                color: const Color(0xFF8E9A88))),
+        icon: const Icon(Icons.keyboard_arrow_down_rounded,
+            color: Color(0xFF162B0D), size: 24),
         isExpanded: true,
         decoration: const InputDecoration(
           border: InputBorder.none,
-          contentPadding: EdgeInsets.symmetric(horizontal: 18, vertical: 16), // Enlarged padding
+          contentPadding: EdgeInsets.symmetric(horizontal: 18, vertical: 16),
         ),
         dropdownColor: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        style: GoogleFonts.manrope(fontSize: 15, fontWeight: FontWeight.w500, color: const Color(0xFF162B0D)),
-        items: items.map((item) => DropdownMenuItem(value: item, child: Text(item))).toList(),
+        style: GoogleFonts.manrope(
+            fontSize: 15,
+            fontWeight: FontWeight.w500,
+            color: const Color(0xFF162B0D)),
+        items: items
+            .map<DropdownMenuItem<String>>((item) {
+              return DropdownMenuItem<String>(
+                value: item['id'] as String,
+                child: Text(item['name'] as String),
+              );
+            })
+            .toList(),
         onChanged: onChanged,
       ),
     );
   }
 
-  // ────────────────────────── Save Button ──────────────────────────
   Widget _buildSaveButton() {
+    final isEnabled = selectedCycle != null && selectedCycle!.isNotEmpty;
+    
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: () {
-          // Dismiss the sheet and show a small success indicator
-          Navigator.pop(context);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Log saved successfully!', style: GoogleFonts.manrope(fontWeight: FontWeight.w500)),
-              backgroundColor: const Color(0xFF162B0D),
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-          );
-        },
+        onTap: isEnabled
+            ? () {
+                widget.onCycleSelected(selectedCycle!);
+                Navigator.pop(context);
+              }
+            : null,
         borderRadius: BorderRadius.circular(50),
         child: Container(
           width: double.infinity,
-          height: 64, // Enlarged button
+          height: 64,
           decoration: BoxDecoration(
-            color: const Color(0xFF162B0D),
+            color: isEnabled
+                ? const Color(0xFF162B0D)
+                : const Color(0xFFBDBDBD),
             borderRadius: BorderRadius.circular(50),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF162B0D).withOpacity(0.25),
-                blurRadius: 20,
-                offset: const Offset(0, 8),
-              ),
-            ],
+            boxShadow: isEnabled
+                ? [
+                    BoxShadow(
+                      color: const Color(0xFF162B0D).withOpacity(0.25),
+                      blurRadius: 20,
+                      offset: const Offset(0, 8),
+                    ),
+                  ]
+                : null,
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -337,9 +397,9 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
               const Icon(Icons.save_outlined, color: Colors.white, size: 22),
               const SizedBox(width: 12),
               Text(
-                'Save Log',
+                'Continue',
                 style: GoogleFonts.manrope(
-                  fontSize: 17, // Enlarged
+                  fontSize: 17,
                   fontWeight: FontWeight.w600,
                   color: Colors.white,
                   letterSpacing: 0.3,

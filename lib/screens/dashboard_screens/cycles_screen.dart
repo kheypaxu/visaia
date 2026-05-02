@@ -6,6 +6,7 @@ import 'package:visaia/core/models/cycle_model.dart';
 import 'package:visaia/screens/cycle_screens/start_cycle.dart';
 import 'package:visaia/screens/cycle_screens/record_previous_cycle.dart';
 import 'package:visaia/screens/cycle_screens/cycle_details.dart';
+import 'package:visaia/screens/cycle_screens/completed_cycle_details.dart';
 import 'package:visaia/screens/cycle_screens/edit_cycle.dart';
 
 class CroppingCyclesScreen extends StatefulWidget {
@@ -268,7 +269,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
       onViewDetailsTap: () {
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => CycleDetailsScreen(cycleId: cycle.id)),
+          MaterialPageRoute(builder: (context) => CycleDetailsScreen(cycleId: cycle.id, uid: user!.uid,)),
         );
       },
     );
@@ -285,7 +286,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
       onViewDetailsTap: () {
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => CycleDetailsScreen(cycleId: cycle.id)),
+          MaterialPageRoute(builder: (context) => CompletedCycleScreen(cycleId: cycle.id, userId: user!.uid,)),
         );
       },
     );
@@ -518,29 +519,93 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
   }
 
   Widget _buildActionButtons() {
-    return Column(
-      children: [
-        _actionItem(
-          icon: Icons.eco,
-          title: 'Start New Cycle',
-          subtitle: 'Monitor new cropping cycle',
-          isPrimary: true,
-          onTap: () {
-            Navigator.push(context, MaterialPageRoute(builder: (context) => StartCroppingCycleScreen()));
-          },
-        ),
-        const SizedBox(height: 16),
-        _actionItem(
-          icon: Icons.shopping_basket_outlined,
-          title: 'Record Previous Cycle',
-          subtitle: 'Record yield and losses',
-          isPrimary: false,
-          onTap: () {
-            Navigator.push(context, MaterialPageRoute(builder: (context) => RecordCycleScreen()));
-          },
-        ),
-        const SizedBox(height: 55),
-      ],
+    return FutureBuilder<bool>(
+      future: _hasPreviousCycle(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const SizedBox(
+            height: 80,
+            child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+          );
+        }
+
+        final hasPreviousCycle = snapshot.data ?? false;
+
+        return Column(
+          children: [
+            // Info message when no previous cycle exists
+            if (!hasPreviousCycle)
+              Container(
+                margin: const EdgeInsets.only(bottom: 16),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF8E1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFFFE082)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.info_outline, color: Color(0xFFF57C00), size: 20),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Please record your previous cycle first before starting a new one. This helps us provide accurate predictions.',
+                        style: GoogleFonts.manrope(
+                          fontSize: 12,
+                          color: const Color(0xFFE65100),
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            
+            // Start New Cycle - Disabled if no previous cycle exists
+            _actionItem(
+              icon: Icons.eco,
+              title: 'Start New Cycle',
+              subtitle: hasPreviousCycle 
+                  ? 'Begin a new cropping cycle' 
+                  : 'Previous cycle required first',
+              isPrimary: hasPreviousCycle,
+              isEnabled: hasPreviousCycle,
+              onTap: hasPreviousCycle
+                  ? () {
+                      Navigator.push(
+                        context, 
+                        MaterialPageRoute(builder: (context) => StartCroppingCycleScreen()),
+                      );
+                    }
+                  : null,
+            ),
+            const SizedBox(height: 16),
+            
+            // Record Previous Cycle - Always enabled
+            _actionItem(
+              icon: Icons.shopping_basket_outlined,
+              title: 'Record Previous Cycle',
+              subtitle: 'Add historical cycle data',
+              isPrimary: !hasPreviousCycle,
+              isEnabled: true,
+              onTap: () {
+                Navigator.push(
+                  context, 
+                  MaterialPageRoute(
+                    builder: (context) => RecordCycleScreen(
+                      userId: user!.uid,
+                    ),
+                  ),
+                ).then((_) {
+                  // Refresh to update button states
+                  setState(() {});
+                });
+              },
+            ),
+            const SizedBox(height: 55),
+          ],
+        );
+      },
     );
   }
 
@@ -549,56 +614,60 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
     required String title,
     required String subtitle,
     required bool isPrimary,
-    required VoidCallback onTap,
+    required bool isEnabled,
+    required VoidCallback? onTap,
   }) {
     return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        height: 80,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        decoration: BoxDecoration(
-          color: isPrimary ? darkGreen : Colors.white,
-          borderRadius: BorderRadius.circular(100),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: isPrimary
-                    ? Colors.white.withValues(alpha: 0.2)
-                    : const Color(0xFFE1E3E1),
-                shape: BoxShape.circle,
+      onTap: isEnabled ? onTap : null,
+      child: Opacity(
+        opacity: isEnabled ? 1.0 : 0.5,
+        child: Container(
+          height: 80,
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          decoration: BoxDecoration(
+            color: isPrimary ? darkGreen : Colors.white,
+            borderRadius: BorderRadius.circular(100),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: isPrimary
+                      ? Colors.white.withValues(alpha: 0.2)
+                      : const Color(0xFFE1E3E1),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: isPrimary ? Colors.white : darkGreen),
               ),
-              child: Icon(icon, color: isPrimary ? Colors.white : darkGreen),
-            ),
-            const SizedBox(width: 16),
-            Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: GoogleFonts.manrope(
-                    color: isPrimary ? Colors.white : darkGreen,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
+              const SizedBox(width: 16),
+              Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: GoogleFonts.manrope(
+                      color: isPrimary ? Colors.white : darkGreen,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
-                ),
-                Text(
-                  subtitle,
-                  style: GoogleFonts.manrope(
-                    color: isPrimary
-                        ? Colors.white.withValues(alpha: 0.7)
-                        : textGray,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
+                  Text(
+                    subtitle,
+                    style: GoogleFonts.manrope(
+                      color: isPrimary
+                          ? Colors.white.withValues(alpha: 0.7)
+                          : textGray,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ],
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -735,6 +804,25 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
           ),
         );
       }
+    }
+  }
+
+  Future<bool> _hasPreviousCycle() async {
+    if (user == null) return false;
+
+    try {
+      // Check for any completed cycle (including previous cycles)
+      final snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user!.uid)
+          .collection('cycles')
+          .where('isCompleted', isEqualTo: true)
+          .limit(1)
+          .get();
+      
+      return snapshot.docs.isNotEmpty;
+    } catch (e) {
+      return false;
     }
   }
 

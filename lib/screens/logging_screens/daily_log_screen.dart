@@ -4,7 +4,9 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:visaia/screens/logging_screens/assign_log_modal.dart';
+import 'dart:convert';
 
 // ─── Activity Type Model ──────────────────────────────────────────────────────
 
@@ -68,10 +70,20 @@ extension ActivityTypeExt on ActivityType {
   }
 }
 
+
 // ─── Daily Log Form Screen ────────────────────────────────────────────────────
 
 class DailyLogFormScreen extends StatefulWidget {
-  const DailyLogFormScreen({super.key});
+  final String userId;
+  final String cycleId;
+  final bool shouldAssignCycle;
+
+  const DailyLogFormScreen({
+    super.key,
+    required this.userId,
+    required this.cycleId,
+    required this.shouldAssignCycle,
+  });
 
   @override
   State<DailyLogFormScreen> createState() => _DailyLogFormScreenState();
@@ -157,6 +169,153 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
 
   void _removeImage(int index) {
     setState(() => _pickedImages.removeAt(index));
+  }
+
+  Future<String?> _uploadImage(XFile image) async {
+    try {
+      final bytes = await File(image.path).readAsBytes();
+      return base64Encode(bytes);
+    } catch (e) {
+      debugPrint('Error converting image: $e');
+      return null;
+    }
+  }
+
+  Future<void> _saveActivityToFirestore() async {
+    if (_selectedActivity == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select an activity type')),
+      );
+      return;
+    }
+
+    // If we have a cycleId already (from monitoring screen), save directly
+    if (widget.cycleId.isNotEmpty && !widget.shouldAssignCycle) {
+      setState(() => _isSaving = true);
+      try {
+        await _saveToCycle(widget.cycleId);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Activity saved successfully!'),
+              backgroundColor: Color(0xFF1A5C30),
+            ),
+          );
+          Navigator.pop(context);
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error saving: $e')),
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _isSaving = false);
+      }
+    } else {
+      // No cycle assigned yet - show assign modal
+      _openAssignModal();
+    }
+  }
+
+  Future<void> _saveToCycle(String cycleId) async {
+    final imageUrls = <String>[];
+
+    for (final image in _pickedImages) {
+      final url = await _uploadImage(image);
+      if (url != null) imageUrls.add(url);
+    }
+
+    // Get the cycle document to find planting date
+    final cycleDoc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(widget.userId)
+        .collection('cycles')
+        .doc(cycleId)
+        .get();
+    
+    if (!cycleDoc.exists) {
+      throw Exception('Cycle not found');
+    }
+    
+    final plantingDate = (cycleDoc.data()?['plantingDate'] as Timestamp?)?.toDate();
+    final harvestDate = (cycleDoc.data()?['harvestDate'] as Timestamp?)?.toDate();
+    
+    if (plantingDate == null || harvestDate == null) {
+      throw Exception('Planting or harvest date not found');
+    }
+    
+    // Check if selected date is within cycle range
+    if (_selectedDate.isBefore(plantingDate) || _selectedDate.isAfter(harvestDate)) {
+      throw Exception('Activity date must be between ${DateFormat('MMM d').format(plantingDate)} and ${DateFormat('MMM d').format(harvestDate)}');
+    }
+    
+    // Calculate days since planting (0-based)
+    final daysSincePlanting = _selectedDate.difference(plantingDate).inDays;
+    
+    // Day number is daysSincePlanting + 1 (1-based for display)
+    final dayNumber = daysSincePlanting + 1;
+    final dayId = 'day_${dayNumber.toString().padLeft(2, '0')}';
+
+    final activityData = {
+      'id': DateTime.now().millisecondsSinceEpoch.toString(),
+      'type': _selectedActivity!.label,
+      'icon': _selectedActivity!.icon.codePoint,
+      'notes': _notesController.text,
+      'images': imageUrls,
+      'completed': _isCompleted,
+      'timestamp': FieldValue.serverTimestamp(),
+      'date': Timestamp.fromDate(_selectedDate),
+      'dayNumber': dayNumber, // Optional: store for reference
+    };
+
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(widget.userId)
+        .collection('cycles')
+        .doc(cycleId)
+        .collection('dailyLogs')
+        .doc(dayId)
+        .collection('activities')
+        .add(activityData);
+  }
+
+  Future<void> _openAssignModal() async {
+    showAssignLogSheet(
+      context,
+      userId: widget.userId,
+      cycleId: widget.cycleId,
+      onCycleSelected: (cycleId) async {
+        if (cycleId.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Please select a cycle')),
+          );
+          return;
+        }
+        
+        setState(() => _isSaving = true);
+        try {
+          await _saveToCycle(cycleId);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Activity saved successfully!'),
+                backgroundColor: Color(0xFF1A5C30),
+              ),
+            );
+            Navigator.pop(context);
+          }
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Error saving: $e')),
+            );
+          }
+        } finally {
+          if (mounted) setState(() => _isSaving = false);
+        }
+      },
+    );
   }
 
   @override
@@ -453,15 +612,21 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
           color: _bgColor,
           padding: EdgeInsets.fromLTRB(16, 12, 16, bottomPadding + 16),
           child: GestureDetector(
-            // ✅ CHANGED: Calls the bottom sheet snackbar instead of Navigator.push
-            onTap: () => showAssignLogSheet(context),
+            onTap: _saveActivityToFirestore,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
               height: 54,
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF0C503C), Color(0xFF1A5C30)],
-                ),
+                gradient: _isSaving
+                    ? LinearGradient(
+                        colors: [
+                          _green.withValues(alpha: 0.5),
+                          _darkGreen.withValues(alpha: 0.5),
+                        ],
+                      )
+                    : const LinearGradient(
+                        colors: [Color(0xFF0C503C), Color(0xFF1A5C30)],
+                      ),
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: [
                   BoxShadow(
@@ -482,8 +647,11 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
                     : Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          const Icon(Icons.check_rounded,
+                              color: Colors.white, size: 18),
+                          const SizedBox(width: 8),
                           Text(
-                            'Next',
+                            'Save Activity',
                             style: GoogleFonts.inter(
                               color: Colors.white,
                               fontWeight: FontWeight.w700,

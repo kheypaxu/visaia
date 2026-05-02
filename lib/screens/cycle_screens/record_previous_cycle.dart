@@ -1,7 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
+import 'package:visaia/screens/map/location_picker.dart';
 
 class RecordCycleScreen extends StatefulWidget {
-  const RecordCycleScreen({super.key});
+  final String userId;
+
+  const RecordCycleScreen({
+    super.key,
+    required this.userId,
+  });
 
   @override
   State<RecordCycleScreen> createState() => _RecordCycleScreenState();
@@ -9,6 +17,39 @@ class RecordCycleScreen extends StatefulWidget {
 
 class _RecordCycleScreenState extends State<RecordCycleScreen> {
   bool _isCycleInfo = true;
+  bool _isSaving = false;
+
+  // Form validation keys
+  final _formKey = GlobalKey<FormState>();
+  
+  // Controllers for form fields
+  final TextEditingController _cropTypeController = TextEditingController();
+  final TextEditingController _varietyController = TextEditingController();
+  final TextEditingController _locationController = TextEditingController();
+  final TextEditingController _areaController = TextEditingController();
+  
+  // Location data
+  String _selectedLocation = '';
+  double? _latitude;
+  double? _longitude;
+  
+  // Date controllers
+  DateTime? _plantingDate;
+  DateTime? _harvestDate;
+  
+  // Production metrics
+  final TextEditingController _totalYieldController = TextEditingController();
+  final TextEditingController _pestLossController = TextEditingController();
+  final TextEditingController _otherLossController = TextEditingController();
+  
+  // Financials
+  final TextEditingController _grossIncomeController = TextEditingController();
+  
+  double _calculatedNetIncome = 0.0;
+  double _totalYield = 0.0;
+  double _pestLoss = 0.0;
+  double _otherLoss = 0.0;
+  double _grossIncome = 0.0;
 
   // Exact Hex Colors from Design
   static const Color primaryGreen = Color(0xFF134D37);
@@ -19,6 +60,167 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
   static const Color accentLightGreen = Color(0xFFA6F78E);
 
   @override
+  void initState() {
+    super.initState();
+    _addListeners();
+  }
+
+  void _addListeners() {
+    _totalYieldController.addListener(_calculateNetIncome);
+    _pestLossController.addListener(_calculateNetIncome);
+    _otherLossController.addListener(_calculateNetIncome);
+    _grossIncomeController.addListener(_calculateNetIncome);
+  }
+
+  void _calculateNetIncome() {
+    _totalYield = double.tryParse(_totalYieldController.text) ?? 0.0;
+    _pestLoss = double.tryParse(_pestLossController.text) ?? 0.0;
+    _otherLoss = double.tryParse(_otherLossController.text) ?? 0.0;
+    _grossIncome = double.tryParse(_grossIncomeController.text) ?? 0.0;
+    
+    final totalLossValue = (_totalYield * (_pestLoss / 100)) + _otherLoss;
+    _calculatedNetIncome = _grossIncome - totalLossValue;
+    
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  @override
+  void dispose() {
+    _cropTypeController.dispose();
+    _varietyController.dispose();
+    _locationController.dispose();
+    _areaController.dispose();
+    _totalYieldController.dispose();
+    _pestLossController.dispose();
+    _otherLossController.dispose();
+    _grossIncomeController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _selectPlantingDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _plantingDate ?? DateTime.now().subtract(const Duration(days: 90)),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+    );
+    if (picked != null) {
+      setState(() => _plantingDate = picked);
+    }
+  }
+
+  Future<void> _selectHarvestDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _harvestDate ?? DateTime.now(),
+      firstDate: _plantingDate ?? DateTime(2020),
+      lastDate: DateTime.now(),
+    );
+    if (picked != null) {
+      setState(() => _harvestDate = picked);
+    }
+  }
+
+  Future<void> _openLocationPicker() async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => LocationPickerModal(
+        initialLocation: _selectedLocation,
+        initialLatitude: _latitude,
+        initialLongitude: _longitude,
+      ),
+    );
+    
+    if (result != null && mounted) {
+      setState(() {
+        _selectedLocation = result['location'] ?? '';
+        _latitude = result['latitude'];
+        _longitude = result['longitude'];
+        _locationController.text = _selectedLocation;
+      });
+    }
+  }
+
+  Future<void> _savePreviousCycle() async {
+    // Validate form
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+    
+    if (_plantingDate == null) {
+      _showSnackbar('Please select planting date');
+      return;
+    }
+    
+    if (_harvestDate == null) {
+      _showSnackbar('Please select harvest date');
+      return;
+    }
+    
+    if (_harvestDate!.isBefore(_plantingDate!)) {
+      _showSnackbar('Harvest date must be after planting date');
+      return;
+    }
+    
+    if (_selectedLocation.isEmpty) {
+      _showSnackbar('Please select a location');
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
+    try {
+      final cycleData = {
+        'cycleName': '${_cropTypeController.text} Cycle ${DateFormat('yyyy').format(_harvestDate!)}',
+        'fieldName': _selectedLocation,
+        'area': double.tryParse(_areaController.text) ?? 0.0,
+        'cropVariety': _varietyController.text,
+        'plantingDate': Timestamp.fromDate(_plantingDate!),
+        'harvestDate': Timestamp.fromDate(_harvestDate!),
+        'isCompleted': true,
+        'isPreviousCycle': true,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'totalYield': _totalYield,
+        'pestLoss': _pestLoss,
+        'otherLoss': _otherLoss,
+        'grossIncome': _grossIncome,
+        'netIncome': _calculatedNetIncome,
+        'status': 'completed',
+        'location': _selectedLocation,
+        'latitude': _latitude,
+        'longitude': _longitude,
+      };
+
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('cycles')
+          .add(cycleData);
+
+      if (mounted) {
+        _showSnackbar('Previous cycle recorded successfully!', isError: false);
+        Navigator.pop(context, true);
+      }
+    } catch (e) {
+      _showSnackbar('Error saving cycle: $e');
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  void _showSnackbar(String message, {bool isError = true}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.red : primaryGreen,
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: backgroundColor,
@@ -27,7 +229,7 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: primaryGreen),
-          onPressed: () {},
+          onPressed: () => Navigator.pop(context),
         ),
         title: const Text(
           'Record Cycle',
@@ -39,23 +241,23 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
         ),
         centerTitle: true,
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 10),
-            _buildTabSwitcher(),
-            const SizedBox(height: 24),
-            // Switch between Screen 1 and Screen 2 content
-            _isCycleInfo ? _buildScreen1Content() : _buildScreen2Content(),
-          ],
+      body: Form(
+        key: _formKey,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 10),
+              _buildTabSwitcher(),
+              const SizedBox(height: 24),
+              _isCycleInfo ? _buildScreen1Content() : _buildScreen2Content(),
+            ],
+          ),
         ),
       ),
     );
   }
-
-  // --- Common Components ---
 
   Widget _buildTabSwitcher() {
     return Container(
@@ -110,51 +312,36 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
     );
   }
 
-  Widget _buildActionButton({required String label, required bool showArrow, required VoidCallback onTap}) {
-    return SizedBox(
-      width: double.infinity,
-      height: 56,
-      child: ElevatedButton(
-        onPressed: onTap,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: primaryGreen,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-          elevation: 2,
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(label, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-            if (showArrow) ...[
-              const SizedBox(width: 8),
-              const Icon(Icons.arrow_forward, color: Colors.white, size: 20),
-            ]
-          ],
-        ),
-      ),
-    );
-  }
-
-  // --- Screen 1: Cycle Info Components ---
-
   Widget _buildScreen1Content() {
     return Column(
       children: [
         _buildLocationCard(),
         const SizedBox(height: 16),
-        _buildInfoTile('CROP TYPE', 'Sweet Corn', Icons.spa_outlined),
+        _buildInfoTile('CROP TYPE', _cropTypeController, Icons.spa_outlined, 
+            hint: 'e.g., Corn, Rice, Wheat', 
+            validator: (value) {
+              if (value == null || value.isEmpty) {
+                return 'Please enter crop type';
+              }
+              return null;
+            }),
         const SizedBox(height: 16),
-        _buildInfoTile('VARIETY', 'Alpha Hybrid', Icons.verified_outlined),
+        _buildInfoTile('VARIETY', _varietyController, Icons.verified_outlined,
+            hint: 'e.g., Hybrid 101, Local Variety',
+            validator: (value) {
+              if (value == null || value.isEmpty) {
+                return 'Please enter crop variety';
+              }
+              return null;
+            }),
+        const SizedBox(height: 16),
+        _buildAreaInput(),
         const SizedBox(height: 16),
         _buildTimelineSection(),
         const SizedBox(height: 24),
         _buildAIRefinementNote(),
         const SizedBox(height: 32),
-        _buildActionButton(
-          label: 'Earnings',
-          showArrow: true,
-          onTap: () => setState(() => _isCycleInfo = false),
-        ),
+        _buildContinueButton(),
         const SizedBox(height: 40),
       ],
     );
@@ -170,33 +357,48 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('LOCATION CONTEXT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: primaryGreen, letterSpacing: 0.5)),
+          const Text('LOCATION CONTEXT', 
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: primaryGreen, letterSpacing: 0.5)),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              const CircleAvatar(
-                backgroundColor: accentLightGreen,
-                child: Icon(Icons.map_outlined, color: primaryGreen),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    Text('Green Valley Estate', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                    Text('North Field • Sector B-12', style: TextStyle(color: textSecondary, fontSize: 14)),
-                  ],
+          GestureDetector(
+            onTap: _openLocationPicker,
+            child: Row(
+              children: [
+                const CircleAvatar(
+                  backgroundColor: accentLightGreen,
+                  child: Icon(Icons.map_outlined, color: primaryGreen),
                 ),
-              ),
-              const Icon(Icons.keyboard_arrow_down, color: textSecondary),
-            ],
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _selectedLocation.isEmpty ? 'Tap to select location' : _selectedLocation,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          color: _selectedLocation.isEmpty ? textSecondary : textPrimary,
+                        ),
+                      ),
+                      if (_latitude != null && _longitude != null)
+                        Text(
+                          'Lat: ${_latitude!.toStringAsFixed(6)}, Lng: ${_longitude!.toStringAsFixed(6)}',
+                          style: const TextStyle(color: textSecondary, fontSize: 12),
+                        ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right, color: primaryGreen),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildInfoTile(String label, String value, IconData icon) {
+  Widget _buildAreaInput() {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -207,13 +409,80 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: textSecondary)),
+          const Text('FARM AREA (Hectares)', 
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: textSecondary)),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Icon(Icons.straighten, color: primaryGreen),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextFormField(
+                  controller: _areaController,
+                  keyboardType: TextInputType.number,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  decoration: const InputDecoration(
+                    hintText: 'Enter farm area in hectares',
+                    hintStyle: TextStyle(color: Colors.grey, fontSize: 14),
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Please enter farm area';
+                    }
+                    if (double.tryParse(value) == null) {
+                      return 'Please enter a valid number';
+                    }
+                    if (double.parse(value) <= 0) {
+                      return 'Area must be greater than 0';
+                    }
+                    return null;
+                  },
+                ),
+              ),
+              const Text('ha', style: TextStyle(fontWeight: FontWeight.bold, color: primaryGreen)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoTile(String label, TextEditingController controller, IconData icon, 
+      {String? hint, String? Function(String?)? validator}) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: surfaceGrey,
+        borderRadius: BorderRadius.circular(28),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, 
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: textSecondary)),
           const SizedBox(height: 10),
           Row(
             children: [
               Icon(icon, color: primaryGreen),
               const SizedBox(width: 12),
-              Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              Expanded(
+                child: TextFormField(
+                  controller: controller,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  decoration: InputDecoration(
+                    hintText: hint ?? 'Enter $label',
+                    hintStyle: const TextStyle(color: Colors.grey, fontSize: 14),
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                  validator: validator,
+                ),
+              ),
             ],
           ),
         ],
@@ -238,7 +507,7 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
             ],
           ),
           const SizedBox(height: 16),
-          _buildDateEntry('PLANTING DATE', 'May 14, 2023'),
+          _buildDateEntry('PLANTING DATE', _plantingDate, _selectPlantingDate, required: true),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8),
             child: CircleAvatar(
@@ -247,29 +516,56 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
               child: const Icon(Icons.arrow_downward, color: Colors.white, size: 16),
             ),
           ),
-          _buildDateEntry('HARVEST DATE', 'August 28, 2023'),
+          _buildDateEntry('HARVEST DATE', _harvestDate, _selectHarvestDate, required: true),
         ],
       ),
     );
   }
 
-  Widget _buildDateEntry(String label, String date) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: const TextStyle(fontSize: 10, color: textSecondary, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              Text(date, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-            ],
-          ),
-          const Icon(Icons.edit_outlined, color: Color(0xFFC4C7C5), size: 20),
-        ],
+  Widget _buildDateEntry(String label, DateTime? date, VoidCallback onTap, {bool required = false}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: required && date == null 
+              ? Border.all(color: Colors.red.shade300, width: 1) 
+              : null,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(label, 
+                        style: const TextStyle(fontSize: 10, color: textSecondary, fontWeight: FontWeight.bold)),
+                    if (required && date == null)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 4),
+                        child: Text(' *Required', 
+                            style: TextStyle(fontSize: 9, color: Colors.red.shade300)),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  date == null ? 'Select date' : DateFormat('MMMM d, yyyy').format(date),
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: date == null ? textSecondary : textPrimary,
+                  ),
+                ),
+              ],
+            ),
+            const Icon(Icons.calendar_today, color: primaryGreen, size: 20),
+          ],
+        ),
       ),
     );
   }
@@ -290,32 +586,52 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
     );
   }
 
-  // --- Screen 2: Earnings Components ---
+  Widget _buildContinueButton() {
+    return SizedBox(
+      width: double.infinity,
+      height: 56,
+      child: ElevatedButton(
+        onPressed: () {
+          if (_formKey.currentState!.validate() && _selectedLocation.isNotEmpty) {
+            setState(() => _isCycleInfo = false);
+          } else {
+            if (_selectedLocation.isEmpty) {
+              _showSnackbar('Please select a location');
+            }
+          }
+        },
+        style: ElevatedButton.styleFrom(
+          backgroundColor: primaryGreen,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+        ),
+        child: const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text('Earnings', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+            SizedBox(width: 8),
+            Icon(Icons.arrow_forward, color: Colors.white, size: 20),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _buildScreen2Content() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('CYCLE 2023-B OUTCOME', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: primaryGreen)),
+        const Text('CYCLE SUMMARY', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: primaryGreen)),
         const SizedBox(height: 4),
         const Text('Harvest Performance', style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: textPrimary)),
         const SizedBox(height: 8),
-        const Text('Capture the final financial metrics to complete this cultivation record.', style: TextStyle(color: textSecondary, fontSize: 15)),
+        const Text('Capture the final financial metrics to complete this cultivation record.', 
+            style: TextStyle(color: textSecondary, fontSize: 15)),
         const SizedBox(height: 24),
         _buildProductionMetrics(),
         const SizedBox(height: 20),
         _buildFinancialSummary(),
-        const SizedBox(height: 20),
-        _buildDataIntegrityCard(),
         const SizedBox(height: 32),
-        _buildActionButton(label: 'Save Previous Cycle', showArrow: false, onTap: () {}),
-        const SizedBox(height: 12),
-        const Center(
-          child: Text(
-            'This action will archive the current cycle and lock editing.',
-            style: TextStyle(fontSize: 12, color: textSecondary),
-          ),
-        ),
+        _buildSaveButton(),
         const SizedBox(height: 40),
       ],
     );
@@ -330,53 +646,35 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
         children: [
           Row(
             children: [
-              const CircleAvatar(backgroundColor: Color.fromARGB(255, 188, 255, 167), child: Icon(Icons.agriculture, color: Color.fromARGB(255, 6, 138, 56))),
+              const CircleAvatar(backgroundColor: Color(0xFFC2E8D7), child: Icon(Icons.agriculture, color: primaryGreen)),
               const SizedBox(width: 12),
               const Text('Production Metrics', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             ],
           ),
           const SizedBox(height: 20),
-          const Text('TOTAL YIELD', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+          const Text('TOTAL YIELD (Tons)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          _buildInputBox('0.00', 'Tons'),
-          const SizedBox(height: 16),
-          _buildWarningNote(),
+          _buildInputBox(_totalYieldController, 'tons', 
+              hint: 'Enter total harvest yield',
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please enter total yield';
+                }
+                if (double.tryParse(value) == null) {
+                  return 'Please enter a valid number';
+                }
+                return null;
+              }),
           const SizedBox(height: 20),
           Row(
             children: [
-              Expanded(child: _buildColumnInput('PEST LOSS (%)', '0')),
+              Expanded(child: _buildColumnInput('PEST LOSS (%)', _pestLossController, 
+                  hint: 'Percentage of yield lost to pests')),
               const SizedBox(width: 16),
-              Expanded(child: _buildColumnInput('OTHER LOSS', '0')),
+              Expanded(child: _buildColumnInput('OTHER LOSS (Tons)', _otherLossController,
+                  hint: 'Loss due to other factors')),
             ],
           )
-        ],
-      ),
-    );
-  }
-
-  Widget _buildWarningNote() {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(color: const Color(0xFFFFF4E0), borderRadius: BorderRadius.circular(8)),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: const [
-          Icon(Icons.error_outline, color: Color(0xFF6E4D0E), size: 18),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text.rich(
-              TextSpan(
-                text: 'Note: ',
-                style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF6E4D0E), fontSize: 12),
-                children: [
-                  TextSpan(
-                    text: 'Yield loss calculations must include documented impacts from Fall Armyworm and other invasive pests identified during monitoring.',
-                    style: TextStyle(fontWeight: FontWeight.normal),
-                  ),
-                ],
-              ),
-            ),
-          ),
         ],
       ),
     );
@@ -397,9 +695,20 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
             ],
           ),
           const SizedBox(height: 20),
-          const Text('GROSS INCOME', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+          const Text('GROSS INCOME (₱)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          _buildInputBox('0.00', null, prefix: '\₱ '),
+          _buildInputBox(_grossIncomeController, null, prefix: '₱ ',
+              hint: 'Enter gross income',
+              keyboardType: TextInputType.number,
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please enter gross income';
+                }
+                if (double.tryParse(value) == null) {
+                  return 'Please enter a valid amount';
+                }
+                return null;
+              }),
           const SizedBox(height: 20),
           const Text('CALCULATED NET INCOME', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
@@ -408,65 +717,50 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
             decoration: BoxDecoration(color: primaryGreen, borderRadius: BorderRadius.circular(8)),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: const [
-                Text('\₱ 0.00', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-                Text('AUTOMATED', style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
+              children: [
+                Text(
+                  '₱ ${_calculatedNetIncome.toStringAsFixed(2)}',
+                  style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                const Text('AUTOMATED', style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
               ],
             ),
           ),
-          const SizedBox(height: 12),
-          const Text('Final calculation accounts for gross income minus all recorded losses and operational overhead.', style: TextStyle(fontSize: 11, color: textSecondary)),
         ],
       ),
     );
   }
 
-  Widget _buildDataIntegrityCard() {
-    return Container(
-      height: 110,
-      width: double.infinity,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(28),
-        image: const DecorationImage(
-          image: NetworkImage('https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&q=80&w=1000'), 
-          fit: BoxFit.cover,
-        ),
-      ),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(28),
-          gradient: LinearGradient(colors: [Colors.black.withOpacity(0.7), Colors.transparent], begin: Alignment.bottomLeft),
-        ),
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: const [
-            Text('DATA INTEGRITY', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-            SizedBox(height: 4),
-            Text('Ensuring sustainable growth through\naccurate intelligence.', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildInputBox(String val, String? suffix, {String? prefix}) {
+  Widget _buildInputBox(TextEditingController controller, String? suffix, 
+      {String? prefix, String? hint, TextInputType? keyboardType, String? Function(String?)? validator}) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(color: surfaceGrey, borderRadius: BorderRadius.circular(8)),
       child: Row(
         children: [
           if (prefix != null) Text(prefix, style: const TextStyle(fontSize: 16, color: textSecondary)),
-          Text(val, style: const TextStyle(fontSize: 18, color: textSecondary)),
-          const Spacer(),
+          Expanded(
+            child: TextFormField(
+              controller: controller,
+              keyboardType: keyboardType ?? TextInputType.number,
+              style: const TextStyle(fontSize: 18, color: textSecondary),
+              decoration: InputDecoration(
+                hintText: hint ?? '0.00',
+                hintStyle: const TextStyle(color: Colors.grey, fontSize: 14),
+                border: InputBorder.none,
+                isDense: true,
+                contentPadding: EdgeInsets.zero,
+              ),
+              validator: validator,
+            ),
+          ),
           if (suffix != null) Text(suffix, style: const TextStyle(fontWeight: FontWeight.bold, color: primaryGreen)),
         ],
       ),
     );
   }
 
-  Widget _buildColumnInput(String label, String val) {
+  Widget _buildColumnInput(String label, TextEditingController controller, {String? hint}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -476,9 +770,55 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
           width: double.infinity,
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(color: surfaceGrey, borderRadius: BorderRadius.circular(8)),
-          child: Text(val, style: const TextStyle(fontSize: 18, color: textSecondary)),
+          child: TextFormField(
+            controller: controller,
+            keyboardType: TextInputType.number,
+            style: const TextStyle(fontSize: 18, color: textSecondary),
+            decoration: InputDecoration(
+              hintText: hint ?? '0',
+              hintStyle: const TextStyle(color: Colors.grey, fontSize: 14),
+              border: InputBorder.none,
+              isDense: true,
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
         ),
       ],
+    );
+  }
+
+  Widget _buildSaveButton() {
+    return SizedBox(
+      width: double.infinity,
+      child: Column(
+        children: [
+          ElevatedButton(
+            onPressed: _isSaving ? null : _savePreviousCycle,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: primaryGreen,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+              minimumSize: const Size(double.infinity, 56),
+            ),
+            child: _isSaving
+                ? const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                  )
+                : const Text(
+                    'Save Previous Cycle',
+                    style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+          ),
+          const SizedBox(height: 12),
+          const Center(
+            child: Text(
+              'This cycle will appear in the Completed tab',
+              style: TextStyle(fontSize: 12, color: textSecondary),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
