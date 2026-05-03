@@ -417,42 +417,45 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
           SafeArea(
             child: _isInitialLoading
                 ? const Center(
-                    child:
-                        CircularProgressIndicator(color: kActionGreen))
+                    child: CircularProgressIndicator(color: kActionGreen))
                 : _error != null
                     ? _buildErrorState()
-                    : SingleChildScrollView(
-                        physics:
-                            (_showControlModal || _showSuccessModal)
-                                ? const NeverScrollableScrollPhysics()
-                                : const BouncingScrollPhysics(),
-                        child: Column(
-                          crossAxisAlignment:
-                              CrossAxisAlignment.start,
-                          children: [
-                            _buildHeader(),
-                            const SizedBox(height: 16),
-                            _buildControlMethodsCard(),
-                            const SizedBox(height: 24),
-                            _buildActivityTabs(),
-                            if (_selectedTab == 0)
-                              _buildDailyActivityLog()
-                            else
-                              _buildWeeklyContent(),
-                            const SizedBox(height: 40),
-                          ],
-                        ),
+                    : Column(
+                        children: [
+                          // HEADER - stays fixed at top
+                          _buildHeader(),
+                          const SizedBox(height: 16),
+                          _buildControlMethodsCard(),
+                          const SizedBox(height: 24),
+                          // SCROLLABLE CONTENT - everything below tabs
+                          Expanded(
+                            child: SingleChildScrollView(
+                              physics: (_showControlModal || _showSuccessModal)
+                                  ? const NeverScrollableScrollPhysics()
+                                  : const BouncingScrollPhysics(),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildActivityTabs(),
+                                  if (_selectedTab == 0)
+                                    _buildDailyActivityLog()
+                                  else
+                                    _buildWeeklyContent(),
+                                  const SizedBox(height: 40),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
           ),
           if (_showControlModal) _buildControlMethodModal(),
           if (_showSuccessModal)
             SuccessModal(
               title: 'Scouting Saved',
-              subtitle:
-                  'Week ${_selectedWeek + 1} report has been saved successfully.',
+              subtitle: 'Week ${_selectedWeek + 1} report has been saved successfully.',
               buttonText: 'Back to Monitoring',
-              onClose: () =>
-                  setState(() => _showSuccessModal = false),
+              onClose: () => setState(() => _showSuccessModal = false),
             ),
         ],
       ),
