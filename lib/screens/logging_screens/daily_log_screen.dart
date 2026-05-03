@@ -266,7 +266,8 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
       'completed': _isCompleted,
       'timestamp': FieldValue.serverTimestamp(),
       'date': Timestamp.fromDate(_selectedDate),
-      'dayNumber': dayNumber, // Optional: store for reference
+      'dayNumber': dayNumber,
+      'cycleId': cycleId,
     };
 
     await FirebaseFirestore.instance

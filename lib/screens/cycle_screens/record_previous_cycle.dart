@@ -23,6 +23,7 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
   final _formKey = GlobalKey<FormState>();
   
   // Controllers for form fields
+  final TextEditingController _cycleNameController = TextEditingController();
   final TextEditingController _cropTypeController = TextEditingController();
   final TextEditingController _varietyController = TextEditingController();
   final TextEditingController _locationController = TextEditingController();
@@ -88,6 +89,7 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
 
   @override
   void dispose() {
+    _cycleNameController.dispose();
     _cropTypeController.dispose();
     _varietyController.dispose();
     _locationController.dispose();
@@ -143,6 +145,18 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
     }
   }
 
+  String _generateCycleName() {
+    if (_cycleNameController.text.isNotEmpty) {
+      return _cycleNameController.text;
+    }
+    
+    final crop = _cropTypeController.text.isNotEmpty 
+        ? _cropTypeController.text 
+        : 'Crop';
+    final year = DateFormat('yyyy').format(_harvestDate ?? DateTime.now());
+    return '$crop Cycle $year';
+  }
+
   Future<void> _savePreviousCycle() async {
     // Validate form
     if (!_formKey.currentState!.validate()) {
@@ -172,8 +186,12 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
     setState(() => _isSaving = true);
 
     try {
+      final cycleName = _generateCycleName();
+      
       final cycleData = {
-        'cycleName': '${_cropTypeController.text} Cycle ${DateFormat('yyyy').format(_harvestDate!)}',
+        'cycleName': cycleName,
+        'customName': _cycleNameController.text.isNotEmpty ? _cycleNameController.text : null,
+        'cropType': _cropTypeController.text,
         'fieldName': _selectedLocation,
         'area': double.tryParse(_areaController.text) ?? 0.0,
         'cropVariety': _varietyController.text,
@@ -194,20 +212,74 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
         'longitude': _longitude,
       };
 
-      await FirebaseFirestore.instance
+      // Add to Firestore
+      final docRef = await FirebaseFirestore.instance
           .collection('users')
           .doc(widget.userId)
           .collection('cycles')
           .add(cycleData);
-
+      
+      // Also create a completed weeks document for the cycle
+      await _createCompletedWeekData(docRef.id);
+      
       if (mounted) {
-        _showSnackbar('Previous cycle recorded successfully!', isError: false);
+        _showSnackbar('Previous cycle "$cycleName" recorded successfully!', isError: false);
         Navigator.pop(context, true);
       }
     } catch (e) {
       _showSnackbar('Error saving cycle: $e');
+      debugPrint('Error saving cycle: $e');
     } finally {
       if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  Future<void> _createCompletedWeekData(String cycleId) async {
+    try {
+      // Calculate number of weeks between planting and harvest
+      final totalDays = _harvestDate!.difference(_plantingDate!).inDays;
+      final totalWeeks = (totalDays / 7).ceil().clamp(1, 52);
+      
+      // Create week data for all weeks
+      for (int weekIndex = 0; weekIndex < totalWeeks; weekIndex++) {
+        final weekId = 'week_${weekIndex + 1}';
+        final weekData = {
+          'stations': List.generate(5, (i) => {
+            'title': 'Station ${i + 1}',
+            'completed': true,
+            'plantsInspected': 100,
+            'damaged': 0,
+            'fawObserved': false,
+            'eggMasses': 0,
+            'larvae': 0,
+            'pupae': 0,
+            'notes': 'Previous cycle - automatically completed',
+          }),
+          'totals': {
+            'damaged': 0,
+            'eggs': 0,
+            'larvae': 0,
+            'pupae': 0,
+          },
+          'completedStations': 5,
+          'isCompleted': true,
+          'lastUpdated': FieldValue.serverTimestamp(),
+        };
+        
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.userId)
+            .collection('cycles')
+            .doc(cycleId)
+            .collection('weeks')
+            .doc(weekId)
+            .set(weekData);
+      }
+      
+      debugPrint('Created $totalWeeks weeks of completed data for cycle');
+    } catch (e) {
+      debugPrint('Error creating week data: $e');
+      // Don't throw - this is not critical for the main save
     }
   }
 
@@ -232,7 +304,7 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         title: const Text(
-          'Record Cycle',
+          'Record Previous Cycle',
           style: TextStyle(
             color: primaryGreen,
             fontWeight: FontWeight.bold,
@@ -315,6 +387,8 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
   Widget _buildScreen1Content() {
     return Column(
       children: [
+        _buildCycleNameInput(),
+        const SizedBox(height: 16),
         _buildLocationCard(),
         const SizedBox(height: 16),
         _buildInfoTile('CROP TYPE', _cropTypeController, Icons.spa_outlined, 
@@ -344,6 +418,49 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
         _buildContinueButton(),
         const SizedBox(height: 40),
       ],
+    );
+  }
+
+  Widget _buildCycleNameInput() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: surfaceGrey,
+        borderRadius: BorderRadius.circular(28),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('CYCLE NAME (OPTIONAL)', 
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: textSecondary)),
+          const SizedBox(height: 8),
+          Text(
+            'Leave empty to auto-generate from crop type and year',
+            style: TextStyle(fontSize: 10, color: textSecondary.withOpacity(0.7)),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Icon(Icons.edit_note, color: primaryGreen),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextFormField(
+                  controller: _cycleNameController,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  decoration: const InputDecoration(
+                    hintText: 'e.g., 2024 Main Season Corn',
+                    hintStyle: TextStyle(color: Colors.grey, fontSize: 14),
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -607,7 +724,7 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
         child: const Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text('Earnings', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+            Text('Continue to Earnings', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
             SizedBox(width: 8),
             Icon(Icons.arrow_forward, color: Colors.white, size: 20),
           ],

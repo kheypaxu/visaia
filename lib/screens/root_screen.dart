@@ -11,6 +11,7 @@ import 'package:visaia/screens/dashboard_screens/full_analysis.dart';
 import 'package:visaia/screens/mitigation_screens/mitigation_screen.dart';
 import 'package:visaia/screens/logging_screens/daily_log_screen.dart';
 import 'package:visaia/screens/logging_screens/field_scouting_screen.dart';
+import 'package:visaia/screens/logging_screens/upload_pest.dart';
 import 'package:visaia/screens/logging_screens/inspect_trap_screen.dart';
 import 'package:visaia/screens/cycle_screens/start_cycle.dart';
 import 'package:visaia/screens/dashboard_screens/cycles_screen.dart';
@@ -478,7 +479,9 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
           {
             "icon": Icons.shutter_speed_outlined,
             "label": "Upload\nPest",
-            "onTap": null,
+            "onTap": () {
+              Navigator.push(context, MaterialPageRoute(builder: (context) => UploadPestScreen()));
+            },
           },
           {
             "icon": Icons.description_outlined,

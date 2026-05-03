@@ -118,6 +118,87 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
     return LatLng(lat / _fieldBoundaries.length, lng / _fieldBoundaries.length);
   }
 
+  String _formatTimeAgo(Timestamp timestamp) {
+    final DateTime dateTime = timestamp.toDate();
+    final Duration diff = DateTime.now().difference(dateTime);
+    if (diff.inDays > 7) return DateFormat('MMM d').format(dateTime);
+    if (diff.inDays > 0) return '${diff.inDays} day${diff.inDays > 1 ? 's' : ''} ago';
+    if (diff.inHours > 0) return '${diff.inHours} hour${diff.inHours > 1 ? 's' : ''} ago';
+    if (diff.inMinutes > 0) return '${diff.inMinutes} minute${diff.inMinutes > 1 ? 's' : ''} ago';
+    return 'Just now';
+  }
+
+  IconData _getIconForActivity(String title) {
+    if (title.contains('Watering')) return Icons.water_drop_outlined;
+    if (title.contains('Field Scouting')) return Icons.pest_control_outlined;
+    if (title.contains('Fertilizing')) return Icons.science_outlined;
+    if (title.contains('Harvest')) return Icons.agriculture_outlined;
+    return Icons.assignment_outlined;
+  }
+
+  Color _getColorForActivity(String title) {
+    if (title.contains('Watering')) return Colors.blue;
+    if (title.contains('Field Scouting')) return const Color(0xFF1B5E37);
+    return const Color(0xFF1B5E37);
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
+    final plantingTimestamp = _cycleData?['plantingDate'] as Timestamp?;
+    if (plantingTimestamp == null) return [];
+
+    final plantingDate = plantingTimestamp.toDate();
+    final now = DateTime.now();
+    final daysSincePlanting = now.difference(plantingDate).inDays;
+    if (daysSincePlanting < 0) return [];
+
+    final List<Map<String, dynamic>> allActivities = [];
+
+    // Look at the last 5 days (including today)
+    for (int offset = 0; offset < 5; offset++) {
+      int dayNumber = daysSincePlanting - offset;
+      if (dayNumber < 0) continue;
+      
+      // Day numbers are 1‑based for display
+      final dayIndex = dayNumber + 1;
+      final dayId = 'day_${dayIndex.toString().padLeft(2, '0')}';
+      
+      try {
+        final activitiesSnapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.uid)
+            .collection('cycles')
+            .doc(widget.cycleId)
+            .collection('dailyLogs')
+            .doc(dayId)
+            .collection('activities')
+            .orderBy('timestamp', descending: true)
+            .limit(3) // optional to keep reads low
+            .get();
+
+        for (var doc in activitiesSnapshot.docs) {
+          final data = doc.data();
+          allActivities.add({
+            'id': doc.id,
+            'title': data['type'] ?? 'Activity',
+            'subtitle': data['notes'] ?? '',
+            'timestamp': data['timestamp'] as Timestamp? ?? Timestamp.now(),
+            'completed': data['completed'] ?? false,
+          });
+        }
+      } catch (e) {
+        // Day folder might not exist – that's fine, skip
+        debugPrint('No activities for $dayId');
+      }
+    }
+
+    // Sort all activities by timestamp (newest first)
+    allActivities.sort((a, b) => (b['timestamp'] as Timestamp)
+        .toDate()
+        .compareTo((a['timestamp'] as Timestamp).toDate()));
+
+    return allActivities.take(5).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -291,6 +372,10 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
   }
 
   Widget _buildActionButtons(BuildContext context) {
+    final now = DateTime.now();
+    final harvestDate = (_cycleData?['harvestDate'] as Timestamp?)?.toDate();
+    final isEarlyHarvest = harvestDate != null && now.isBefore(harvestDate);
+    
     return Column(
       children: [
         _buildActionButton(
@@ -301,21 +386,19 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
           color: const Color(0xFF1B5E37),
           isDark: true,
           onTap: () {
-            Navigator.push(context, MaterialPageRoute(builder: (context) => MonitoringScreen(cycleId: widget.cycleId, userId: widget.uid,)));
+            Navigator.push(context, MaterialPageRoute(
+              builder: (context) => MonitoringScreen(
+                cycleId: widget.cycleId, 
+                userId: widget.uid,
+              )
+            ));
           }
         ),
         const SizedBox(height: 12),
-        _buildActionButton(
-          context: context,
-          icon: Icons.shopping_basket_outlined,
-          title: 'Harvest',
-          subtitle: 'Record yield and losses',
-          color: Colors.white,
-          isDark: false,
-          onTap: () => {
-            Navigator.push(context, MaterialPageRoute(builder: (context) => HarvestRecordingScreen()))
-          },
-        ),
+        
+        // Harvest button - always enabled with confirmation
+        _buildHarvestButton(context, isEarlyHarvest),
+        
         const SizedBox(height: 12),
         Container(
           width: double.infinity,
@@ -327,13 +410,129 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
           child: const Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.lightbulb_outline, size: 20, color: Color.fromARGB(255, 240, 192, 2)),
+              Icon(Icons.lightbulb_outline, size: 20, color: Color(0xFFF0C002)),
               SizedBox(width: 8),
               Text('Recommendations: Suggested actions', style: TextStyle(fontWeight: FontWeight.w500)),
             ],
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildHarvestButton(BuildContext context, bool isEarlyHarvest) {
+    return _buildActionButton(
+      context: context,
+      icon: Icons.shopping_basket_outlined,
+      title: 'Record Harvest',
+      subtitle: isEarlyHarvest ? 'Early harvest - confirmation required' : 'Finalize yield and losses',
+      color: isEarlyHarvest ? Colors.white : const Color(0xFF1B5E37),
+      isDark: !isEarlyHarvest,
+      onTap: () {
+        if (isEarlyHarvest) {
+          _showEarlyHarvestConfirmation(context);
+        } else {
+          // Normal harvest on or after expected date
+          Navigator.push(context, MaterialPageRoute(
+            builder: (context) => HarvestRecordingScreen(
+              cycleId: widget.cycleId,
+              userId: widget.uid,
+            )
+          ));
+        }
+      },
+    );
+  }
+
+  void _showEarlyHarvestConfirmation(BuildContext context) {
+    final harvestDate = (_cycleData?['harvestDate'] as Timestamp?)?.toDate();
+    final daysEarly = harvestDate != null 
+        ? harvestDate.difference(DateTime.now()).inDays 
+        : 0;
+    
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Row(
+          children: const [
+            Icon(Icons.warning_amber, color: Color(0xFFFF9800), size: 28),
+            SizedBox(width: 12),
+            Text('Early Harvest Warning'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'You are attempting to harvest $daysEarly days before the expected harvest date.',
+              style: const TextStyle(fontSize: 16),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Are you sure you want to proceed with harvesting?',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF3E0),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Note:',
+                    style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFE65100)),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    '• Yield may be lower than expected\n'
+                    '• Grain quality might be affected\n'
+                    '• This will mark the cycle as completed\n'
+                    '• You will need to provide a reason for early harvest',
+                    style: TextStyle(fontSize: 13, color: Color(0xFFE65100)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: Colors.red)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              // Navigate to harvest recording with early harvest flag
+              Navigator.push(context, MaterialPageRoute(
+                builder: (context) => HarvestRecordingScreen(
+                  cycleId: widget.cycleId,
+                  userId: widget.uid,
+                  isEarlyHarvest: true,
+                  daysEarly: daysEarly,
+                )
+              ));
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1B5E37),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text(
+              'Yes, Proceed',
+              style: TextStyle(
+                color: Colors.white, // change to any color you want
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -508,25 +707,49 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 16),
-          _buildActivityItem(
-            icon: Icons.assignment_outlined,
-            title: 'Monitoring Log added',
-            time: '2 hours ago',
-            iconColor: const Color(0xFF1B5E37),
-          ),
-          const Divider(height: 24),
-          _buildActivityItem(
-            icon: Icons.bug_report_outlined,
-            title: 'Pest Uploaded',
-            time: '5 hours ago',
-            iconColor: const Color(0xFFDC2626),
-          ),
-          const Divider(height: 24),
-          _buildActivityItem(
-            icon: Icons.track_changes_outlined,
-            title: 'Trap Checked',
-            time: 'Yesterday',
-            iconColor: const Color(0xFF1B5E37),
+          FutureBuilder<List<Map<String, dynamic>>>(
+            future: _fetchRecentActivities(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(
+                  child: SizedBox(
+                    height: 100,
+                    child: CircularProgressIndicator(),
+                  ),
+                );
+              }
+              if (snapshot.hasError) {
+                return Center(child: Text('Error: ${snapshot.error}'));
+              }
+              final activities = snapshot.data ?? [];
+              if (activities.isEmpty) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 20),
+                  child: Center(
+                    child: Text('No recent activities'),
+                  ),
+                );
+              }
+              return Column(
+                children: activities.asMap().entries.map((entry) {
+                  final index = entry.key;
+                  final act = entry.value;
+                  final isLast = index == activities.length - 1;
+                  return Column(
+                    children: [
+                      _buildActivityItem(
+                        icon: _getIconForActivity(act['title']),
+                        title: act['title'],
+                        subtitle: act['subtitle'],
+                        time: _formatTimeAgo(act['timestamp']),
+                        iconColor: _getColorForActivity(act['title']),
+                      ),
+                      if (!isLast) const Divider(height: 24),
+                    ],
+                  );
+                }).toList(),
+              );
+            },
           ),
         ],
       ),
@@ -536,6 +759,7 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
   Widget _buildActivityItem({
     required IconData icon,
     required String title,
+    required String subtitle,
     required String time,
     required Color iconColor,
   }) {
@@ -550,12 +774,29 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
           child: Icon(icon, color: iconColor, size: 20),
         ),
         const SizedBox(width: 12),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 15)),
-            Text(time, style: const TextStyle(color: Colors.grey, fontSize: 13)),
-          ],
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 15),
+              ),
+              if (subtitle.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+              Text(
+                time,
+                style: const TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+            ],
+          ),
         ),
       ],
     );
