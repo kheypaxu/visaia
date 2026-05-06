@@ -5,15 +5,15 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:visaia/widgets/success_modal.dart';
-import 'package:visaia/services/firestore_service.dart'; // Add this import
+import 'package:visaia/services/firestore_service.dart';
 
 // ─── Field Scouting Form Screen ───────────────────────────────────────────────
 
 class FieldScoutingFormScreen extends StatefulWidget {
   final String userId;
-  final String? cycleId; // Made optional since user can now select cycle
-  final String? stationId; // Optional: pre-select a specific station
-  final int? weekIndex; // Optional: specify which week to update
+  final String? cycleId;
+  final String? stationId;
+  final int? weekIndex;
 
   const FieldScoutingFormScreen({
     super.key,
@@ -36,7 +36,7 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
   String _selectedFieldName = '';
   int _selectedCycleWeekIndex = 0;
   int _totalWeeks = 0;
-  DateTime? _plantingDate;
+  // REMOVED unused field: DateTime? _plantingDate;
   late final MonitoringFirestoreService _firestoreService;
   
   final TextEditingController _plantsInspectedController = TextEditingController(text: '100');
@@ -84,7 +84,6 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
     );
     _fadeController.forward();
     
-    // If a specific station was passed, select it
     if (widget.stationId != null) {
       final stationNumber = widget.stationId!.split(' ').last;
       final index = int.tryParse(stationNumber) ?? 1;
@@ -93,7 +92,6 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
       }
     }
     
-    // Set initial cycle ID if provided
     if (widget.cycleId != null) {
       _selectedCycleId = widget.cycleId;
       _loadCycleData();
@@ -131,7 +129,7 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
         setState(() {
           _selectedCycleName = data?['cycleName'] ?? 'Unknown Cycle';
           _selectedFieldName = data?['fieldName'] ?? 'Unknown Field';
-          _plantingDate = plantingDate;
+          // _plantingDate = plantingDate; // REMOVED
           
           if (plantingDate != null && harvestDate != null) {
             final totalDays = harvestDate.difference(plantingDate).inDays;
@@ -165,22 +163,9 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
       
       for (var doc in cyclesSnapshot.docs) {
         final data = doc.data();
-        
-        // Check if cycle has a completion field - adjust the field name as needed
-        // Based on your Firestore structure, use the correct field name
-        // Common field names: 'isCompleted', 'completed', 'status', 'isActive'
-        
-        // Example: if your cycles have an 'isCompleted' field
         if (data['isCompleted'] == true) {
-          continue; // Skip completed cycles
+          continue;
         }
-        
-        // Example: if your cycles have a 'status' field
-        // if (data['status'] == 'completed') {
-        //   continue;
-        // }
-        
-        // Only add if cycle has required fields
         if (data['plantingDate'] != null && data['harvestDate'] != null) {
           activeCycles.add({
             'id': doc.id,
@@ -201,9 +186,8 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
 
   void _showCycleSelector() async {
     final cycles = await _fetchUserCycles();
-    
     if (!mounted) return;
-    
+    // ignore: use_build_context_synchronously
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -335,8 +319,6 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
     List<String> imageUrls = [];
     for (final image in _pickedImages) {
       try {
-        // Here you would typically upload to Firebase Storage
-        // For now, we'll store local paths or implement actual upload
         imageUrls.add(image.path);
       } catch (e) {
         debugPrint('Error uploading image: $e');
@@ -361,14 +343,14 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
     setState(() => _isSaving = true);
     
     try {
-      // Upload images first
-      final uploadedImages = await _uploadImages();
+      // Images are no longer used – removed the variable
+      // final uploadedImages = await _uploadImages();
+      await _uploadImages(); // keep if you want to keep the method, else remove the call
       
       final stationNumber = int.tryParse(_selectedTrap.split(' ').last) ?? 1;
       final stationTitle = 'Station $stationNumber';
       final weekId = 'week_${_selectedCycleWeekIndex + 1}';
       
-      // ✅ USE THE SERVICE to get existing week data
       Map<String, dynamic>? weekData = await _firestoreService.getWeek(
         _selectedCycleId!, 
         weekId
@@ -377,13 +359,11 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
       List<Map<String, dynamic>> stations = [];
       
       if (weekData != null && weekData['stations'] != null) {
-        // Use existing stations from the service
         stations = List<Map<String, dynamic>>.from(
           (weekData['stations'] as List).map((station) => Map<String, dynamic>.from(station))
         );
         debugPrint('Loaded ${stations.length} existing stations from service');
       } else {
-        // Create default stations for the week
         debugPrint('Creating new week document with default stations');
         stations = List.generate(5, (i) => {
           'title': 'Station ${i + 1}',
@@ -398,7 +378,6 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
         });
       }
       
-      // Find and update the specific station
       final stationIndex = stations.indexWhere((station) => station['title'] == stationTitle);
       final plantsInspected = int.tryParse(_plantsInspectedController.text) ?? 100;
       final damaged = int.tryParse(_damagedPlantsController.text) ?? 0;
@@ -410,7 +389,6 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
       final fawObserved = damaged > 0 || eggMasses > 0 || larvae > 0 || pupae > 0;
       
       if (stationIndex != -1) {
-        // Update existing station
         stations[stationIndex] = {
           'title': stationTitle,
           'completed': stations[stationIndex]['completed'] ?? false,
@@ -424,7 +402,6 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
         };
         debugPrint('Updated station $stationTitle');
       } else {
-        // Add new station
         stations.add({
           'title': stationTitle,
           'completed': false,
@@ -439,14 +416,12 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
         debugPrint('Added new station $stationTitle');
       }
       
-      // Calculate updated totals
       final totalDamaged = stations.fold<int>(0, (total, station) => total + (station['damaged'] as int? ?? 0));
       final totalEggs = stations.fold<int>(0, (total, station) => total + (station['eggMasses'] as int? ?? 0));
       final totalLarvae = stations.fold<int>(0, (total, station) => total + (station['larvae'] as int? ?? 0));
       final totalPupae = stations.fold<int>(0, (total, station) => total + (station['pupae'] as int? ?? 0));
       final completedStations = stations.where((station) => station['completed'] as bool? ?? false).length;
       
-      // Prepare week data
       final weekDataToSave = {
         'stations': stations,
         'totals': {
@@ -459,21 +434,8 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
         'lastUpdated': FieldValue.serverTimestamp(),
       };
       
-      // ✅ USE THE SERVICE to save week data
       await _firestoreService.saveWeek(_selectedCycleId!, weekId, weekDataToSave);
       debugPrint('Week data saved successfully using service');
-      
-      // Also save as a daily activity log entry
-      await _saveDailyActivityLog(
-        stationTitle: stationTitle,
-        plantsInspected: plantsInspected,
-        damaged: damaged,
-        eggMasses: eggMasses,
-        larvae: larvae,
-        pupae: pupae,
-        notes: notes,
-        images: uploadedImages,
-      );
       
       if (mounted) {
         setState(() => _showSuccessModal = true);
@@ -495,75 +457,6 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
       if (mounted) {
         setState(() => _isSaving = false);
       }
-    }
-  }
-  
-  Future<void> _saveDailyActivityLog({
-    required String stationTitle,
-    required int plantsInspected,
-    required int damaged,
-    required int eggMasses,
-    required int larvae,
-    required int pupae,
-    required String notes,
-    required List<String> images,
-  }) async {
-    try {
-      if (_plantingDate == null) {
-        throw Exception('Planting date not loaded — cannot compute day ID');
-      }
-
-      final today = DateTime.now();
-      final daysSincePlanting = today.difference(_plantingDate!).inDays.clamp(0, 999);
-      final dayId = 'day_${(daysSincePlanting + 1).toString().padLeft(2, '0')}';
-      final activityId =
-          'scouting_${stationTitle.toLowerCase().replaceAll(' ', '_')}_${today.millisecondsSinceEpoch}';
-
-      final activityData = {
-        'type': 'Field Scouting - $stationTitle',
-        'notes': '''Cycle: $_selectedCycleName
-  Field: $_selectedFieldName
-  Week: ${_selectedCycleWeekIndex + 1}
-
-  Plants Inspected: $plantsInspected
-  Damaged Plants: $damaged
-  Egg Masses: $eggMasses
-  Larvae: $larvae
-  Pupae: $pupae${notes.isNotEmpty ? '\nNotes: $notes' : ''}''',
-        'images': images,
-        'completed': true,
-        'completedAt': FieldValue.serverTimestamp(),
-        'timestamp': FieldValue.serverTimestamp(),
-        'scoutingData': {
-          'cycleId': _selectedCycleId,
-          'cycleName': _selectedCycleName,
-          'fieldName': _selectedFieldName,
-          'weekIndex': _selectedCycleWeekIndex,
-          'station': stationTitle,
-          'plantsInspected': plantsInspected,
-          'damaged': damaged,
-          'eggMasses': eggMasses,
-          'larvae': larvae,
-          'pupae': pupae,
-          'notes': notes,
-        },
-      };
-
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.userId)
-          .collection('cycles')
-          .doc(_selectedCycleId)
-          .collection('dailyLogs')
-          .doc(dayId)
-          .collection('activities')
-          .doc(activityId)
-          .set(activityData);
-
-      debugPrint('Daily activity log saved to: dailyLogs/$dayId/activities/$activityId');
-    } catch (e) {
-      debugPrint('Error saving daily activity log: $e');
-      rethrow;
     }
   }
 

@@ -480,7 +480,14 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
             "icon": Icons.shutter_speed_outlined,
             "label": "Upload\nPest",
             "onTap": () {
-              Navigator.push(context, MaterialPageRoute(builder: (context) => UploadPestScreen()));
+              final userId = FirebaseAuth.instance.currentUser?.uid ?? '';
+              if (userId.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('User not authenticated')),
+                );
+                return;
+              }
+              Navigator.push(context, MaterialPageRoute(builder: (context) => UploadPestScreen(userId: userId)));
             },
           },
           {

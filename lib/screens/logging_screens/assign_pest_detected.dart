@@ -41,27 +41,50 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
 
   Future<void> _fetchCycles() async {
     try {
+      // Get all cycles (no filter, no orderBy to avoid missing field errors)
       final snapshot = await FirebaseFirestore.instance
           .collection('users')
           .doc(widget.userId)
           .collection('cycles')
-          .where('isCompleted', isEqualTo: false)
           .get();
 
+      print('✓ Fetched ${snapshot.docs.length} cycles for userId: ${widget.userId}');
+
+      // Filter in memory: only cycles that are NOT completed
+      // A cycle is considered completed if:
+      // - isCompleted == true, OR
+      // - isPreviousCycle == true, OR
+      // - status == 'completed'
+      final activeCycles = snapshot.docs.where((doc) {
+        final data = doc.data();
+        final isCompleted = data['isCompleted'] == true;
+        final isPrevious = data['isPreviousCycle'] == true;
+        final statusCompleted = data['status'] == 'completed';
+        final isActive = !isCompleted && !isPrevious && !statusCompleted;
+        if (!isActive) {
+          print('  ✗ Skipped: ${data['cycleName']} (completed=$isCompleted, previous=$isPrevious, status=$statusCompleted)');
+        }
+        return isActive;
+      }).map((doc) {
+        final data = doc.data();
+        print('  ✓ Added: ${data['cycleName']}');
+        return {
+          'id': doc.id,
+          'name': data['cycleName'] ?? 'Unnamed',
+          'fieldName': data['fieldName'] ?? '',
+          'plantingDate': (data['plantingDate'] as Timestamp?)?.toDate(),
+          'harvestDate': (data['harvestDate'] as Timestamp?)?.toDate(),
+        };
+      }).toList();
+
+      print('✓ Active cycles after filtering: ${activeCycles.length}');
       setState(() {
-        _cycles = snapshot.docs.map((doc) {
-          return {
-            'id': doc.id,
-            'name': doc['cycleName'] ?? 'Unnamed',
-            'fieldName': doc['fieldName'] ?? '',
-            'plantingDate': (doc['plantingDate'] as Timestamp?)?.toDate(),
-            'harvestDate': (doc['harvestDate'] as Timestamp?)?.toDate(),
-          };
-        }).toList();
+        _cycles = activeCycles;
         _isLoading = false;
       });
     } catch (e) {
       setState(() => _isLoading = false);
+      print('Error fetching cycles: $e');
     }
   }
 
@@ -74,6 +97,11 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
     }
 
     setState(() => _isSaving = true);
+    print('🔵 Starting pest record save...');
+    print('  Cycle: $_selectedCycleId');
+    print('  Station: $_selectedStation');
+    print('  Pest: ${widget.pestName}');
+    print('  Stage: ${widget.detectedStage}');
 
     try {
       final cycleDoc = await FirebaseFirestore.instance
@@ -90,6 +118,9 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
       final weekNumber = (daysSincePlanting / 7).floor() + 1;
       final weekId = 'week_$weekNumber';
 
+      print('  Days since planting: $daysSincePlanting');
+      print('  Week: $weekNumber ($weekId)');
+
       final weekRef = FirebaseFirestore.instance
           .collection('users')
           .doc(widget.userId)
@@ -104,6 +135,7 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
       if (weekSnap.exists && weekSnap.data()?['stations'] != null) {
         stations = List<Map<String, dynamic>>.from(
             (weekSnap.data()!['stations'] as List).map((s) => Map<String, dynamic>.from(s)));
+        print('✓ Loaded existing stations: ${stations.length}');
       } else {
         stations = List.generate(5, (i) => {
           'title': 'Station ${i + 1}',
@@ -116,16 +148,41 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
           'pupae': 0,
           'notes': '',
         });
+        print('✓ Created default stations: ${stations.length}');
       }
 
       final stationIndex = _selectedStation - 1;
+      print('  Station index: $stationIndex');
+      print('  Available stations: ${stations.length}');
+
+      // Inside _savePestRecord, after getting stationIndex
       if (stationIndex >= 0 && stationIndex < stations.length) {
-        final stageKey = widget.detectedStage; // 'eggs', 'larvae', 'pupae'
+        // Map detected stage to Firestore field name
+        String stageKey;
+        switch (widget.detectedStage.toLowerCase()) {
+          case 'egg':
+          case 'eggs':
+            stageKey = 'eggMasses';
+            break;
+          case 'larva':
+          case 'larvae':
+            stageKey = 'larvae';
+            break;
+          case 'pupa':
+          case 'pupae':
+            stageKey = 'pupae';
+            break;
+          default:
+            stageKey = widget.detectedStage;
+        }
+        
         if (stations[stationIndex].containsKey(stageKey)) {
           stations[stationIndex][stageKey] = (stations[stationIndex][stageKey] as int) + 1;
           if (widget.pestName.toLowerCase().contains('armyworm')) {
             stations[stationIndex]['fawObserved'] = true;
           }
+        } else {
+          throw Exception('Stage key "$stageKey" not found in station');
         }
       }
 
@@ -134,6 +191,11 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
       final totalLarvae = stations.fold<int>(0, (int total, s) => total + (s['larvae'] as int? ?? 0));
       final totalPupae = stations.fold<int>(0, (int total, s) => total + (s['pupae'] as int? ?? 0));
       final completedStations = stations.where((s) => s['completed'] as bool? ?? false).length;
+
+      print('📊 Totals: eggs=$totalEggs, larvae=$totalLarvae, pupae=$totalPupae');
+
+      print('📝 Saving to: users/${widget.userId}/cycles/$_selectedCycleId/weeks/$weekId');
+      print('📝 Data to save: stations=${stations.length}, totals={eggs: $totalEggs, larvae: $totalLarvae, pupae: $totalPupae}');
 
       await weekRef.set({
         'stations': stations,
@@ -147,34 +209,48 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
         'lastUpdated': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
-      // Save as daily activity
-      final dayNumber = daysSincePlanting + 1;
-      final dayId = 'day_${dayNumber.toString().padLeft(2, '0')}';
-      final activityId = 'pest_ai_${DateTime.now().millisecondsSinceEpoch}';
-      final activityData = {
-        'type': 'AI Pest Detection - ${widget.pestName} (${widget.detectedStage})',
-        'notes': 'Added via AI image recognition to Station $_selectedStation.',
-        'images': widget.imagePath != null ? [widget.imagePath!] : [],
-        'completed': true,
-        'completedAt': FieldValue.serverTimestamp(),
-        'timestamp': FieldValue.serverTimestamp(),
-        'pestData': {
-          'pest': widget.pestName,
-          'stage': widget.detectedStage,
-          'station': _selectedStation,
-          'source': 'AI',
-        }
-      };
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.userId)
-          .collection('cycles')
-          .doc(_selectedCycleId)
-          .collection('dailyLogs')
-          .doc(dayId)
-          .collection('activities')
-          .doc(activityId)
-          .set(activityData);
+      print('✓ Week data saved to Firestore');
+
+      // Verify the save was successful by reading it back
+      final verifySnapshot = await weekRef.get();
+      if (verifySnapshot.exists) {
+        final savedStations = verifySnapshot.data()?['stations'] as List?;
+        final savedLarvae = verifySnapshot.data()?['totals']?['larvae'] ?? 0;
+        print('✓✓ VERIFIED: Week data exists with ${savedStations?.length} stations, larvae count: $savedLarvae');
+      } else {
+        print('❌ VERIFICATION FAILED: Week document not found after save!');
+      }
+
+      // // Save as daily activity
+      // final dayNumber = daysSincePlanting + 1;
+      // final dayId = 'day_${dayNumber.toString().padLeft(2, '0')}';
+      // final activityId = 'pest_ai_${DateTime.now().millisecondsSinceEpoch}';
+      // final activityData = {
+      //   'type': 'AI Pest Detection - ${widget.pestName} (${widget.detectedStage})',
+      //   'notes': 'Added via AI image recognition to Station $_selectedStation.',
+      //   'images': widget.imagePath != null ? [widget.imagePath!] : [],
+      //   'completed': true,
+      //   'completedAt': FieldValue.serverTimestamp(),
+      //   'timestamp': FieldValue.serverTimestamp(),
+      //   'pestData': {
+      //     'pest': widget.pestName,
+      //     'stage': widget.detectedStage,
+      //     'station': _selectedStation,
+      //     'source': 'AI',
+      //   }
+      // };
+      // await FirebaseFirestore.instance
+      //     .collection('users')
+      //     .doc(widget.userId)
+      //     .collection('cycles')
+      //     .doc(_selectedCycleId)
+      //     .collection('dailyLogs')
+      //     .doc(dayId)
+      //     .collection('activities')
+      //     .doc(activityId)
+      //     .set(activityData);
+
+      print('✓ Daily activity saved');
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -183,9 +259,15 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
             backgroundColor: _green,
           ),
         );
-        Navigator.popUntil(context, (route) => route.isFirst);
+        // Pop back to dashboard
+        // Stack: RootLayout -> UploadPest -> AIResult -> AssignPest
+        // Pop 3 times to get back to RootLayout
+        Navigator.pop(context); // AssignPest -> AIResult
+        Navigator.pop(context); // AIResult -> UploadPest
+        Navigator.pop(context); // UploadPest -> RootLayout
       }
     } catch (e) {
+      print('❌ Error saving pest record: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),

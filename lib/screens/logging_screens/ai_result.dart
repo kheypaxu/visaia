@@ -1,347 +1,769 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:visaia/screens/logging_screens/assign_pest_detected.dart';
 
 class AIResultScreen extends StatelessWidget {
-  // You can pass these parameters from the previous screen (e.g., UploadPestScreen)
   final String pestName;
   final String scientificName;
-  final String severity; // "HIGH SEVERITY", "MEDIUM", "LOW"
-  final int confidencePercent; // 0-100
-  final String detectionStage; // "Larvae", "Eggs", "Pupae"
-  final String cropAffected; // "Maize (Plot 4B)"
-  final String treatmentPlan;
+  final String severity;
+  final int confidencePercent;
+  final String detectionStage;
+  final String cropAffected;
+  final String analysis;
+  final String treatment;
   final String historicalContext;
+  final File? imageFile;
+  final String? annotatedImageUrl;
+  final String userId;
 
   const AIResultScreen({
     super.key,
-    this.pestName = "Fall Armyworm",
-    this.scientificName = "Spodoptera frugiperda",
-    this.severity = "HIGH SEVERITY",
-    this.confidencePercent = 98,
-    this.detectionStage = "Larvae",
-    this.cropAffected = "Maize (Plot 4B)",
-    this.treatmentPlan = "Immediate action required. Handpicking and destroying larvae must be followed. You may opt to use parasites, parasitoids, predators and entomopathogens to control FAW population. And you may also opt to use botanical and Inorganic pesticides approved by FDA to manage infestation, only when needed based on economic threshold.",
-    this.historicalContext = "Similar infestation detected in this sector 14 months ago. Previous treatment efficacy was 85%.",
+    required this.pestName,
+    required this.scientificName,
+    required this.severity,
+    required this.confidencePercent,
+    required this.detectionStage,
+    required this.cropAffected,
+    required this.analysis,
+    required this.treatment,
+    required this.historicalContext,
+    this.imageFile,
+    this.annotatedImageUrl,
+    required this.userId,
   });
+
+  // ── Palette ──────────────────────────────────────────────────────────────
+  static const _bg = Color(0xFFF2F6F3);
+  static const _darkGreen = Color(0xFF0C3D28);
+  static const _green = Color(0xFF1A5C30);
+  static const _accentGreen = Color(0xFF4DBD74);
+  static const _lightGreen = Color(0xFFEAF5EE);
+  static const _border = Color(0xFFDDE9E2);
+  static const _card = Color(0xFFFFFFFF);
+  static const _muted = Color(0xFF8FA99A);
+  static const _bodyText = Color(0xFF3D5247);
+
+  // ── Severity helpers ─────────────────────────────────────────────────────
+  Color get _severityColor {
+    final s = severity.toUpperCase();
+    if (s.contains('HIGH') || s.contains('CRITICAL')) return const Color(0xFFD32F2F);
+    if (s.contains('MEDIUM') || s.contains('MOD')) return const Color(0xFFF57C00);
+    return const Color(0xFF2E7D32);
+  }
+
+  Color get _severityBg => _severityColor.withOpacity(0.09);
+
+  IconData get _severityIcon {
+    final s = severity.toUpperCase();
+    if (s.contains('HIGH') || s.contains('CRITICAL')) return Icons.warning_amber_rounded;
+    if (s.contains('MEDIUM') || s.contains('MOD')) return Icons.info_outline_rounded;
+    return Icons.check_circle_outline_rounded;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final bool isHighSeverity = severity.toUpperCase().contains("HIGH");
-    final Color severityColor = isHighSeverity ? const Color(0xFFD32F2F) : const Color(0xFFF57C00);
-    final Color confidenceColor = isHighSeverity ? const Color(0xFFD32F2F) : const Color(0xFFF57C00);
-
     return Scaffold(
-      backgroundColor: const Color(0xFFF4F8F5),
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Color(0xFF0C503C)),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Text(
-          "AI Diagnostics",
-          style: GoogleFonts.inter(
-            color: const Color(0xFF0C503C),
-            fontWeight: FontWeight.w800,
-            fontSize: 20,
+      backgroundColor: _bg,
+      body: CustomScrollView(
+        slivers: [
+          _buildSliverAppBar(context),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
+            sliver: SliverList(
+              delegate: SliverChildListDelegate([
+                const SizedBox(height: 20),
+                _buildIdentityCard(),
+                const SizedBox(height: 14),
+                _buildStatsRow(),
+                const SizedBox(height: 14),
+                _buildAnalysisCard(),
+                const SizedBox(height: 14),
+                _buildTreatmentCard(),
+                const SizedBox(height: 14),
+                _buildHistoricalCard(),
+                const SizedBox(height: 28),
+                _buildActionButtons(context),
+              ]),
+            ),
           ),
-        ),
-        centerTitle: false,
+        ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    );
+  }
+
+  // ── Sliver App Bar with hero image ───────────────────────────────────────
+
+  Widget _buildSliverAppBar(BuildContext context) {
+    return SliverAppBar(
+      expandedHeight: 280,
+      pinned: true,
+      backgroundColor: _darkGreen,
+      surfaceTintColor: Colors.transparent,
+      leading: GestureDetector(
+        onTap: () => Navigator.pop(context),
+        child: Container(
+          margin: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: Colors.black26,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.white24),
+          ),
+          child: const Icon(Icons.arrow_back_ios_new_rounded,
+              color: Colors.white, size: 16),
+        ),
+      ),
+      title: Text(
+        'AI Diagnostics',
+        style: GoogleFonts.manrope(
+          color: Colors.white,
+          fontWeight: FontWeight.w700,
+          fontSize: 17,
+          letterSpacing: -0.3,
+        ),
+      ),
+      flexibleSpace: FlexibleSpaceBar(
+        background: Stack(
+          fit: StackFit.expand,
           children: [
-            // Header badge
+            // Hero image
+            if (annotatedImageUrl != null)
+              Image.network(
+                annotatedImageUrl!,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _imageFallback(),
+              )
+            else if (imageFile != null)
+              Image.file(imageFile!, fit: BoxFit.cover)
+            else
+              _imageFallback(),
+
+            // Dark gradient overlay
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: const Color(0xFFE8F5E9),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text(
-                "Pest Detection",
-                style: GoogleFonts.inter(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF1A5C30),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black38,
+                    Colors.black12,
+                    Colors.black54,
+                  ],
+                  stops: [0.0, 0.4, 1.0],
                 ),
               ),
             ),
-            const SizedBox(height: 20),
 
-            // Severity & Confidence Row
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: severityColor.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: severityColor, width: 1),
-                  ),
-                  child: Text(
-                    severity,
-                    style: GoogleFonts.inter(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: severityColor,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: confidenceColor.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: confidenceColor, width: 1),
-                  ),
-                  child: Text(
-                    "$confidencePercent% CONFIDENCE",
-                    style: GoogleFonts.inter(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: confidenceColor,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-
-            // Main Card
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    pestName,
-                    style: GoogleFonts.inter(
-                      fontSize: 28,
-                      fontWeight: FontWeight.w800,
-                      color: const Color(0xFF0C503C),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    scientificName,
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      fontStyle: FontStyle.italic,
-                      color: const Color(0xFF9E9E9E),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  _buildInfoRow("DETECTION STAGE", detectionStage),
-                  const SizedBox(height: 16),
-                  _buildInfoRow("CROP AFFECTED", cropAffected),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            // AI Treatment Plan
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1A5C30).withOpacity(0.1),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Icons.medical_services_outlined,
-                            color: Color(0xFF1A5C30), size: 20),
-                      ),
-                      const SizedBox(width: 12),
-                      Text(
-                        "AI Treatment Plan",
-                        style: GoogleFonts.inter(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: const Color(0xFF0C503C),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    treatmentPlan,
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      height: 1.5,
-                      color: const Color(0xFF424242),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  GestureDetector(
-                    onTap: () {
-                      // TODO: Navigate to full treatment protocol screen
-                    },
-                    child: Text(
-                      "View Full Treatment Protocol →",
-                      style: GoogleFonts.inter(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: const Color(0xFF1A5C30),
-                        decoration: TextDecoration.underline,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            // Historical Context
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFAFAFA),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: const Color(0xFFDDEEE4)),
-              ),
+            // Bottom labels inside hero
+            Positioned(
+              bottom: 16,
+              left: 20,
+              right: 20,
               child: Row(
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFF8E1),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.history, color: Color(0xFFFFA000), size: 20),
+                  _heroPill(
+                    icon: _severityIcon,
+                    label: severity,
+                    color: _severityColor,
                   ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Text(
-                      historicalContext,
-                      style: GoogleFonts.inter(
-                        fontSize: 13,
-                        color: const Color(0xFF5D4037),
-                        height: 1.4,
-                      ),
-                    ),
+                  const SizedBox(width: 8),
+                  _heroPill(
+                    icon: Icons.verified_rounded,
+                    label: '$confidencePercent% match',
+                    color: _accentGreen,
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 32),
-
-            // Action Buttons
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Color(0xFF1A5C30)),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(28),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                    child: Text(
-                      "Retake Photo",
-                      style: GoogleFonts.inter(
-                        color: const Color(0xFF1A5C30),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () {
-                      // Navigate back to upload pest screen or proceed to assign
-                      Navigator.pop(context);
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1A5C30),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(28),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                    child: Text(
-                      "Assign to Cycle",
-                      style: GoogleFonts.inter(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildInfoRow(String label, String value) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 120,
-          child: Text(
+  Widget _imageFallback() {
+    return Container(
+      color: _darkGreen,
+      child: const Center(
+        child: Icon(Icons.broken_image_outlined, color: Colors.white30, size: 48),
+      ),
+    );
+  }
+
+  Widget _heroPill({
+    required IconData icon,
+    required String label,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.45),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.6), width: 1),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 12),
+          const SizedBox(width: 5),
+          Text(
             label,
-            style: GoogleFonts.inter(
+            style: GoogleFonts.manrope(
+              color: Colors.white,
               fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: const Color(0xFF9E9E9E),
-              letterSpacing: 0.8,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Identity Card ────────────────────────────────────────────────────────
+
+  Widget _buildIdentityCard() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: _cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'DETECTED PEST',
+                      style: GoogleFonts.manrope(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: _muted,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      pestName,
+                      style: GoogleFonts.manrope(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w800,
+                        color: _darkGreen,
+                        height: 1.1,
+                        letterSpacing: -0.6,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      scientificName,
+                      style: GoogleFonts.manrope(
+                        fontSize: 13,
+                        fontStyle: FontStyle.italic,
+                        color: _muted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Confidence badge
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _lightGreen,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: _border),
+                ),
+                child: Column(
+                  children: [
+                    Text(
+                      '$confidencePercent%',
+                      style: GoogleFonts.manrope(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: _green,
+                        letterSpacing: -0.5,
+                      ),
+                    ),
+                    Text(
+                      'match',
+                      style: GoogleFonts.manrope(
+                        fontSize: 10,
+                        color: _muted,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          const Divider(height: 1, color: _border),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: _infoCell(
+                  icon: Icons.biotech_rounded,
+                  label: 'LIFE STAGE',
+                  value: detectionStage,
+                ),
+              ),
+              Container(width: 1, height: 40, color: _border),
+              Expanded(
+                child: _infoCell(
+                  icon: Icons.grass_rounded,
+                  label: 'CROP',
+                  value: cropAffected,
+                  alignment: CrossAxisAlignment.end,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _infoCell({
+    required IconData icon,
+    required String label,
+    required String value,
+    CrossAxisAlignment alignment = CrossAxisAlignment.start,
+  }) {
+    return Column(
+      crossAxisAlignment: alignment,
+      children: [
+        Row(
+          mainAxisAlignment: alignment == CrossAxisAlignment.end
+              ? MainAxisAlignment.end
+              : MainAxisAlignment.start,
+          children: [
+            Icon(icon, color: _accentGreen, size: 13),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: GoogleFonts.manrope(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                color: _muted,
+                letterSpacing: 0.8,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: GoogleFonts.manrope(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: _darkGreen,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── Stats Row ────────────────────────────────────────────────────────────
+
+  Widget _buildStatsRow() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: _severityBg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _severityColor.withOpacity(0.2)),
+      ),
+      child: Row(
+        children: [
+          Icon(_severityIcon, color: _severityColor, size: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Risk Level: $severity',
+                  style: GoogleFonts.manrope(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: _severityColor,
+                  ),
+                ),
+                Text(
+                  _severitySubtext,
+                  style: GoogleFonts.manrope(
+                    fontSize: 11,
+                    color: _severityColor.withOpacity(0.75),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: _severityColor.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: _severityColor.withOpacity(0.3)),
+            ),
+            child: Text(
+              severity.toUpperCase(),
+              style: GoogleFonts.manrope(
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                color: _severityColor,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String get _severitySubtext {
+    final s = severity.toUpperCase();
+    if (s.contains('HIGH') || s.contains('CRITICAL'))
+      return 'Immediate action recommended';
+    if (s.contains('MEDIUM') || s.contains('MOD'))
+      return 'Monitor closely, treat within 48 hrs';
+    return 'Low impact — continue monitoring';
+  }
+
+  // ── Analysis Card ─────────────────────────────────────────────────────────
+
+  Widget _buildAnalysisCard() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: _cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _cardHeader(
+            icon: Icons.analytics_rounded,
+            iconBg: _lightGreen,
+            iconColor: _green,
+            title: 'AI Analysis',
+          ),
+          const SizedBox(height: 16),
+          RichText(
+            text: _parseBoldText(analysis),
+            textAlign: TextAlign.left,
+            softWrap: true,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Treatment Card ────────────────────────────────────────────────────────
+
+  Widget _buildTreatmentCard() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C3D28),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: _green.withOpacity(0.2),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.healing_rounded,
+                    color: Colors.white, size: 16),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                'Treatment Plan',
+                style: GoogleFonts.manrope(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
+                  letterSpacing: -0.3,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          RichText(
+            text: _parseBoldText(treatment, onDark: true),
+            softWrap: true,
+          ),
+          const SizedBox(height: 20),
+          GestureDetector(
+            onTap: () {
+              // TODO: open full treatment protocol screen
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: _accentGreen,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'View Full Treatment Protocol',
+                    style: GoogleFonts.manrope(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: _darkGreen,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  const Icon(Icons.arrow_forward_rounded,
+                      color: _darkGreen, size: 15),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Historical Card ───────────────────────────────────────────────────────
+
+  Widget _buildHistoricalCard() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBF0),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFEDD9A3)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF3CD),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.history_edu_rounded,
+                color: Color(0xFFF59E0B), size: 16),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'HISTORICAL CONTEXT',
+                  style: GoogleFonts.manrope(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFFF59E0B),
+                    letterSpacing: 1.0,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  historicalContext,
+                  style: GoogleFonts.manrope(
+                    fontSize: 13,
+                    color: const Color(0xFF6B4F12),
+                    height: 1.55,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Action Buttons ────────────────────────────────────────────────────────
+
+  Widget _buildActionButtons(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: GestureDetector(
+            onTap: () => Navigator.pop(context),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 15),
+              decoration: BoxDecoration(
+                color: _card,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: _border, width: 1.5),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.camera_alt_outlined,
+                      color: _green, size: 16),
+                  const SizedBox(width: 7),
+                  Text(
+                    'Retake',
+                    style: GoogleFonts.manrope(
+                      color: _green,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
-        const SizedBox(width: 16),
+        const SizedBox(width: 12),
         Expanded(
-          child: Text(
-            value,
-            style: GoogleFonts.inter(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: const Color(0xFF1A1A1A),
+          flex: 2,
+          child: GestureDetector(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => AssignPestScreen(
+                    userId: userId,
+                    pestName: pestName,
+                    detectedStage: detectionStage.toLowerCase(),
+                    imagePath: imageFile?.path,
+                  ),
+                ),
+              );
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 15),
+              decoration: BoxDecoration(
+                color: _green,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: _green.withOpacity(0.3),
+                    blurRadius: 14,
+                    offset: const Offset(0, 5),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.add_task_rounded,
+                      color: Colors.white, size: 16),
+                  const SizedBox(width: 7),
+                  Text(
+                    'Assign to Cycle',
+                    style: GoogleFonts.manrope(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
       ],
     );
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  BoxDecoration _cardDecoration() => BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      );
+
+  Widget _cardHeader({
+    required IconData icon,
+    required Color iconBg,
+    required Color iconColor,
+    required String title,
+  }) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: iconBg,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, color: iconColor, size: 16),
+        ),
+        const SizedBox(width: 10),
+        Text(
+          title,
+          style: GoogleFonts.manrope(
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+            color: _darkGreen,
+            letterSpacing: -0.3,
+          ),
+        ),
+      ],
+    );
+  }
+
+  TextSpan _parseBoldText(String text, {bool onDark = false}) {
+    final Color normal = onDark
+        ? Colors.white.withOpacity(0.7)
+        : _bodyText;
+    final Color bold = onDark ? Colors.white : _green;
+
+    final List<TextSpan> spans = [];
+    final RegExp boldRegex = RegExp(r'\*\*(.+?)\*\*');
+    int lastIndex = 0;
+
+    for (final match in boldRegex.allMatches(text)) {
+      if (match.start > lastIndex) {
+        spans.add(TextSpan(
+          text: text.substring(lastIndex, match.start),
+          style: GoogleFonts.manrope(
+              fontSize: 13, height: 1.65, color: normal),
+        ));
+      }
+      spans.add(TextSpan(
+        text: match.group(1),
+        style: GoogleFonts.manrope(
+          fontSize: 13,
+          height: 1.65,
+          fontWeight: FontWeight.w700,
+          color: bold,
+        ),
+      ));
+      lastIndex = match.end;
+    }
+
+    if (lastIndex < text.length) {
+      spans.add(TextSpan(
+        text: text.substring(lastIndex),
+        style: GoogleFonts.manrope(fontSize: 13, height: 1.65, color: normal),
+      ));
+    }
+
+    return TextSpan(children: spans);
   }
 }
