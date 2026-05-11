@@ -17,25 +17,23 @@ class _UploadPestScreenState extends State<UploadPestScreen>
   final ImagePicker _picker = ImagePicker();
   XFile? _image;
 
-  // Brand Colors
   static const _green = Color(0xFF1A5C30);
-  static const _darkGreen = Color(0xFF0C3D28);
   static const _lightGreen = Color(0xFFEAF3DE);
   static const _accentGreen = Color(0xFF4E9F3D);
-  static const _bgColor = Color(0xFFF2F6F3);
-  static const _mutedText = Color(0xFF8FA99A);
-  static const _borderColor = Color(0xFFDDE9E2);
+  static const _bgColor = Color(0xFFF7F8F5);
+  static const _mutedText = Color(0xFF5E6266);
+  static const _borderColor = Color(0xFFE8EAE5);
   static const _cardWhite = Color(0xFFFFFFFF);
 
   Future<void> _pickFromCamera() async {
-    final XFile? image =
-        await _picker.pickImage(source: ImageSource.camera, imageQuality: 88);
+    final XFile? image = await _picker.pickImage(
+        source: ImageSource.camera, imageQuality: 88);
     if (image != null) _onImageSelected(image);
   }
 
   Future<void> _pickFromGallery() async {
-    final XFile? image =
-        await _picker.pickImage(source: ImageSource.gallery, imageQuality: 88);
+    final XFile? image = await _picker.pickImage(
+        source: ImageSource.gallery, imageQuality: 88);
     if (image != null) _onImageSelected(image);
   }
 
@@ -46,16 +44,29 @@ class _UploadPestScreenState extends State<UploadPestScreen>
 
   void _retakePhoto() => setState(() => _image = null);
 
+  void _showSnackBar(String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          message,
+          style: const TextStyle(
+              fontWeight: FontWeight.w600, color: Colors.white),
+        ),
+        backgroundColor:
+            isError ? const Color(0xFFBA1A1A) : const Color(0xFF1B5E37),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      ),
+    );
+  }
+
   Future<void> _processImage(File imageFile) async {
-    // Validate userId before proceeding
     if (widget.userId == null || widget.userId!.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Error: User ID not available')),
-      );
+      _showSnackBar('Error: User ID not available', isError: true);
       return;
     }
 
-    // Push the cinematic analyzing screen on top
     Navigator.push(
       context,
       PageRouteBuilder(
@@ -86,9 +97,9 @@ class _UploadPestScreenState extends State<UploadPestScreen>
               _buildHeaderText(),
               const SizedBox(height: 20),
               _buildPhotoCard(),
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
               _buildActionButtons(),
-              const SizedBox(height: 24),
+              const SizedBox(height: 20),
               _buildTipsCard(),
             ],
           ),
@@ -102,45 +113,62 @@ class _UploadPestScreenState extends State<UploadPestScreen>
       backgroundColor: _bgColor,
       elevation: 0,
       surfaceTintColor: Colors.transparent,
-      leading: GestureDetector(
-        onTap: () => Navigator.pop(context),
-        child: Container(
-          margin: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: _cardWhite,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: _borderColor),
+      leading: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: GestureDetector(
+          onTap: () => Navigator.pop(context),
+          child: Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  blurRadius: 6,
+                  offset: const Offset(0, 1),
+                ),
+              ],
+            ),
+            child: const Icon(Icons.arrow_back,
+                color: Color(0xFF2D3132), size: 18),
           ),
-          child: const Icon(Icons.arrow_back_ios_new_rounded,
-              color: _darkGreen, size: 16),
         ),
       ),
-      title: Text(
+      centerTitle: true,
+      title: const Text(
         'Pest Identifier',
-        style: GoogleFonts.spaceGrotesk(
-          color: _darkGreen,
+        style: TextStyle(
+          color: Color(0xFF1A1C1E),
           fontWeight: FontWeight.w700,
           fontSize: 17,
-          letterSpacing: -0.3,
         ),
       ),
-      centerTitle: false,
       actions: [
-        Container(
-          margin: const EdgeInsets.only(right: 16, top: 10, bottom: 10),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: _lightGreen,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.eco_rounded, color: _accentGreen, size: 13),
-              const SizedBox(width: 5),
-              Text('AI-Powered',
-                  style: GoogleFonts.dmSans(
-                      color: _green, fontSize: 11, fontWeight: FontWeight.w600)),
-            ],
+        Padding(
+          padding: const EdgeInsets.only(right: 12),
+          child: Container(
+            margin: const EdgeInsets.symmetric(vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: _lightGreen,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.auto_awesome,
+                    color: _accentGreen, size: 13),
+                const SizedBox(width: 5),
+                Text(
+                  'AI-Powered',
+                  style: GoogleFonts.manrope(
+                      color: _green,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700),
+                ),
+              ],
+            ),
           ),
         )
       ],
@@ -151,23 +179,22 @@ class _UploadPestScreenState extends State<UploadPestScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
+        const Text(
           'Identify crop pests\ninstantly.',
-          style: GoogleFonts.spaceGrotesk(
+          style: TextStyle(
             fontSize: 26,
             fontWeight: FontWeight.w800,
-            color: _darkGreen,
+            color: Color(0xFF1A1C1E),
             height: 1.15,
-            letterSpacing: -0.8,
           ),
         ),
         const SizedBox(height: 8),
         Text(
           'Upload or capture a photo of the affected plant or pest for an AI-powered analysis.',
-          style: GoogleFonts.dmSans(
-            fontSize: 13,
-            color: _mutedText,
-            height: 1.55,
+          style: GoogleFonts.manrope(
+            fontSize: 14,
+            color: _mutedText.withValues(alpha: 0.75),
+            height: 1.5,
           ),
         ),
       ],
@@ -181,16 +208,18 @@ class _UploadPestScreenState extends State<UploadPestScreen>
       decoration: BoxDecoration(
         color: _cardWhite,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: _image != null ? _accentGreen.withOpacity(0.4) : _borderColor,
-          width: _image != null ? 1.5 : 1,
-        ),
         boxShadow: [
           BoxShadow(
-            color: _green.withOpacity(0.06),
-            blurRadius: 20,
-            offset: const Offset(0, 6),
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
+          if (_image != null)
+            BoxShadow(
+              color: _accentGreen.withValues(alpha: 0.1),
+              blurRadius: 16,
+              offset: const Offset(0, 4),
+            ),
         ],
       ),
       clipBehavior: Clip.antiAlias,
@@ -203,7 +232,6 @@ class _UploadPestScreenState extends State<UploadPestScreen>
       fit: StackFit.expand,
       children: [
         Image.file(File(_image!.path), fit: BoxFit.cover),
-        // Gradient overlay at bottom
         Positioned(
           bottom: 0,
           left: 0,
@@ -214,7 +242,10 @@ class _UploadPestScreenState extends State<UploadPestScreen>
               gradient: LinearGradient(
                 begin: Alignment.bottomCenter,
                 end: Alignment.topCenter,
-                colors: [Colors.black.withOpacity(0.55), Colors.transparent],
+                colors: [
+                  Colors.black.withValues(alpha: 0.5),
+                  Colors.transparent,
+                ],
               ),
             ),
           ),
@@ -222,20 +253,29 @@ class _UploadPestScreenState extends State<UploadPestScreen>
         Positioned(
           bottom: 14,
           left: 14,
-          child: Row(
-            children: [
-              const Icon(Icons.check_circle_rounded,
-                  color: Colors.white, size: 14),
-              const SizedBox(width: 6),
-              Text(
-                'Photo ready',
-                style: GoogleFonts.dmSans(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.25), width: 0.8),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.check_circle_rounded,
+                    color: Colors.white, size: 14),
+                const SizedBox(width: 5),
+                Text(
+                  'Photo ready',
+                  style: GoogleFonts.manrope(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
         Positioned(
@@ -244,25 +284,24 @@ class _UploadPestScreenState extends State<UploadPestScreen>
           child: GestureDetector(
             onTap: _retakePhoto,
             child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.45),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                    color: Colors.white.withOpacity(0.3), width: 0.8),
+                color: Colors.black.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(8),
               ),
               child: Row(
                 children: [
                   const Icon(Icons.refresh_rounded,
                       color: Colors.white, size: 13),
-                  const SizedBox(width: 5),
-                  Text('Retake',
-                      style: GoogleFonts.dmSans(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                      )),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Retake',
+                    style: GoogleFonts.manrope(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -277,29 +316,29 @@ class _UploadPestScreenState extends State<UploadPestScreen>
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Container(
-          width: 64,
-          height: 64,
+          width: 60,
+          height: 60,
           decoration: BoxDecoration(
-            color: _lightGreen,
+            color: _lightGreen.withValues(alpha: 0.6),
             shape: BoxShape.circle,
-            border: Border.all(color: _borderColor, width: 1.5),
           ),
           child: const Icon(Icons.add_photo_alternate_outlined,
-              color: _accentGreen, size: 28),
+              color: _accentGreen, size: 26),
         ),
         const SizedBox(height: 14),
         Text(
           'No photo selected',
-          style: GoogleFonts.spaceGrotesk(
-            color: _darkGreen,
-            fontWeight: FontWeight.w600,
+          style: GoogleFonts.manrope(
+            color: const Color(0xFF1A1C1E),
+            fontWeight: FontWeight.w700,
             fontSize: 15,
           ),
         ),
         const SizedBox(height: 4),
         Text(
           'Choose an option below to get started',
-          style: GoogleFonts.dmSans(color: _mutedText, fontSize: 12),
+          style: GoogleFonts.manrope(
+              color: _mutedText.withValues(alpha: 0.6), fontSize: 13),
         ),
       ],
     );
@@ -309,7 +348,7 @@ class _UploadPestScreenState extends State<UploadPestScreen>
     return Row(
       children: [
         Expanded(
-          child: _bigActionButton(
+          child: _actionButton(
             icon: Icons.camera_alt_rounded,
             label: 'Camera',
             sublabel: 'Take a new photo',
@@ -317,9 +356,9 @@ class _UploadPestScreenState extends State<UploadPestScreen>
             isPrimary: true,
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 10),
         Expanded(
-          child: _bigActionButton(
+          child: _actionButton(
             icon: Icons.photo_library_rounded,
             label: 'Gallery',
             sublabel: 'Choose existing',
@@ -331,7 +370,7 @@ class _UploadPestScreenState extends State<UploadPestScreen>
     );
   }
 
-  Widget _bigActionButton({
+  Widget _actionButton({
     required IconData icon,
     required String label,
     required String sublabel,
@@ -342,59 +381,61 @@ class _UploadPestScreenState extends State<UploadPestScreen>
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
         decoration: BoxDecoration(
-          color: isPrimary ? _green : _cardWhite,
+          color: isPrimary ? _green : Colors.white,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isPrimary ? _green : _borderColor,
-          ),
-          boxShadow: isPrimary
-              ? [
-                  BoxShadow(
-                    color: _green.withOpacity(0.25),
-                    blurRadius: 14,
-                    offset: const Offset(0, 5),
-                  )
-                ]
-              : [],
+          boxShadow: [
+            BoxShadow(
+              color: isPrimary
+                  ? _green.withValues(alpha: 0.2)
+                  : Colors.black.withValues(alpha: 0.04),
+              blurRadius: isPrimary ? 12 : 4,
+              offset: isPrimary
+                  ? const Offset(0, 4)
+                  : const Offset(0, 1),
+            ),
+          ],
         ),
         child: Row(
           children: [
             Container(
-              width: 38,
-              height: 38,
+              width: 40,
+              height: 40,
               decoration: BoxDecoration(
                 color: isPrimary
-                    ? Colors.white.withOpacity(0.15)
+                    ? Colors.white.withValues(alpha: 0.12)
                     : _lightGreen,
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(icon,
-                  color: isPrimary ? Colors.white : _accentGreen, size: 18),
+                  color: isPrimary ? Colors.white : _accentGreen, size: 20),
             ),
-            const SizedBox(width: 10),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: GoogleFonts.spaceGrotesk(
-                    color: isPrimary ? Colors.white : _darkGreen,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: GoogleFonts.manrope(
+                      color: isPrimary ? Colors.white : const Color(0xFF1A1C1E),
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                    ),
                   ),
-                ),
-                Text(
-                  sublabel,
-                  style: GoogleFonts.dmSans(
-                    color: isPrimary
-                        ? Colors.white.withOpacity(0.7)
-                        : _mutedText,
-                    fontSize: 11,
+                  const SizedBox(height: 1),
+                  Text(
+                    sublabel,
+                    style: GoogleFonts.manrope(
+                      color: isPrimary
+                          ? Colors.white.withValues(alpha: 0.6)
+                          : _mutedText.withValues(alpha: 0.7),
+                      fontSize: 12,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ],
         ),
@@ -404,34 +445,60 @@ class _UploadPestScreenState extends State<UploadPestScreen>
 
   Widget _buildTipsCard() {
     final tips = [
-      (Icons.straighten_rounded, 'Get within 15–20 cm of the affected area or pest'),
-      (Icons.wb_sunny_outlined, 'Use natural light — avoid harsh shadows or flash glare'),
-      (Icons.pest_control_rounded, 'Focus on visible damage, egg masses, larvae, or the pest itself'),
-      (Icons.motion_photos_off_outlined, 'Hold steady — blur reduces identification accuracy'),
+      (
+        Icons.straighten_rounded,
+        'Get within 15–20 cm of the affected area or pest'
+      ),
+      (
+        Icons.wb_sunny_outlined,
+        'Use natural light — avoid harsh shadows or flash glare'
+      ),
+      (
+        Icons.pest_control_rounded,
+        'Focus on visible damage, egg masses, larvae, or the pest itself'
+      ),
+      (
+        Icons.motion_photos_off_outlined,
+        'Hold steady — blur reduces identification accuracy'
+      ),
     ];
 
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: _cardWhite,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _borderColor),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.tips_and_updates_rounded,
-                  color: _accentGreen, size: 15),
-              const SizedBox(width: 7),
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: _lightGreen,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.tips_and_updates_rounded,
+                    color: _accentGreen, size: 15),
+              ),
+              const SizedBox(width: 8),
               Text(
                 'PHOTO TIPS',
-                style: GoogleFonts.spaceGrotesk(
+                style: GoogleFonts.manrope(
                   fontSize: 11,
                   fontWeight: FontWeight.w700,
-                  color: _mutedText,
-                  letterSpacing: 1.0,
+                  color: _mutedText.withValues(alpha: 0.6),
+                  letterSpacing: 0.8,
                 ),
               ),
             ],
@@ -451,7 +518,8 @@ class _UploadPestScreenState extends State<UploadPestScreen>
                         color: _lightGreen,
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: Icon(e.value.$1, color: _accentGreen, size: 16),
+                      child:
+                          Icon(e.value.$1, color: _accentGreen, size: 16),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -459,10 +527,10 @@ class _UploadPestScreenState extends State<UploadPestScreen>
                         padding: const EdgeInsets.only(top: 7),
                         child: Text(
                           e.value.$2,
-                          style: GoogleFonts.dmSans(
+                          style: GoogleFonts.manrope(
                             fontSize: 13,
                             color: const Color(0xFF52705E),
-                            height: 1.5,
+                            height: 1.45,
                           ),
                         ),
                       ),
@@ -472,8 +540,8 @@ class _UploadPestScreenState extends State<UploadPestScreen>
                 if (!isLast)
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Divider(
-                        height: 1, color: _borderColor.withOpacity(0.8)),
+                    child: Container(
+                        height: 1, color: _borderColor),
                   ),
               ],
             );

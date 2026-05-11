@@ -40,7 +40,7 @@ class AnalysisResult {
 }
 
 class ApiService {
-  static const String baseUrl = "http://192.168.1.39:5000";
+  static const String baseUrl = "http://192.168.1.19:5000";
 
   static String _safeString(dynamic value, {String fallback = 'No information provided'}) {
     if (value == null) return fallback;

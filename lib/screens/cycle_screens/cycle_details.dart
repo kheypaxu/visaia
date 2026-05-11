@@ -10,7 +10,8 @@ class CycleDetailsScreen extends StatefulWidget {
   final String cycleId;
   final String uid;
 
-  const CycleDetailsScreen({super.key, required this.cycleId, required this.uid});
+  const CycleDetailsScreen(
+      {super.key, required this.cycleId, required this.uid});
 
   @override
   State<CycleDetailsScreen> createState() => _CycleDetailsScreenState();
@@ -115,16 +116,20 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
       lat += point.latitude;
       lng += point.longitude;
     }
-    return LatLng(lat / _fieldBoundaries.length, lng / _fieldBoundaries.length);
+    return LatLng(
+        lat / _fieldBoundaries.length, lng / _fieldBoundaries.length);
   }
 
   String _formatTimeAgo(Timestamp timestamp) {
     final DateTime dateTime = timestamp.toDate();
     final Duration diff = DateTime.now().difference(dateTime);
     if (diff.inDays > 7) return DateFormat('MMM d').format(dateTime);
-    if (diff.inDays > 0) return '${diff.inDays} day${diff.inDays > 1 ? 's' : ''} ago';
-    if (diff.inHours > 0) return '${diff.inHours} hour${diff.inHours > 1 ? 's' : ''} ago';
-    if (diff.inMinutes > 0) return '${diff.inMinutes} minute${diff.inMinutes > 1 ? 's' : ''} ago';
+    if (diff.inDays > 0)
+      return '${diff.inDays}d ago';
+    if (diff.inHours > 0)
+      return '${diff.inHours}h ago';
+    if (diff.inMinutes > 0)
+      return '${diff.inMinutes}m ago';
     return 'Just now';
   }
 
@@ -137,8 +142,9 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
   }
 
   Color _getColorForActivity(String title) {
-    if (title.contains('Watering')) return Colors.blue;
-    if (title.contains('Field Scouting')) return const Color(0xFF1B5E37);
+    if (title.contains('Watering')) return const Color(0xFF3B82F6);
+    if (title.contains('Field Scouting')) return const Color(0xFF8B5CF6);
+    if (title.contains('Fertilizing')) return const Color(0xFFF59E0B);
     return const Color(0xFF1B5E37);
   }
 
@@ -153,15 +159,13 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
 
     final List<Map<String, dynamic>> allActivities = [];
 
-    // Look at the last 5 days (including today)
     for (int offset = 0; offset < 5; offset++) {
       int dayNumber = daysSincePlanting - offset;
       if (dayNumber < 0) continue;
-      
-      // Day numbers are 1‑based for display
+
       final dayIndex = dayNumber + 1;
       final dayId = 'day_${dayIndex.toString().padLeft(2, '0')}';
-      
+
       try {
         final activitiesSnapshot = await FirebaseFirestore.instance
             .collection('users')
@@ -172,7 +176,7 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
             .doc(dayId)
             .collection('activities')
             .orderBy('timestamp', descending: true)
-            .limit(3) // optional to keep reads low
+            .limit(3)
             .get();
 
         for (var doc in activitiesSnapshot.docs) {
@@ -181,17 +185,16 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
             'id': doc.id,
             'title': data['type'] ?? 'Activity',
             'subtitle': data['notes'] ?? '',
-            'timestamp': data['timestamp'] as Timestamp? ?? Timestamp.now(),
+            'timestamp':
+                data['timestamp'] as Timestamp? ?? Timestamp.now(),
             'completed': data['completed'] ?? false,
           });
         }
       } catch (e) {
-        // Day folder might not exist – that's fine, skip
         debugPrint('No activities for $dayId');
       }
     }
 
-    // Sort all activities by timestamp (newest first)
     allActivities.sort((a, b) => (b['timestamp'] as Timestamp)
         .toDate()
         .compareTo((a['timestamp'] as Timestamp).toDate()));
@@ -202,47 +205,98 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F9F8),
+      backgroundColor: const Color(0xFFF7F8F5),
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
+        backgroundColor: const Color(0xFFF7F8F5),
         elevation: 0,
-        leading: const Icon(Icons.arrow_back, color: Color(0xFF1A1C1E)),
-        title: const Text(
-          'Cycle Detail',
-          style: TextStyle(
-            color: Color(0xFF1B5E37),
-            fontWeight: FontWeight.w700,
-            fontSize: 18,
+        leading: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: GestureDetector(
+            onTap: () => Navigator.pop(context),
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 6,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
+              ),
+              child: const Icon(Icons.arrow_back,
+                  color: Color(0xFF2D3132), size: 18),
+            ),
           ),
         ),
         centerTitle: true,
+        title: const Text(
+          'Cycle Details',
+          style: TextStyle(
+            color: Color(0xFF1A1C1E),
+            fontWeight: FontWeight.w700,
+            fontSize: 17,
+          ),
+        ),
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: Color(0xFF1B5E37)))
+          ? const Center(
+              child: CircularProgressIndicator(
+                  strokeWidth: 2, color: Color(0xFF1B5E37)))
           : _error != null && _cycleData == null
-              ? Center(child: Text(_error!, style: const TextStyle(color: Colors.grey)))
+              ? _buildErrorState()
               : SingleChildScrollView(
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 8),
                       _buildHeader(),
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 20),
                       _buildGrowthProgress(),
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 16),
                       _buildActionButtons(context),
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 16),
                       _buildRiskAlert(),
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 16),
                       _buildMapPreview(),
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 16),
                       _buildRecentActivity(),
                       const SizedBox(height: 40),
                     ],
                   ),
-              )
-        );
+                ),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 40),
+        padding: const EdgeInsets.all(32),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline,
+                size: 40, color: Colors.grey.shade400),
+            const SizedBox(height: 16),
+            Text(
+              _error ?? 'Something went wrong',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 15, color: Colors.grey.shade600),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildHeader() {
@@ -254,28 +308,33 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              cycleName,
-              style: const TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.w900,
-                color: Color(0xFF1A1C1E),
-                height: 1.1,
+            Expanded(
+              child: Text(
+                cycleName,
+                style: const TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF1A1C1E),
+                  height: 1.15,
+                ),
               ),
             ),
+            const SizedBox(width: 12),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
-                color: const Color(0xFFBCF491),
-                borderRadius: BorderRadius.circular(20),
+                color: const Color(0xFFE8F5E0),
+                borderRadius: BorderRadius.circular(8),
               ),
               child: const Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   SizedBox(
-                    width: 8,
-                    height: 8,
+                    width: 6,
+                    height: 6,
                     child: DecoratedBox(
                       decoration: BoxDecoration(
                         color: Color(0xFF1B5E37),
@@ -283,13 +342,14 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
                       ),
                     ),
                   ),
-                  SizedBox(width: 6),
+                  SizedBox(width: 5),
                   Text(
                     'ACTIVE',
                     style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
                       color: Color(0xFF1B5E37),
+                      letterSpacing: 0.5,
                     ),
                   ),
                 ],
@@ -300,11 +360,17 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
         const SizedBox(height: 8),
         Row(
           children: [
-            const Icon(Icons.location_on_outlined, size: 16, color: Colors.grey),
+            Icon(Icons.location_on_outlined,
+                size: 15,
+                color: const Color(0xFF5E6266).withValues(alpha: 0.6)),
             const SizedBox(width: 4),
             Text(
-              '$fieldName • $cropVariety',
-              style: const TextStyle(color: Colors.grey, fontSize: 14),
+              '$fieldName · $cropVariety',
+              style: TextStyle(
+                  color:
+                      const Color(0xFF5E6266).withValues(alpha: 0.7),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500),
             ),
           ],
         ),
@@ -316,55 +382,110 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
     final plantingDate = _cycleData?['plantingDate'];
     final harvestDate = _cycleData?['harvestDate'];
     final remainingDays = _totalDays - _elapsedDays;
+    final progressPercent = (_progress * 100).toInt();
 
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Growth Progress',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Growth Progress',
+                style: TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.w700),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1B5E37).withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  '$progressPercent%',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF1B5E37),
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Day $_elapsedDays of $_totalDays', style: const TextStyle(color: Colors.black87)),
               Text(
-                '$remainingDays days remaining',
-                style: const TextStyle(color: Color(0xFF1B5E37), fontWeight: FontWeight.bold),
+                'Day $_elapsedDays of $_totalDays',
+                style: TextStyle(
+                    color: const Color(0xFF1A1C1E)
+                        .withValues(alpha: 0.8),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600),
+              ),
+              Text(
+                '$remainingDays days left',
+                style: const TextStyle(
+                  color: Color(0xFF1B5E37),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           ClipRRect(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(6),
             child: LinearProgressIndicator(
               value: _progress,
-              minHeight: 10,
-              backgroundColor: const Color(0xFFE5E7EB),
-              valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF1B5E37)),
+              minHeight: 8,
+              backgroundColor: const Color(0xFFE8EAE5),
+              valueColor: const AlwaysStoppedAnimation<Color>(
+                  Color(0xFF1B5E37)),
             ),
           ),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _DateInfo(
-                label: 'PLANTED', 
-                date: plantingDate != null ? _formatDate(plantingDate) : 'N/A',
-              ),
-              _DateInfo(
-                label: 'EXPECTED HARVEST', 
-                date: harvestDate != null ? _formatDate(harvestDate) : 'N/A',
-                alignEnd: true,
-              ),
-            ],
+          const SizedBox(height: 20),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF9FAF8),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _DateInfo(
+                  label: 'PLANTED',
+                  date: plantingDate != null
+                      ? _formatDate(plantingDate)
+                      : 'N/A',
+                ),
+                Container(
+                  width: 1, height: 32, color: const Color(0xFFE8EAE5)),
+                _DateInfo(
+                  label: 'EXPECTED HARVEST',
+                  date: harvestDate != null
+                      ? _formatDate(harvestDate)
+                      : 'N/A',
+                  alignEnd: true,
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -373,176 +494,122 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
 
   Widget _buildActionButtons(BuildContext context) {
     final now = DateTime.now();
-    final harvestDate = (_cycleData?['harvestDate'] as Timestamp?)?.toDate();
-    final isEarlyHarvest = harvestDate != null && now.isBefore(harvestDate);
-    
+    final harvestDate =
+        (_cycleData?['harvestDate'] as Timestamp?)?.toDate();
+    final isEarlyHarvest =
+        harvestDate != null && now.isBefore(harvestDate);
+
     return Column(
       children: [
         _buildActionButton(
-          context: context,
           icon: Icons.eco_outlined,
           title: 'Monitoring',
           subtitle: 'Weekly logs and trap records',
-          color: const Color(0xFF1B5E37),
-          isDark: true,
           onTap: () {
-            Navigator.push(context, MaterialPageRoute(
-              builder: (context) => MonitoringScreen(
-                cycleId: widget.cycleId, 
-                userId: widget.uid,
-              )
-            ));
-          }
+            Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (context) => MonitoringScreen(
+                          cycleId: widget.cycleId,
+                          userId: widget.uid,
+                        )));
+          },
         ),
-        const SizedBox(height: 12),
-        
-        // Harvest button - always enabled with confirmation
-        _buildHarvestButton(context, isEarlyHarvest),
-        
-        const SizedBox(height: 12),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF1F3F1),
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: const Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.lightbulb_outline, size: 20, color: Color(0xFFF0C002)),
-              SizedBox(width: 8),
-              Text('Recommendations: Suggested actions', style: TextStyle(fontWeight: FontWeight.w500)),
-            ],
+        const SizedBox(height: 10),
+        _buildActionButton(
+          icon: Icons.shopping_basket_outlined,
+          title: 'Record Harvest',
+          subtitle: isEarlyHarvest
+              ? 'Early harvest — confirmation needed'
+              : 'Finalize yield and losses',
+          isWarning: isEarlyHarvest,
+          onTap: () {
+            if (isEarlyHarvest) {
+              _showEarlyHarvestConfirmation(context);
+            } else {
+              Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => HarvestRecordingScreen(
+                            cycleId: widget.cycleId,
+                            userId: widget.uid,
+                          )));
+            }
+          },
+        ),
+        const SizedBox(height: 10),
+        GestureDetector(
+          onTap: () {
+            // TODO: Navigate to recommendations
+          },
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(
+                horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                  color:
+                      const Color(0xFFF0C002).withValues(alpha: 0.3)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.03),
+                  blurRadius: 4,
+                  offset: const Offset(0, 1),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color:
+                        const Color(0xFFF0C002).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.lightbulb_outline,
+                      size: 18, color: Color(0xFFD4A002)),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Recommendations',
+                          style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF1A1C1E))),
+                      Text(
+                        'Suggested actions for this cycle',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: const Color(0xFF5E6266)
+                                .withValues(alpha: 0.7)),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.arrow_forward_ios_rounded,
+                    size: 14,
+                    color: const Color(0xFF5E6266)
+                        .withValues(alpha: 0.4)),
+              ],
+            ),
           ),
         ),
       ],
     );
   }
 
-  Widget _buildHarvestButton(BuildContext context, bool isEarlyHarvest) {
-    return _buildActionButton(
-      context: context,
-      icon: Icons.shopping_basket_outlined,
-      title: 'Record Harvest',
-      subtitle: isEarlyHarvest ? 'Early harvest - confirmation required' : 'Finalize yield and losses',
-      color: isEarlyHarvest ? Colors.white : const Color(0xFF1B5E37),
-      isDark: !isEarlyHarvest,
-      onTap: () {
-        if (isEarlyHarvest) {
-          _showEarlyHarvestConfirmation(context);
-        } else {
-          // Normal harvest on or after expected date
-          Navigator.push(context, MaterialPageRoute(
-            builder: (context) => HarvestRecordingScreen(
-              cycleId: widget.cycleId,
-              userId: widget.uid,
-            )
-          ));
-        }
-      },
-    );
-  }
-
-  void _showEarlyHarvestConfirmation(BuildContext context) {
-    final harvestDate = (_cycleData?['harvestDate'] as Timestamp?)?.toDate();
-    final daysEarly = harvestDate != null 
-        ? harvestDate.difference(DateTime.now()).inDays 
-        : 0;
-    
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: Row(
-          children: const [
-            Icon(Icons.warning_amber, color: Color(0xFFFF9800), size: 28),
-            SizedBox(width: 12),
-            Text('Early Harvest Warning'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'You are attempting to harvest $daysEarly days before the expected harvest date.',
-              style: const TextStyle(fontSize: 16),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Are you sure you want to proceed with harvesting?',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFF3E0),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Note:',
-                    style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFE65100)),
-                  ),
-                  SizedBox(height: 4),
-                  Text(
-                    '• Yield may be lower than expected\n'
-                    '• Grain quality might be affected\n'
-                    '• This will mark the cycle as completed\n'
-                    '• You will need to provide a reason for early harvest',
-                    style: TextStyle(fontSize: 13, color: Color(0xFFE65100)),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel', style: TextStyle(color: Colors.red)),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              // Navigate to harvest recording with early harvest flag
-              Navigator.push(context, MaterialPageRoute(
-                builder: (context) => HarvestRecordingScreen(
-                  cycleId: widget.cycleId,
-                  userId: widget.uid,
-                  isEarlyHarvest: true,
-                  daysEarly: daysEarly,
-                )
-              ));
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1B5E37),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-            child: const Text(
-              'Yes, Proceed',
-              style: TextStyle(
-                color: Colors.white, // change to any color you want
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildActionButton({
-    required BuildContext context,
     required IconData icon,
     required String title,
     required String subtitle,
-    required Color color,
-    required bool isDark,
+    bool isWarning = false,
     required VoidCallback onTap,
   }) {
     return GestureDetector(
@@ -550,44 +617,236 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(24),
-          border: isDark ? null : Border.all(color: const Color(0xFFE5E7EB)),
+          color: const Color(0xFF1B5E37),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF1B5E37)
+                  .withValues(alpha: isWarning ? 0.12 : 0.2),
+              blurRadius: isWarning ? 6 : 12,
+              offset: const Offset(0, 3),
+            ),
+          ],
+          border: isWarning
+              ? Border.all(
+                  color: const Color(0xFFF59E0B).withValues(alpha: 0.4))
+              : null,
         ),
         child: Row(
           children: [
             Container(
-              padding: const EdgeInsets.all(10),
+              width: 42,
+              height: 42,
               decoration: BoxDecoration(
-                color: isDark
-                    ? Colors.white.withValues(alpha: 0.1)
-                    : const Color(0xFFF1F3F1),
-                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
               ),
-              child: Icon(icon, color: isDark ? Colors.white : const Color(0xFF1B5E37)),
+              child: Icon(icon, color: Colors.white, size: 22),
             ),
-            const SizedBox(width: 16),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.white.withValues(alpha: 0.65),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isWarning)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color:
+                      const Color(0xFFF59E0B).withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Text(
+                  'EARLY',
                   style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: isDark ? Colors.white : const Color(0xFF1B5E37),
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFFF59E0B),
+                    letterSpacing: 0.5,
                   ),
                 ),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: isDark ? Colors.white70 : Colors.black54,
-                  ),
-                ),
-              ],
-            ),
+              )
+            else
+              Icon(Icons.arrow_forward_rounded,
+                  size: 18,
+                  color: Colors.white.withValues(alpha: 0.4)),
           ],
+        ),
+      ),
+    );
+  }
+
+  void _showEarlyHarvestConfirmation(BuildContext context) {
+    final harvestDate =
+        (_cycleData?['harvestDate'] as Timestamp?)?.toDate();
+    final daysEarly = harvestDate != null
+        ? harvestDate.difference(DateTime.now()).inDays
+        : 0;
+
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.5),
+      builder: (ctx) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24)),
+        backgroundColor: Colors.white,
+        child: Padding(
+          padding:
+              const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEE2E2),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.warning_amber_rounded,
+                    color: Color(0xFFBA1A1A), size: 36),
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                'Early Harvest',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF1A1C1E),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'You\'re harvesting $daysEarly days before the expected date.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 14,
+                    color: const Color(0xFF5E6266)
+                        .withValues(alpha: 0.8),
+                    height: 1.4),
+              ),
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFFBF0),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                      color:
+                          const Color(0xFFFFE082).withValues(alpha: 0.5)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.info_outline,
+                            size: 16, color: const Color(0xFFD48806)),
+                        const SizedBox(width: 6),
+                        const Text(
+                          'Keep in mind',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                            color: Color(0xFF9A6A00),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '• Yield may be lower than expected\n'
+                      '• Grain quality might be affected\n'
+                      '• Cycle will be marked completed\n'
+                      '• A reason for early harvest is required',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: const Color(0xFF9A6A00)
+                            .withValues(alpha: 0.85),
+                        height: 1.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 28),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) =>
+                                HarvestRecordingScreen(
+                                  cycleId: widget.cycleId,
+                                  userId: widget.uid,
+                                  isEarlyHarvest: true,
+                                  daysEarly: daysEarly,
+                                )));
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1B5E37),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                    elevation: 0,
+                  ),
+                  child: const Text(
+                    'Proceed with Harvest',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFF3F5EE),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                    elevation: 0,
+                  ),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(
+                      color: Color(0xFF5E6266),
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -595,34 +854,76 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
 
   Widget _buildRiskAlert() {
     return Container(
-      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFFFEE2E2),
-        borderRadius: BorderRadius.circular(24),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+            color: const Color(0xFFFECACA).withValues(alpha: 0.6)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.warning_rounded, color: Color(0xFFDC2626), size: 32),
-          const SizedBox(width: 12),
+          Container(
+            width: 4,
+            height: 56,
+            decoration: const BoxDecoration(
+              color: Color(0xFFDC2626),
+              borderRadius: BorderRadius.horizontal(
+                  left: Radius.circular(16)),
+            ),
+          ),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'High Risk Detected',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF991B1B),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 14, vertical: 12),
+              child: Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF2F2),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.warning_amber_rounded,
+                        color: Color(0xFFDC2626), size: 20),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Immediate attention required for Plot 4B. Review recent scouting data.',
-                  style: TextStyle(color: const Color(0xFF991B1B).withValues(alpha:0.8)),
-                ),
-              ],
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'High Risk Detected',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF991B1B),
+                          ),
+                        ),
+                        Text(
+                          'Immediate attention required for Plot 4B',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: const Color(0xFF991B1B)
+                                .withValues(alpha: 0.7),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.arrow_forward_ios_rounded,
+                      size: 14,
+                      color: const Color(0xFF991B1B)
+                          .withValues(alpha: 0.4)),
+                ],
+              ),
             ),
           ),
         ],
@@ -634,60 +935,108 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
     final boundaries = _fieldBoundaries;
     final center = _fieldCenter;
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(24),
-      child: Container(
-        height: 200,
-        width: double.infinity,
-        color: const Color(0xFFF1F3F1),
-        child: Stack(
-          children: [
-            FlutterMap(
-              options: MapOptions(
-                initialCenter: center,
-                initialZoom: 15.0,
-                interactionOptions: const InteractionOptions(
-                  flags: InteractiveFlag.none,
-                ),
-              ),
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                TileLayer(
-                  urlTemplate: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
-                  userAgentPackageName: 'com.visaia.app',
+                const Text(
+                  'Field Location',
+                  style: TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w700),
                 ),
-                if (boundaries.length >= 3)
-                  PolygonLayer(
-                    polygons: [
-                      Polygon(
-                        points: boundaries,
-                        color: const Color(0xFFFACC15).withOpacity(0.5),
-                        borderColor: const Color(0xFFFACC15),
-                        borderStrokeWidth: 2,
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF9FAF8),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.map_outlined,
+                          size: 14,
+                          color: const Color(0xFF5E6266)
+                              .withValues(alpha: 0.6)),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Map View',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF5E6266)
+                              .withValues(alpha: 0.8),
+                        ),
                       ),
                     ],
                   ),
+                ),
               ],
             ),
-            Positioned(
-              bottom: 12,
-              right: 12,
+          ),
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Row(
+                height: 180,
+                width: double.infinity,
+                color: const Color(0xFFF1F3F1),
+                child: Stack(
                   children: [
-                    Icon(Icons.map_outlined, size: 16),
-                    SizedBox(width: 4),
-                    Text('Map View', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    FlutterMap(
+                      options: MapOptions(
+                        initialCenter: center,
+                        initialZoom: 15.0,
+                        interactionOptions:
+                            const InteractionOptions(
+                          flags: InteractiveFlag.none,
+                        ),
+                      ),
+                      children: [
+                        TileLayer(
+                          urlTemplate:
+                              'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+                          userAgentPackageName: 'com.visaia.app',
+                        ),
+                        if (boundaries.length >= 3)
+                          PolygonLayer(
+                            polygons: [
+                              Polygon(
+                                points: boundaries,
+                                color: const Color(0xFF1B5E37)
+                                    .withValues(alpha: 0.15),
+                                borderColor:
+                                    const Color(0xFF1B5E37),
+                                borderStrokeWidth: 2,
+                              ),
+                            ],
+                          ),
+                      ],
+                    ),
                   ],
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 16),
+        ],
       ),
     );
   }
@@ -697,59 +1046,136 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Recent Activity',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Recent Activity',
+                style: TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.w700),
+              ),
+              GestureDetector(
+                onTap: () {
+                  // TODO: Navigate to full activity log
+                },
+                child: Text(
+                  'View All',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF1B5E37)
+                        .withValues(alpha: 0.7),
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 16),
           FutureBuilder<List<Map<String, dynamic>>>(
             future: _fetchRecentActivities(),
             builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(
-                  child: SizedBox(
-                    height: 100,
-                    child: CircularProgressIndicator(),
+              if (snapshot.connectionState ==
+                  ConnectionState.waiting) {
+                return const SizedBox(
+                  height: 100,
+                  child: Center(
+                    child: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Color(0xFF1B5E37)),
+                    ),
                   ),
                 );
               }
               if (snapshot.hasError) {
-                return Center(child: Text('Error: ${snapshot.error}'));
+                return Center(
+                  child: Text('Error: ${snapshot.error}',
+                      style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey.shade500)),
+                );
               }
               final activities = snapshot.data ?? [];
               if (activities.isEmpty) {
-                return const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 20),
-                  child: Center(
-                    child: Text('No recent activities'),
-                  ),
-                );
+                return _buildEmptyActivity();
               }
               return Column(
-                children: activities.asMap().entries.map((entry) {
+                children: activities
+                    .asMap()
+                    .entries
+                    .map((entry) {
                   final index = entry.key;
                   final act = entry.value;
-                  final isLast = index == activities.length - 1;
-                  return Column(
-                    children: [
-                      _buildActivityItem(
-                        icon: _getIconForActivity(act['title']),
-                        title: act['title'],
-                        subtitle: act['subtitle'],
-                        time: _formatTimeAgo(act['timestamp']),
-                        iconColor: _getColorForActivity(act['title']),
-                      ),
-                      if (!isLast) const Divider(height: 24),
-                    ],
+                  final isLast =
+                      index == activities.length - 1;
+                  return _buildActivityItem(
+                    icon:
+                        _getIconForActivity(act['title']),
+                    title: act['title'],
+                    subtitle: act['subtitle'],
+                    time: _formatTimeAgo(act['timestamp']),
+                    iconColor:
+                        _getColorForActivity(act['title']),
+                    isLast: isLast,
                   );
                 }).toList(),
               );
             },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyActivity() {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 28),
+      child: Column(
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF0F1ED),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(Icons.history,
+                size: 24,
+                color: const Color(0xFF5E6266)
+                    .withValues(alpha: 0.4)),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'No recent activities',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: const Color(0xFF5E6266)
+                  .withValues(alpha: 0.6),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Activities from daily logs will appear here',
+            style: TextStyle(
+              fontSize: 12,
+              color: const Color(0xFF5E6266)
+                  .withValues(alpha: 0.4),
+            ),
           ),
         ],
       ),
@@ -762,43 +1188,90 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
     required String subtitle,
     required String time,
     required Color iconColor,
+    required bool isLast,
   }) {
-    return Row(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: iconColor.withOpacity(0.1),
-            shape: BoxShape.circle,
-          ),
-          child: Icon(icon, color: iconColor, size: 20),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 15),
-              ),
-              if (subtitle.isNotEmpty) ...[
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: const TextStyle(color: Colors.grey, fontSize: 12),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+    return IntrinsicHeight(
+      child: Row(
+        children: [
+          SizedBox(
+            width: 40,
+            child: Column(
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: iconColor.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child:
+                      Icon(icon, color: iconColor, size: 18),
                 ),
+                if (!isLast)
+                  Expanded(
+                    child: Container(
+                      width: 2,
+                      margin: const EdgeInsets.symmetric(
+                          vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE8EAE5),
+                        borderRadius:
+                            BorderRadius.circular(1),
+                      ),
+                    ),
+                  ),
               ],
-              Text(
-                time,
-                style: const TextStyle(color: Colors.grey, fontSize: 12),
-              ),
-            ],
+            ),
           ),
-        ),
-      ],
+          const SizedBox(width: 12),
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(
+                  bottom: isLast ? 0 : 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment:
+                        MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                          color: Color(0xFF1A1C1E),
+                        ),
+                      ),
+                      Text(
+                        time,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: const Color(0xFF5E6266)
+                              .withValues(alpha: 0.5),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (subtitle.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        color: const Color(0xFF5E6266)
+                            .withValues(alpha: 0.6),
+                        fontSize: 12,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -808,16 +1281,33 @@ class _DateInfo extends StatelessWidget {
   final String date;
   final bool alignEnd;
 
-  const _DateInfo({required this.label, required this.date, this.alignEnd = false});
+  const _DateInfo(
+      {required this.label, required this.date, this.alignEnd = false});
 
   @override
   Widget build(BuildContext context) {
     return Column(
-      crossAxisAlignment: alignEnd ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      crossAxisAlignment:
+          alignEnd ? CrossAxisAlignment.end : CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(color: Colors.grey, fontSize: 11, letterSpacing: 0.5)),
+        Text(
+          label,
+          style: TextStyle(
+            color: const Color(0xFF5E6266).withValues(alpha: 0.6),
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.5,
+          ),
+        ),
         const SizedBox(height: 4),
-        Text(date, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        Text(
+          date,
+          style: const TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF1A1C1E),
+          ),
+        ),
       ],
     );
   }

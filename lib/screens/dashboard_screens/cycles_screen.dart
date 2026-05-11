@@ -20,6 +20,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
   static const Color darkGreen = Color(0xFF0D4D33);
   static const Color textGray = Color(0xFF43483E);
   static const Color headingBlack = Color(0xFF1A1C18);
+  static const Color scaffoldBg = Color(0xFFF7F8F5);
 
   bool isCompletedView = false;
   String searchQuery = '';
@@ -28,37 +29,31 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
 
   // ================= HELPER METHODS =================
 
-  /// Gets status information for active cycles using the Model
   Map<String, dynamic> _getCycleStatus(CycleModel cycle) {
-    // Fallback if you later add a status string field to the model
-    // switch (cycle.status) { ... }
-
-    // Default status based on progress (Using Model's progress property)
     if (cycle.progress >= 0.8) {
       return {
         'text': 'Approaching Harvest',
         'color': const Color(0xFF7E5800),
-        'bgColor': const Color(0xFFFFE0A8),
+        'bgColor': const Color(0xFFFFF3DC),
         'icon': Icons.agriculture,
       };
     } else if (cycle.progress >= 0.5) {
       return {
         'text': 'Mid-Season Growth',
         'color': const Color(0xFF173408),
-        'bgColor': const Color(0xFFC5E1A5),
+        'bgColor': const Color(0xFFEDF5E1),
         'icon': Icons.trending_up,
       };
     } else {
       return {
         'text': 'Early Growth Stage',
         'color': darkGreen,
-        'bgColor': const Color(0xFFE1E3E1),
+        'bgColor': const Color(0xFFEEF0EC),
         'icon': Icons.eco,
       };
     }
   }
 
-  /// Gets crop icon based on crop variety using the Model
   IconData _getCropIcon(String cropVariety) {
     if (cropVariety.isEmpty) return Icons.grass;
     final lower = cropVariety.toLowerCase();
@@ -71,7 +66,6 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
     return Icons.grass;
   }
 
-  /// Filters cycles based on search query using Model properties
   bool _matchesSearch(CycleModel cycle) {
     if (searchQuery.isEmpty) return true;
     final query = searchQuery.toLowerCase();
@@ -80,14 +74,13 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
         cycle.cropVariety.toLowerCase().contains(query);
   }
 
-  /// Fallback method to fetch cycles without ordering (if Firestore index doesn't exist)
   Widget _buildCycleListWithoutOrdering() {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('users')
           .doc(user!.uid)
           .collection('cycles')
-          .snapshots(), // No ordering
+          .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return _buildLoadingState();
@@ -97,24 +90,22 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
           return _buildEmptyState('Error loading cycles');
         }
 
-        // Convert raw docs directly to CycleModel list and sort locally
         final allCycles = snapshot.data?.docs
-            .map((doc) => CycleModel.fromDoc(doc))
-            .toList() ?? [];
-        
-        // Sort locally by createdAt (newest first)
+                .map((doc) => CycleModel.fromDoc(doc))
+                .toList() ??
+            [];
+
         allCycles.sort((a, b) {
           final dateA = a.createdAt ?? DateTime.now();
           final dateB = b.createdAt ?? DateTime.now();
           return dateB.compareTo(dateA);
         });
 
-        // Filter using Model method
         final filteredCycles = allCycles.where(_matchesSearch).toList();
-
-        // Separate using Model's shouldBeCompleted property
-        final activeCycles = filteredCycles.where((c) => !c.shouldBeCompleted).toList();
-        final completedCycles = filteredCycles.where((c) => c.shouldBeCompleted).toList();
+        final activeCycles =
+            filteredCycles.where((c) => !c.shouldBeCompleted).toList();
+        final completedCycles =
+            filteredCycles.where((c) => c.shouldBeCompleted).toList();
 
         final displayCycles = isCompletedView ? completedCycles : activeCycles;
 
@@ -128,14 +119,14 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
         }
 
         return Column(
-          children: displayCycles.map((cycle) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 16),
-              child: isCompletedView 
-                  ? _buildCompletedCard(cycle) 
-                  : _buildActiveCard(cycle),
-            );
-          }).toList(),
+          children: displayCycles
+              .map((cycle) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: isCompletedView
+                        ? _buildCompletedCard(cycle)
+                        : _buildActiveCard(cycle),
+                  ))
+              .toList(),
         );
       },
     );
@@ -145,6 +136,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: scaffoldBg,
       body: SafeArea(
         child: Column(
           children: [
@@ -154,24 +146,30 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const SizedBox(height: 24),
-                    Text(
-                      'Cropping Cycles',
-                      style: GoogleFonts.epilogue(
-                        fontSize: 28,
-                        fontWeight: FontWeight.w800,
-                        color: headingBlack,
-                      ),
+                    const SizedBox(height: 20),
+                    // Header row
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Cropping Cycles',
+                          style: GoogleFonts.epilogue(
+                            fontSize: 26,
+                            fontWeight: FontWeight.w800,
+                            color: headingBlack,
+                          ),
+                        ), 
+                      ],
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 20),
                     _buildSearchBar(),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 20),
                     _buildFilterRow(),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 20),
                     _buildCycleList(),
-                    const SizedBox(height: 40),
+                    const SizedBox(height: 32),
                     _buildActionButtons(),
-                    const SizedBox(height: 55),
+                    const SizedBox(height: 40),
                   ],
                 ),
               ),
@@ -196,30 +194,27 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
           .orderBy('createdAt', descending: true)
           .snapshots(),
       builder: (context, snapshot) {
-
         if (snapshot.connectionState == ConnectionState.waiting) {
           return _buildLoadingState();
         }
 
         if (snapshot.hasError) {
-          // If index error, try fallback without ordering
           if (snapshot.error.toString().contains('index')) {
             return _buildCycleListWithoutOrdering();
           }
           return _buildEmptyState('Error loading cycles');
         }
 
-        // Convert raw docs directly to CycleModel list
         final allCycles = snapshot.data?.docs
-            .map((doc) => CycleModel.fromDoc(doc))
-            .toList() ?? [];
+                .map((doc) => CycleModel.fromDoc(doc))
+                .toList() ??
+            [];
 
-        // Filter using Model method
         final filteredCycles = allCycles.where(_matchesSearch).toList();
-
-        // Separate using Model's shouldBeCompleted property
-        final activeCycles = filteredCycles.where((c) => !c.shouldBeCompleted).toList();
-        final completedCycles = filteredCycles.where((c) => c.shouldBeCompleted).toList();
+        final activeCycles =
+            filteredCycles.where((c) => !c.shouldBeCompleted).toList();
+        final completedCycles =
+            filteredCycles.where((c) => c.shouldBeCompleted).toList();
 
         final displayCycles = isCompletedView ? completedCycles : activeCycles;
 
@@ -233,14 +228,14 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
         }
 
         return Column(
-          children: displayCycles.map((cycle) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 16),
-              child: isCompletedView 
-                  ? _buildCompletedCard(cycle) 
-                  : _buildActiveCard(cycle),
-            );
-          }).toList(),
+          children: displayCycles
+              .map((cycle) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: isCompletedView
+                        ? _buildCompletedCard(cycle)
+                        : _buildActiveCard(cycle),
+                  ))
+              .toList(),
         );
       },
     );
@@ -254,9 +249,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
     return CropCycleCard(
       title: cycle.cycleName,
       subtitle: cycle.fieldName,
-      // Use Model's progress property directly
       progress: cycle.progress.clamp(0.0, 1.0),
-      // Use Model's formatted dates directly
       harvestDate: cycle.formattedHarvestDateShort,
       statusText: statusInfo['text'] as String,
       statusColor: statusInfo['color'] as Color,
@@ -265,11 +258,14 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
       progressColor: darkGreen,
       icon: cropIcon,
       iconColor: darkGreen,
-      onMenuTap: () => _showScreen2BottomSheet(context, cycle.cycleName, cycle.id),
+      onMenuTap: () =>
+          _showScreen2BottomSheet(context, cycle.cycleName, cycle.id),
       onViewDetailsTap: () {
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => CycleDetailsScreen(cycleId: cycle.id, uid: user!.uid,)),
+          MaterialPageRoute(
+              builder: (context) =>
+                  CycleDetailsScreen(cycleId: cycle.id, uid: user!.uid)),
         );
       },
     );
@@ -279,14 +275,15 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
   Widget _buildCompletedCard(CycleModel cycle) {
     return Screen2CompletedCard(
       title: cycle.cycleName,
-      // Use Model's formatted dates directly
       harvestDate: cycle.formattedHarvestDateLong,
       income: cycle.formattedIncome,
       hasIncome: cycle.income != null,
       onViewDetailsTap: () {
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => CompletedCycleScreen(cycleId: cycle.id, userId: user!.uid,)),
+          MaterialPageRoute(
+              builder: (context) => CompletedCycleScreen(
+                  cycleId: cycle.id, userId: user!.uid)),
         );
       },
     );
@@ -297,9 +294,9 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
     return Column(
       children: [
         _shimmerCard(),
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
         _shimmerCard(),
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
         _shimmerCard(),
       ],
     );
@@ -307,16 +304,16 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
 
   Widget _shimmerCard() {
     return Container(
-      height: 180,
+      height: 170,
       decoration: BoxDecoration(
-        color: Colors.grey.shade200,
-        borderRadius: BorderRadius.circular(32),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
       ),
       child: const Center(
         child: SizedBox(
-          width: 24,
-          height: 24,
-          child: CircularProgressIndicator(strokeWidth: 2),
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(strokeWidth: 2, color: darkGreen),
         ),
       ),
     );
@@ -324,41 +321,45 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
 
   Widget _buildEmptyState(String message) {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 60, horizontal: 24),
+      padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
       decoration: BoxDecoration(
-        color: const Color(0xFFF3F5EE),
-        borderRadius: BorderRadius.circular(32),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
       ),
       child: Column(
         children: [
           Container(
-            width: 80,
-            height: 80,
-            decoration: const BoxDecoration(
-              color: Color(0xFFE1E3E1),
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              color: const Color(0xFFE1E3E1).withValues(alpha: 0.6),
               shape: BoxShape.circle,
             ),
             child: Icon(
-              isCompletedView ? Icons.check_circle_outline : Icons.agriculture_outlined,
-              size: 40,
-              color: darkGreen,
+              isCompletedView
+                  ? Icons.check_circle_outline
+                  : Icons.agriculture_outlined,
+              size: 36,
+              color: darkGreen.withValues(alpha: 0.6),
             ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
           Text(
             message,
             style: GoogleFonts.manrope(
-              fontSize: 16,
+              fontSize: 15,
               color: textGray,
               fontWeight: FontWeight.w600,
             ),
             textAlign: TextAlign.center,
           ),
           if (!isCompletedView && searchQuery.isEmpty) ...[
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
             Text(
               'Start your first cropping cycle to see it here',
-              style: GoogleFonts.manrope(fontSize: 14, color: textGray),
+              style: GoogleFonts.manrope(
+                  fontSize: 13,
+                  color: textGray.withValues(alpha: 0.7)),
               textAlign: TextAlign.center,
             ),
           ],
@@ -370,15 +371,22 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
   // ================= MAIN SCREEN UI COMPONENTS =================
   Widget _buildSearchBar() {
     return Container(
-      height: 56,
+      height: 52,
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(100),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 6,
+            offset: const Offset(0, 1),
+          ),
+        ],
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
         children: [
-          const Icon(Icons.search, color: textGray, size: 24),
+          Icon(Icons.search, color: textGray.withValues(alpha: 0.5), size: 22),
           const SizedBox(width: 12),
           Expanded(
             child: TextField(
@@ -387,13 +395,13 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                 hintText: 'Search fields or crops...',
                 hintStyle: GoogleFonts.manrope(
                   color: Colors.grey.shade400,
-                  fontSize: 16,
+                  fontSize: 15,
                   fontWeight: FontWeight.w500,
                 ),
                 border: InputBorder.none,
               ),
               style: GoogleFonts.manrope(
-                fontSize: 16,
+                fontSize: 15,
                 fontWeight: FontWeight.w500,
                 color: headingBlack,
               ),
@@ -402,7 +410,8 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
           if (searchQuery.isNotEmpty)
             GestureDetector(
               onTap: () => setState(() => searchQuery = ''),
-              child: Icon(Icons.close, color: Colors.grey.shade400, size: 20),
+              child: Icon(Icons.close,
+                  color: Colors.grey.shade400, size: 18),
             ),
         ],
       ),
@@ -421,8 +430,9 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
         int completedCount = 0;
 
         if (snapshot.hasData && snapshot.data != null) {
-          // Map directly to CycleModel to check status
-          final cycles = snapshot.data!.docs.map((doc) => CycleModel.fromDoc(doc)).toList();
+          final cycles = snapshot.data!.docs
+              .map((doc) => CycleModel.fromDoc(doc))
+              .toList();
           for (var cycle in cycles) {
             if (cycle.shouldBeCompleted) {
               completedCount++;
@@ -436,28 +446,42 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
           children: [
             Expanded(
               child: Container(
-                height: 48,
+                height: 44,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE1E3E1),
-                  borderRadius: BorderRadius.circular(100),
+                  color: const Color(0xFFE8EAE5),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: Row(
                   children: [
                     Expanded(
                       child: GestureDetector(
                         onTap: () => setState(() => isCompletedView = false),
-                        child: Container(
-                          margin: const EdgeInsets.all(4),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          margin: const EdgeInsets.all(3),
                           decoration: BoxDecoration(
-                            color: !isCompletedView ? Colors.white : Colors.transparent,
-                            borderRadius: BorderRadius.circular(100),
+                            color: !isCompletedView
+                                ? Colors.white
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(10),
+                            boxShadow: !isCompletedView
+                                ? [
+                                    BoxShadow(
+                                      color: Colors.black
+                                          .withValues(alpha: 0.06),
+                                      blurRadius: 4,
+                                      offset: const Offset(0, 1),
+                                    ),
+                                  ]
+                                : null,
                           ),
                           alignment: Alignment.center,
                           child: Text(
                             'Active ($activeCount)',
                             style: GoogleFonts.manrope(
                               color: !isCompletedView ? darkGreen : textGray,
-                              fontWeight: !isCompletedView ? FontWeight.w800 : FontWeight.w600,
+                              fontWeight:
+                                  !isCompletedView ? FontWeight.w800 : FontWeight.w600,
                               fontSize: 13,
                             ),
                           ),
@@ -467,18 +491,32 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                     Expanded(
                       child: GestureDetector(
                         onTap: () => setState(() => isCompletedView = true),
-                        child: Container(
-                          margin: const EdgeInsets.all(4),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          margin: const EdgeInsets.all(3),
                           decoration: BoxDecoration(
-                            color: isCompletedView ? Colors.white : Colors.transparent,
-                            borderRadius: BorderRadius.circular(100),
+                            color: isCompletedView
+                                ? Colors.white
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(10),
+                            boxShadow: isCompletedView
+                                ? [
+                                    BoxShadow(
+                                      color: Colors.black
+                                          .withValues(alpha: 0.06),
+                                      blurRadius: 4,
+                                      offset: const Offset(0, 1),
+                                    ),
+                                  ]
+                                : null,
                           ),
                           alignment: Alignment.center,
                           child: Text(
                             'Completed ($completedCount)',
                             style: GoogleFonts.manrope(
                               color: isCompletedView ? darkGreen : textGray,
-                              fontWeight: isCompletedView ? FontWeight.w800 : FontWeight.w600,
+                              fontWeight:
+                                  isCompletedView ? FontWeight.w800 : FontWeight.w600,
                               fontSize: 13,
                             ),
                           ),
@@ -489,23 +527,31 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                 ),
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             Container(
-              height: 48,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+              height: 44,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(100),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.04),
+                    blurRadius: 4,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.tune, size: 20, color: headingBlack),
-                  const SizedBox(width: 8),
+                  Icon(Icons.tune,
+                      size: 18, color: headingBlack.withValues(alpha: 0.7)),
+                  const SizedBox(width: 6),
                   Text(
                     'Filters',
                     style: GoogleFonts.manrope(
                       fontWeight: FontWeight.w700,
-                      fontSize: 14,
+                      fontSize: 13,
                       color: headingBlack,
                     ),
                   ),
@@ -525,34 +571,40 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const SizedBox(
             height: 80,
-            child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+            child:
+                Center(child: CircularProgressIndicator(strokeWidth: 2, color: darkGreen)),
           );
         }
 
         final hasPreviousCycle = snapshot.data ?? false;
 
         return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Info message when no previous cycle exists
             if (!hasPreviousCycle)
               Container(
                 margin: const EdgeInsets.only(bottom: 16),
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFFF8E1),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFFFE082)),
+                  color: const Color(0xFFFFFBF0),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFFFE9B0)),
                 ),
                 child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.info_outline, color: Color(0xFFF57C00), size: 20),
-                    const SizedBox(width: 12),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 1),
+                      child: Icon(Icons.info_outline,
+                          color: const Color(0xFFD48806), size: 18),
+                    ),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        'Please record your previous cycle first before starting a new one. This helps us provide accurate predictions.',
+                        'Record your previous cycle first to enable accurate predictions for new cycles.',
                         style: GoogleFonts.manrope(
                           fontSize: 12,
-                          color: const Color(0xFFE65100),
+                          color: const Color(0xFF9A6A00),
                           height: 1.4,
                         ),
                       ),
@@ -560,49 +612,46 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                   ],
                 ),
               ),
-            
-            // Start New Cycle - Disabled if no previous cycle exists
+
             _actionItem(
               icon: Icons.eco,
               title: 'Start New Cycle',
-              subtitle: hasPreviousCycle 
-                  ? 'Begin a new cropping cycle' 
+              subtitle: hasPreviousCycle
+                  ? 'Begin a new cropping cycle'
                   : 'Previous cycle required first',
               isPrimary: hasPreviousCycle,
               isEnabled: hasPreviousCycle,
               onTap: hasPreviousCycle
                   ? () {
                       Navigator.push(
-                        context, 
-                        MaterialPageRoute(builder: (context) => StartCroppingCycleScreen()),
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) =>
+                                StartCroppingCycleScreen()),
                       );
                     }
                   : null,
             ),
-            const SizedBox(height: 16),
-            
-            // Record Previous Cycle - Always enabled
+            const SizedBox(height: 10),
             _actionItem(
-              icon: Icons.shopping_basket_outlined,
+              icon: Icons.history,
               title: 'Record Previous Cycle',
               subtitle: 'Add historical cycle data',
               isPrimary: !hasPreviousCycle,
               isEnabled: true,
               onTap: () {
                 Navigator.push(
-                  context, 
+                  context,
                   MaterialPageRoute(
-                    builder: (context) => RecordCycleScreen(
-                      userId: user!.uid,
-                    ),
+                    builder: (context) =>
+                        RecordCycleScreen(userId: user!.uid),
                   ),
                 ).then((_) {
-                  // Refresh to update button states
                   setState(() {});
                 });
               },
             ),
-            const SizedBox(height: 55),
+            const SizedBox(height: 70),
           ],
         );
       },
@@ -619,53 +668,74 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
   }) {
     return GestureDetector(
       onTap: isEnabled ? onTap : null,
-      child: Opacity(
-        opacity: isEnabled ? 1.0 : 0.5,
-        child: Container(
-          height: 80,
-          padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 200),
+        opacity: isEnabled ? 1.0 : 0.45,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
           decoration: BoxDecoration(
             color: isPrimary ? darkGreen : Colors.white,
-            borderRadius: BorderRadius.circular(100),
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: isPrimary
+                    ? darkGreen.withValues(alpha: 0.2)
+                    : Colors.black.withValues(alpha: 0.04),
+                blurRadius: isPrimary ? 12 : 4,
+                offset: isPrimary ? const Offset(0, 4) : const Offset(0, 1),
+              ),
+            ],
           ),
           child: Row(
             children: [
               Container(
-                width: 48,
-                height: 48,
+                width: 44,
+                height: 44,
                 decoration: BoxDecoration(
                   color: isPrimary
-                      ? Colors.white.withValues(alpha: 0.2)
-                      : const Color(0xFFE1E3E1),
+                      ? Colors.white.withValues(alpha: 0.15)
+                      : const Color(0xFFF0F1ED),
                   shape: BoxShape.circle,
                 ),
-                child: Icon(icon, color: isPrimary ? Colors.white : darkGreen),
+                child: Icon(icon,
+                    color: isPrimary ? Colors.white : darkGreen, size: 22),
               ),
-              const SizedBox(width: 16),
-              Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: GoogleFonts.manrope(
-                      color: isPrimary ? Colors.white : darkGreen,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: GoogleFonts.manrope(
+                        color: isPrimary ? Colors.white : darkGreen,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
-                  ),
-                  Text(
-                    subtitle,
-                    style: GoogleFonts.manrope(
-                      color: isPrimary
-                          ? Colors.white.withValues(alpha: 0.7)
-                          : textGray,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: GoogleFonts.manrope(
+                        color: isPrimary
+                            ? Colors.white.withValues(alpha: 0.65)
+                            : textGray.withValues(alpha: 0.8),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
+              if (isEnabled)
+                Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  size: 16,
+                  color: isPrimary
+                      ? Colors.white.withValues(alpha: 0.5)
+                      : textGray.withValues(alpha: 0.4),
+                ),
             ],
           ),
         ),
@@ -674,72 +744,98 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
   }
 
   // ================= OVERLAY AND LOGIC COMPONENTS =================
-  void _showScreen2BottomSheet(BuildContext context, String cropName, String cycleId) {
+  void _showScreen2BottomSheet(
+      BuildContext context, String cropName, String cycleId) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-      ),
+      backgroundColor: Colors.transparent,
       builder: (context) {
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE1E3E1),
-                  borderRadius: BorderRadius.circular(2),
+        return Container(
+          margin: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 8),
+                Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE1E3E1),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 24),
-              _sheetTile(
-                Icons.edit_outlined,
-                'Edit Cycle',
-                darkGreen,
-                () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => EditCropCycleScreen(cycleId: cycleId)),
-                  );
-                },
-              ),
-              _sheetTile(Icons.share_outlined, 'Share Data', darkGreen, () {}),
-              const Divider(height: 32, color: Color(0xFFE1E3E1)),
-              _sheetTile(
-                Icons.check_circle_outline,
-                'Mark as Completed',
-                darkGreen,
-                () {
-                  Navigator.pop(context);
-                  _markCycleCompleted(cycleId);
-                },
-              ),
-              const Divider(height: 32, color: Color(0xFFE1E3E1)),
-              _sheetTile(
-                Icons.delete_outline_rounded,
-                'Delete Cycle',
-                const Color(0xFFBA1A1A),
-                () {
-                  Navigator.pop(context);
-                  _showScreen3DeleteOverlay(context, cropName, cycleId);
-                },
-              ),
-              const SizedBox(height: 20),
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: Text(
-                  'Cancel',
-                  style: GoogleFonts.manrope(color: textGray, fontWeight: FontWeight.w700, fontSize: 16),
+                const SizedBox(height: 20),
+                _sheetTile(
+                  Icons.edit_outlined,
+                  'Edit Cycle',
+                  darkGreen,
+                  () {
+                    Navigator.pop(context);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) =>
+                              EditCropCycleScreen(cycleId: cycleId)),
+                    );
+                  },
                 ),
-              ),
-              const SizedBox(height: 12),
-            ],
+                _sheetTile(
+                    Icons.share_outlined, 'Share Data', darkGreen, () {}),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Container(height: 1, color: const Color(0xFFF0F1ED)),
+                ),
+                _sheetTile(
+                  Icons.check_circle_outline,
+                  'Mark as Completed',
+                  darkGreen,
+                  () {
+                    Navigator.pop(context);
+                    _markCycleCompleted(cycleId);
+                  },
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Container(height: 1, color: const Color(0xFFF0F1ED)),
+                ),
+                _sheetTile(
+                  Icons.delete_outline_rounded,
+                  'Delete Cycle',
+                  const Color(0xFFBA1A1A),
+                  () {
+                    Navigator.pop(context);
+                    _showScreen3DeleteOverlay(context, cropName, cycleId);
+                  },
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF3F5EE),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: Text(
+                      'Cancel',
+                      style: GoogleFonts.manrope(
+                          color: textGray,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
           ),
         );
       },
@@ -748,7 +844,6 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
 
   Future<void> _markCycleCompleted(String cycleId) async {
     try {
-      // Using update map instead of setting full model to prevent overwriting server timestamps
       await FirebaseFirestore.instance
           .collection('users')
           .doc(user!.uid)
@@ -758,18 +853,28 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Cycle marked as completed'),
+          SnackBar(
+            content: Text('Cycle marked as completed',
+                style: GoogleFonts.manrope(
+                    fontWeight: FontWeight.w600, color: Colors.white)),
             backgroundColor: darkGreen,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to update cycle'),
-            backgroundColor: Color(0xFFBA1A1A),
+          SnackBar(
+            content: Text('Failed to update cycle',
+                style: GoogleFonts.manrope(
+                    fontWeight: FontWeight.w600, color: Colors.white)),
+            backgroundColor: const Color(0xFFBA1A1A),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
           ),
         );
       }
@@ -786,21 +891,31 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
           .delete();
 
       if (mounted) {
-        Navigator.pop(context); // Close dialog
+        Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Cycle deleted successfully'),
+          SnackBar(
+            content: Text('Cycle deleted successfully',
+                style: GoogleFonts.manrope(
+                    fontWeight: FontWeight.w600, color: Colors.white)),
             backgroundColor: darkGreen,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
-        Navigator.pop(context); // Close dialog
+        Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to delete cycle'),
-            backgroundColor: Color(0xFFBA1A1A),
+          SnackBar(
+            content: Text('Failed to delete cycle',
+                style: GoogleFonts.manrope(
+                    fontWeight: FontWeight.w600, color: Colors.white)),
+            backgroundColor: const Color(0xFFBA1A1A),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
           ),
         );
       }
@@ -811,7 +926,6 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
     if (user == null) return false;
 
     try {
-      // Check for any completed cycle (including previous cycles)
       final snapshot = await FirebaseFirestore.instance
           .collection('users')
           .doc(user!.uid)
@@ -819,86 +933,102 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
           .where('isCompleted', isEqualTo: true)
           .limit(1)
           .get();
-      
+
       return snapshot.docs.isNotEmpty;
     } catch (e) {
       return false;
     }
   }
 
-  Widget _sheetTile(IconData icon, String label, Color color, VoidCallback onTap) {
+  Widget _sheetTile(
+      IconData icon, String label, Color color, VoidCallback onTap) {
     return ListTile(
-      leading: Icon(icon, color: color),
+      leading: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, color: color, size: 20),
+      ),
       title: Text(
         label,
-        style: GoogleFonts.manrope(color: color, fontWeight: FontWeight.w700, fontSize: 16),
+        style: GoogleFonts.manrope(
+            color: color, fontWeight: FontWeight.w700, fontSize: 15),
       ),
       onTap: onTap,
-      contentPadding: EdgeInsets.zero,
+      contentPadding: const EdgeInsets.symmetric(vertical: 2),
     );
   }
 
-  void _showScreen3DeleteOverlay(BuildContext context, String cropName, String cycleId) {
+  void _showScreen3DeleteOverlay(
+      BuildContext context, String cropName, String cycleId) {
     showDialog(
       context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.7),
+      barrierColor: Colors.black.withValues(alpha: 0.5),
       builder: (context) {
         return Dialog(
-          insetPadding: const EdgeInsets.symmetric(horizontal: 20),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(32)),
-          backgroundColor: const Color(0xFFF3F5EE),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+          backgroundColor: Colors.white,
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+            padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  padding: const EdgeInsets.all(24),
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFFFDADA),
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEE2E2),
                     shape: BoxShape.circle,
                   ),
                   child: const Icon(
                     Icons.delete_outline_rounded,
                     color: Color(0xFFBA1A1A),
-                    size: 44,
+                    size: 40,
                   ),
                 ),
-                const SizedBox(height: 32),
+                const SizedBox(height: 28),
                 Text(
                   'Delete Cropping Cycle?',
                   style: GoogleFonts.epilogue(
-                    fontSize: 22,
+                    fontSize: 20,
                     fontWeight: FontWeight.w800,
                     color: headingBlack,
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
                 RichText(
                   textAlign: TextAlign.center,
                   text: TextSpan(
-                    style: GoogleFonts.manrope(fontSize: 15, color: textGray, height: 1.5),
+                    style: GoogleFonts.manrope(
+                        fontSize: 14,
+                        color: textGray,
+                        height: 1.5),
                     children: [
-                      const TextSpan(text: 'Are you sure you want to delete\n'),
+                      const TextSpan(text: 'Are you sure you want to delete '),
                       TextSpan(
                         text: cropName,
-                        style: GoogleFonts.manrope(fontWeight: FontWeight.w800, color: headingBlack),
+                        style: GoogleFonts.manrope(
+                            fontWeight: FontWeight.w800, color: headingBlack),
                       ),
-                      const TextSpan(text: '? This action cannot be undone.'),
+                      const TextSpan(text: '? This cannot be undone.'),
                     ],
                   ),
                 ),
-                const SizedBox(height: 40),
+                const SizedBox(height: 32),
                 _dialogBtn(
                   'Delete',
                   const Color(0xFFBA1A1A),
                   Colors.white,
                   () => _deleteCycle(cycleId),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 _dialogBtn(
                   'Cancel',
-                  const Color(0xFFE1E3E1),
+                  const Color(0xFFF3F5EE),
                   headingBlack,
                   () => Navigator.pop(context),
                 ),
@@ -913,17 +1043,18 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
   Widget _dialogBtn(String label, Color bg, Color text, VoidCallback onTap) {
     return SizedBox(
       width: double.infinity,
-      height: 56,
+      height: 52,
       child: ElevatedButton(
         style: ElevatedButton.styleFrom(
           backgroundColor: bg,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(100)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           elevation: 0,
         ),
         onPressed: onTap,
         child: Text(
           label,
-          style: GoogleFonts.manrope(color: text, fontWeight: FontWeight.w800, fontSize: 16),
+          style: GoogleFonts.manrope(
+              color: text, fontWeight: FontWeight.w800, fontSize: 15),
         ),
       ),
     );
@@ -931,7 +1062,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
 }
 
 // ==========================================
-// SCREEN 1: ACTIVE CROP CARD
+// ACTIVE CROP CARD
 // ==========================================
 class CropCycleCard extends StatelessWidget {
   final String title, subtitle, harvestDate, statusText;
@@ -963,32 +1094,40 @@ class CropCycleCard extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(32),
+        borderRadius: BorderRadius.circular(24),
         onTap: onViewDetailsTap,
         child: Container(
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(32),
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
           child: Column(
             children: [
               Padding(
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.fromLTRB(18, 18, 12, 18),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       children: [
                         Container(
-                          width: 52,
-                          height: 52,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFFE1E3E1),
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF0F1ED),
                             shape: BoxShape.circle,
                           ),
-                          child: Icon(icon, color: iconColor, size: 26),
+                          child:
+                              Icon(icon, color: iconColor, size: 24),
                         ),
-                        const SizedBox(width: 16),
+                        const SizedBox(width: 14),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -996,44 +1135,62 @@ class CropCycleCard extends StatelessWidget {
                               Text(
                                 title,
                                 style: GoogleFonts.manrope(
-                                  fontSize: 18,
+                                  fontSize: 17,
                                   fontWeight: FontWeight.w800,
                                   color: const Color(0xFF1A1C18),
                                 ),
                               ),
+                              const SizedBox(height: 2),
                               Text(
                                 subtitle,
                                 style: GoogleFonts.manrope(
-                                  fontSize: 14,
-                                  color: const Color(0xFF43483E),
+                                  fontSize: 13,
+                                  color: const Color(0xFF43483E)
+                                      .withValues(alpha: 0.7),
                                   fontWeight: FontWeight.w500,
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.more_vert, color: Color(0xFF43483E)),
-                          onPressed: onMenuTap,
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF3F5EE),
+                            shape: BoxShape.circle,
+                          ),
+                          child: IconButton(
+                            icon: const Icon(Icons.more_horiz,
+                                color: Color(0xFF43483E), size: 20),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            onPressed: onMenuTap,
+                          ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 20),
-                    LinearProgressIndicator(
-                      value: progress,
-                      minHeight: 8,
-                      backgroundColor: const Color(0xFFE1E3E1),
-                      valueColor: AlwaysStoppedAnimation<Color>(progressColor),
+                    const SizedBox(height: 18),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: LinearProgressIndicator(
+                        value: progress,
+                        minHeight: 6,
+                        backgroundColor: const Color(0xFFE8EAE5),
+                        valueColor:
+                            AlwaysStoppedAnimation<Color>(progressColor),
+                      ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 10),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
                           'Est. Harvest: $harvestDate',
                           style: GoogleFonts.manrope(
-                            fontSize: 13,
-                            color: const Color(0xFF43483E),
+                            fontSize: 12,
+                            color: const Color(0xFF43483E)
+                                .withValues(alpha: 0.7),
                             fontWeight: FontWeight.w500,
                           ),
                         ),
@@ -1042,7 +1199,7 @@ class CropCycleCard extends StatelessWidget {
                           style: GoogleFonts.manrope(
                             fontSize: 13,
                             color: progressColor,
-                            fontWeight: FontWeight.w700,
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
                       ],
@@ -1051,20 +1208,23 @@ class CropCycleCard extends StatelessWidget {
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
                 decoration: BoxDecoration(
                   color: statusBgColor,
-                  borderRadius: const BorderRadius.vertical(bottom: Radius.circular(32)),
+                  borderRadius: const BorderRadius.vertical(
+                      bottom: Radius.circular(24)),
                 ),
                 child: Row(
                   children: [
-                    Icon(statusIcon, color: statusColor, size: 18),
+                    Icon(statusIcon, color: statusColor, size: 16),
                     const SizedBox(width: 8),
                     Text(
                       statusText,
                       style: GoogleFonts.manrope(
                         color: statusColor,
-                        fontWeight: FontWeight.w800,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
                       ),
                     ),
                   ],
@@ -1079,7 +1239,7 @@ class CropCycleCard extends StatelessWidget {
 }
 
 // ==========================================
-// SCREEN 2: COMPLETED CROP CARD
+// COMPLETED CROP CARD
 // ==========================================
 class Screen2CompletedCard extends StatelessWidget {
   final String title, harvestDate, income;
@@ -1098,79 +1258,99 @@ class Screen2CompletedCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(32),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: GoogleFonts.manrope(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                    color: const Color(0xFF0D4D33),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    style: GoogleFonts.manrope(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      color: const Color(0xFF0D4D33),
+                    ),
                   ),
                 ),
-              ),
-              _badge(),
-            ],
-          ),
-          const SizedBox(height: 20),
-          _infoRow(Icons.calendar_today_outlined, 'Harvested: $harvestDate'),
-          const SizedBox(height: 10),
-          _infoRow(
-            Icons.payments_outlined,
-            'Income: $income',
-            isBold: hasIncome,
-            textColor: hasIncome ? const Color(0xFF173408) : const Color(0xFF43483E),
-          ),
-          const SizedBox(height: 24),
-          Align(
-            alignment: Alignment.centerRight,
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(8),
-                onTap: onViewDetailsTap,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                  child: Text(
-                    'VIEW DETAILS',
-                    style: GoogleFonts.manrope(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 1.0,
-                      color: const Color(0xFF0D4D33),
+                _badge(),
+              ],
+            ),
+            const SizedBox(height: 18),
+            _infoRow(Icons.calendar_today_outlined, 'Harvested: $harvestDate'),
+            const SizedBox(height: 10),
+            _infoRow(
+              Icons.payments_outlined,
+              'Income: $income',
+              isBold: hasIncome,
+              textColor:
+                  hasIncome ? const Color(0xFF173408) : const Color(0xFF43483E),
+            ),
+            const SizedBox(height: 18),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: onViewDetailsTap,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 4, vertical: 2),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'VIEW DETAILS',
+                          style: GoogleFonts.manrope(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.8,
+                            color: const Color(0xFF0D4D33),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.arrow_forward,
+                            size: 14, color: Color(0xFF0D4D33)),
+                      ],
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
   Widget _badge() => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
-          color: const Color(0xFFC5E1A5),
-          borderRadius: BorderRadius.circular(12),
+          color: const Color(0xFFEDF5E1),
+          borderRadius: BorderRadius.circular(8),
         ),
         child: Text(
           'COMPLETED',
           style: GoogleFonts.manrope(
-            fontSize: 11,
+            fontSize: 10,
             color: const Color(0xFF173408),
             fontWeight: FontWeight.w800,
+            letterSpacing: 0.5,
           ),
         ),
       );
@@ -1183,12 +1363,14 @@ class Screen2CompletedCard extends StatelessWidget {
   }) =>
       Row(
         children: [
-          Icon(icon, size: 18, color: const Color(0xFF43483E)),
+          Icon(icon,
+              size: 16,
+              color: const Color(0xFF43483E).withValues(alpha: 0.6)),
           const SizedBox(width: 10),
           Text(
             text,
             style: GoogleFonts.manrope(
-              fontSize: 15,
+              fontSize: 14,
               fontWeight: isBold ? FontWeight.w800 : FontWeight.w500,
               color: textColor,
             ),
