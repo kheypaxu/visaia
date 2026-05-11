@@ -429,12 +429,28 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
         return;
       }
 
+      debugPrint('Cycle data: $cycle');
+      debugPrint('plantingData: ${cycle['plantingDate']}');
+      debugPrint('harvestData: ${cycle['harvestDate']}');
+
       final planting = (cycle['plantingDate'] as Timestamp?)?.toDate();
       final harvest = (cycle['harvestDate'] as Timestamp?)?.toDate();
 
+      debugPrint('Parsed planting: $planting');
+      debugPrint('Parsed harvest: $harvest');
+
       if (planting == null || harvest == null) {
         setState(() {
-          _error = 'Invalid cycle dates';
+          _error = 'Invalid cycle dates: planting=$planting, harvest=$harvest';
+          _isInitialLoading = false;
+        });
+        return;
+      }
+
+      // Validate that harvest is after planting
+      if (harvest.isBefore(planting) || harvest.isAtSameMomentAs(planting)) {
+        setState(() {
+          _error = 'Harvest date must be after planting date';
           _isInitialLoading = false;
         });
         return;
@@ -445,19 +461,22 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
         _harvestDate = harvest;
         _cycleName = cycle['cycleName'] ?? 'Unknown Cycle';
         _fieldName = cycle['fieldName'] ?? 'Unknown Field';
+        debugPrint('Total days: $_totalDays, Total weeks: $_totalWeeks');
+        debugPrint('Current day: $_currentDayFromPlanting, Current week: $_currentWeekFromPlanting');
         _selectedWeek = (_currentWeekFromPlanting - 1).clamp(0, _totalWeeks - 1);
-        // Default selected day to current day, clamped within the selected week
         _dailySelectedDay = _currentDayFromPlanting.clamp(
           _selectedWeek * 7,
-          (_selectedWeek * 7 + 6).clamp(0, _totalDays - 1),
+          ((_selectedWeek * 7 + 6).clamp(0, _totalDays - 1)),
         );
       });
 
       await _loadWeekData(_selectedWeek);
       await _loadDailyLogData(_dailySelectedDay);
     } catch (e) {
+      debugPrint('Error loading cycle data: $e');
+      debugPrint('Stack trace: ${StackTrace.current}');
       setState(() {
-        _error = 'Failed to load cycle data';
+        _error = 'Failed to load cycle data: $e';
       });
     } finally {
       setState(() {

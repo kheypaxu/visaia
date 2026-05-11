@@ -253,7 +253,7 @@ class _FieldAreaSetupState extends State<FieldAreaSetupScreen> {
                           Navigator.of(context, rootNavigator: true).pushReplacement(
                             MaterialPageRoute(
                               builder: (_) => InitializationScreen(
-                                firstName: 'Axel',
+                                firstName: 'Sample',
                                 onFinished: () {
                                   Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
                                     MaterialPageRoute(builder: (_) => const RootLayout()),
