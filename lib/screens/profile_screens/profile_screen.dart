@@ -91,19 +91,7 @@ class ProfileScreen extends StatelessWidget {
             const Icon(Icons.verified_outlined, size: 14, color: textGray),
             const SizedBox(width: 4),
             Text(
-              'Senior Agronomist',
-              style: GoogleFonts.manrope(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                color: textGray,
-              ),
-            ),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 8.0),
-              child: Text('•', style: TextStyle(color: textGray, fontWeight: FontWeight.bold)),
-            ),
-            Text(
-              'Premium Plan',
+              'DA Verified Agronomist',
               style: GoogleFonts.manrope(
                 fontSize: 15,
                 fontWeight: FontWeight.w600,

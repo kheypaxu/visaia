@@ -293,6 +293,8 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
   late AnimationController _menuController;
   bool _isMenuOpen = false;
 
+  final userId = FirebaseAuth.instance.currentUser?.uid ?? '';
+
   static const _navItems = [
     NavItem.home,
     NavItem.cycle,
@@ -300,8 +302,8 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
     NavItem.mitigation,
   ];
 
-  static const List<Widget> _pages = [
-    HomeDashboard(),
+  List<Widget> get _pages => [
+    HomeDashboard(userId: userId),
     CroppingCyclesScreen(),
     MapViewScreen(),
     MitigationScreen(),

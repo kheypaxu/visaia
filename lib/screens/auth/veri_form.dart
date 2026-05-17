@@ -5,6 +5,8 @@ import 'package:visaia/screens/auth/login_screen.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:convert';
+import 'dart:typed_data';
 
 class VerificationFormScreen extends StatefulWidget {
   const VerificationFormScreen({Key? key}) : super(key: key);
@@ -75,22 +77,31 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
     }
   }
 
+  String? _base64Image;
   String _farmerIdFileName = 'No file selected';
 
   Future<void> _uploadFarmerId() async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.any, // or FileType.custom with allowed extensions
+        type: FileType.image,
+        withData: true,
       );
 
       if (result != null) {
-        setState(() {
-          _farmerIdFileName = result.files.single.name; // just store the name
-        });
+        Uint8List? fileBytes = result.files.first.bytes;
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('File selected successfully')),
-        );
+        if (fileBytes != null) {
+          String base64String = base64Encode(fileBytes);
+
+          setState(() {
+            _base64Image = base64String;
+            _farmerIdFileName = result.files.first.name;
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Image selected successfully')),
+          );
+        }
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -124,6 +135,7 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
           "sex": _selectedSex,
           "birthdate": _selectedBirthdate?.toIso8601String(),
           "farmerIdFileName": _farmerIdFileName,
+          "farmerIdImage": _base64Image,
           "status": "pending",
           "createdAt": FieldValue.serverTimestamp(),
         });

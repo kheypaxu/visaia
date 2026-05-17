@@ -131,29 +131,45 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
 
       final weekSnap = await weekRef.get();
 
-      List<Map<String, dynamic>> stations = [];
-      if (weekSnap.exists && weekSnap.data()?['stations'] != null) {
-        stations = List<Map<String, dynamic>>.from(
-            (weekSnap.data()!['stations'] as List).map((s) => Map<String, dynamic>.from(s)));
-        print('✓ Loaded existing stations: ${stations.length}');
-      } else {
-        stations = List.generate(5, (i) => {
-          'title': 'Station ${i + 1}',
-          'completed': false,
-          'plantsInspected': 0,
-          'damaged': 0,
-          'fawObserved': false,
-          'eggMasses': 0,
-          'larvae': 0,
-          'pupae': 0,
-          'notes': '',
-        });
-        print('✓ Created default stations: ${stations.length}');
-      }
+      List<Map<String, dynamic>> stations;
+        if (weekSnap.exists && weekSnap.data()?['stations'] != null) {
+          stations = List<Map<String, dynamic>>.from(
+            (weekSnap.data()!['stations'] as List).map((s) {
+              var station = Map<String, dynamic>.from(s);
+              // Ensure all required fields exist
+              station.putIfAbsent('eggMasses', () => 0);
+              station.putIfAbsent('larvae', () => 0);
+              station.putIfAbsent('pupae', () => 0);
+              station.putIfAbsent('moths', () => 0);
+              station.putIfAbsent('damaged', () => 0);
+              station.putIfAbsent('fawObserved', () => false);
+              station.putIfAbsent('completed', () => false);
+              station.putIfAbsent('plantsInspected', () => 0);
+              station.putIfAbsent('notes', () => '');
+              station.putIfAbsent('verificationRequired', () => false);
+              station.putIfAbsent('verificationCompleted', () => false);
+              return station;
+            }),
+          );
+        } else {
+          // Create default 5 stations when week does not exist
+          stations = List.generate(5, (i) => {
+            'title': 'Station ${i + 1}',
+            'completed': false,
+            'plantsInspected': 0,
+            'damaged': 0,
+            'fawObserved': false,
+            'eggMasses': 0,
+            'larvae': 0,
+            'pupae': 0,
+            'moths': 0,
+            'notes': '',
+            'verificationRequired': false,
+            'verificationCompleted': false,
+          });
+        }
 
       final stationIndex = _selectedStation - 1;
-      print('  Station index: $stationIndex');
-      print('  Available stations: ${stations.length}');
 
       // Inside _savePestRecord, after getting stationIndex
       if (stationIndex >= 0 && stationIndex < stations.length) {

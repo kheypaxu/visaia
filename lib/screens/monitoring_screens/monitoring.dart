@@ -1,12 +1,16 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:visaia/widgets/success_modal.dart';
 import 'package:visaia/services/firestore_service.dart';
 import 'package:visaia/screens/logging_screens/daily_log_screen.dart';
+import 'package:visaia/screens/logging_screens/analyzing.dart';
+import 'package:visaia/screens/logging_screens/pest_verification.dart';
 
 // ==========================================
 // BRAND COLORS
@@ -115,16 +119,19 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
       _stationData.where((s) => s['completed'] as bool? ?? false).length;
 
   int get _totalDamaged =>
-      _stationData.fold(0, (sum, s) => sum + (s['damaged'] as int? ?? 0));
+      _stationData.fold(0, (sum, item) => sum + (item['damaged'] as int? ?? 0));
 
   int get _totalEggs =>
-      _stationData.fold(0, (sum, s) => sum + (s['eggMasses'] as int? ?? 0));
+      _stationData.fold(0, (sum, item) => sum + (item['eggMasses'] as int? ?? 0));
 
   int get _totalLarvae =>
-      _stationData.fold(0, (sum, s) => sum + (s['larvae'] as int? ?? 0));
+      _stationData.fold(0, (sum, item) => sum + (item['larvae'] as int? ?? 0));
 
   int get _totalPupae =>
-      _stationData.fold(0, (sum, s) => sum + (s['pupae'] as int? ?? 0));
+      _stationData.fold(0, (sum, item) => sum + (item['pupae'] as int? ?? 0));
+
+  int get _totalMoths =>
+      _stationData.fold(0, (sum, item) => sum + (item['moths'] as int? ?? 0));
 
   // UI state
   bool _showControlModal = false;
@@ -132,23 +139,31 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
 
   List<Map<String, dynamic>> _getDefaultStations(int count) {
     return List.generate(count, (i) => {
-          'title': 'Station ${i + 1}',
-          'completed': false,
-          'plantsInspected': 0,
-          'damaged': 0,
-          'fawObserved': false,
-          'eggMasses': 0,
-          'larvae': 0,
-          'pupae': 0,
-          'notes': '',
-        });
+      'title': 'Station ${i + 1}',
+      'completed': false,
+      'plantsInspected': 0,
+      'damaged': 0,
+      'fawObserved': false,
+      'eggMasses': 0,
+      'larvae': 0,
+      'pupae': 0,
+      'moths': 0,
+      'notes': '',
+      'verificationRequired': false,
+      'verificationCompleted': false,
+      'capturedImages': {
+        'eggMasses': [],
+        'larvae': [],
+        'pupae': [],
+        'moths': [],
+      },
+    });
   }
 
   final Map<int, Map<int, String>> _recommendedTaskState = {};
 
   // ========================
   // RECOMMENDED TASKS PER WEEK (weeks 1–8)
-  // Edit each week's list freely. Each task needs: title, description, icon, category.
   // ========================
   static const Map<int, List<Map<String, dynamic>>> _weeklyRecommendedTasks = {
     1: [
@@ -415,12 +430,162 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     super.dispose();
   }
 
+  Future<void> _uploadPhotoForStation(int stationIndex) async {
+    final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(
+      source: ImageSource.camera,
+      imageQuality: 85,
+    );
+    
+    if (image != null && mounted) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => AnalyzingScreen(
+            imageFile: File(image.path),
+            userId: _userId,
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _verifyPestObservations(int stationIndex, Map<String, dynamic> station) async {
+    final hasEggMasses = (station['eggMasses'] as int? ?? 0) > 0;
+    final hasLarvae = (station['larvae'] as int? ?? 0) > 0;
+    final hasPupae = (station['pupae'] as int? ?? 0) > 0;
+    final hasMoths = (station['moths'] as int? ?? 0) > 0;
+    
+    if (!hasEggMasses && !hasLarvae && !hasPupae && !hasMoths) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No pests to verify. Add pest observations first.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+    
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PestVerificationScreen(
+          userId: _userId,
+          cycleId: widget.cycleId,
+          stationIndex: stationIndex,
+          station: station,
+          onVerificationComplete: (updatedStation) {
+            setState(() {
+              _stationData[stationIndex] = updatedStation;
+            });
+            _scheduleAutoSave();
+          },
+        ),
+      ),
+    );
+  }
+
+  void _increment(int index, String key) => _incrementPestCount(index, key);
+  void _decrement(int index, String key) => _decrementPestCount(index, key);
+  void _completeStation(int index) => _completeStationItem(index);
+
+  void _updatePlantsInspected(int index) {
+    if (_isCurrentWeekLocked) return;
+    setState(() {
+      final current = _stationData[index]['plantsInspected'] as int? ?? 0;
+      if (current < 10) {
+        _stationData[index]['plantsInspected'] = current + 1;
+      }
+    });
+    _scheduleAutoSave();
+  }
+
+  void _incrementPestCount(int index, String key) {
+    if (_isCurrentWeekLocked) return;
+    setState(() {
+      _stationData[index][key] = (_stationData[index][key] as int) + 1;
+      
+      if (key == 'eggMasses' || key == 'larvae' || key == 'pupae' || key == 'moths') {
+        final newCount = _stationData[index][key] as int;
+        if (newCount > 0 && !(_stationData[index]['verificationRequired'] as bool? ?? false)) {
+          _stationData[index]['verificationRequired'] = true;
+          _stationData[index]['verificationCompleted'] = false;
+        }
+      }
+      
+      if (key == 'damaged' && _stationData[index][key] > 0) {
+        _stationData[index]['fawObserved'] = true;
+      }
+    });
+    _scheduleAutoSave();
+  }
+
+  void _decrementPestCount(int index, String key) {
+    if (_isCurrentWeekLocked) return;
+    if (_stationData[index][key] as int <= 0) return;
+    setState(() {
+      _stationData[index][key] = (_stationData[index][key] as int) - 1;
+      
+      if (key == 'eggMasses' || key == 'larvae' || key == 'pupae' || key == 'moths') {
+        final hasEggs = (_stationData[index]['eggMasses'] as int) > 0;
+        final hasLarvae = (_stationData[index]['larvae'] as int) > 0;
+        final hasPupae = (_stationData[index]['pupae'] as int) > 0;
+        final hasMoths = (_stationData[index]['moths'] as int) > 0;
+        
+        if (!hasEggs && !hasLarvae && !hasPupae && !hasMoths) {
+          _stationData[index]['verificationRequired'] = false;
+          _stationData[index]['verificationCompleted'] = false;
+        }
+      }
+      
+      if (key == 'damaged' && _stationData[index][key] == 0) {
+        final hasOtherSigns = (_stationData[index]['eggMasses'] as int) > 0 ||
+            (_stationData[index]['larvae'] as int) > 0 ||
+            (_stationData[index]['pupae'] as int) > 0 ||
+            (_stationData[index]['moths'] as int) > 0;
+        if (!hasOtherSigns) _stationData[index]['fawObserved'] = false;
+      }
+    });
+    _scheduleAutoSave();
+  }
+
+  void _completeStationItem(int index) {
+    if (_isCurrentWeekLocked) return;
+    
+    final station = _stationData[index];
+    final needsVerification = station['verificationRequired'] as bool? ?? false;
+    final isVerificationCompleted = station['verificationCompleted'] as bool? ?? false;
+    
+    if (needsVerification && !isVerificationCompleted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please verify all observed pests before completing this station'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+    
+    setState(() {
+      _stationData[index]['completed'] = true;
+      _expandedStationIndex = -1;
+    });
+    _scheduleAutoSave();
+  }
+
   // ========================
   // DATA LOADING
   // ========================
   Future<void> _loadCycleData() async {
     try {
-      final cycle = await _firestoreService.getCycle(widget.cycleId);
+      final cycle = await _firestoreService
+          .getCycle(widget.cycleId)
+          .timeout(const Duration(seconds: 15));
       if (cycle == null) {
         setState(() {
           _error = 'Cycle not found';
@@ -429,25 +594,17 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
         return;
       }
 
-      debugPrint('Cycle data: $cycle');
-      debugPrint('plantingData: ${cycle['plantingDate']}');
-      debugPrint('harvestData: ${cycle['harvestDate']}');
-
       final planting = (cycle['plantingDate'] as Timestamp?)?.toDate();
       final harvest = (cycle['harvestDate'] as Timestamp?)?.toDate();
 
-      debugPrint('Parsed planting: $planting');
-      debugPrint('Parsed harvest: $harvest');
-
       if (planting == null || harvest == null) {
         setState(() {
-          _error = 'Invalid cycle dates: planting=$planting, harvest=$harvest';
+          _error = 'Invalid cycle dates';
           _isInitialLoading = false;
         });
         return;
       }
 
-      // Validate that harvest is after planting
       if (harvest.isBefore(planting) || harvest.isAtSameMomentAs(planting)) {
         setState(() {
           _error = 'Harvest date must be after planting date';
@@ -461,8 +618,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
         _harvestDate = harvest;
         _cycleName = cycle['cycleName'] ?? 'Unknown Cycle';
         _fieldName = cycle['fieldName'] ?? 'Unknown Field';
-        debugPrint('Total days: $_totalDays, Total weeks: $_totalWeeks');
-        debugPrint('Current day: $_currentDayFromPlanting, Current week: $_currentWeekFromPlanting');
         _selectedWeek = (_currentWeekFromPlanting - 1).clamp(0, _totalWeeks - 1);
         _dailySelectedDay = _currentDayFromPlanting.clamp(
           _selectedWeek * 7,
@@ -472,9 +627,11 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
 
       await _loadWeekData(_selectedWeek);
       await _loadDailyLogData(_dailySelectedDay);
+    } on TimeoutException {
+      setState(() {
+        _error = 'Loading cycle data timed out. Check your connection.';
+      });
     } catch (e) {
-      debugPrint('Error loading cycle data: $e');
-      debugPrint('Stack trace: ${StackTrace.current}');
       setState(() {
         _error = 'Failed to load cycle data: $e';
       });
@@ -491,7 +648,9 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
 
     try {
       final weekId = 'week_${weekIndex + 1}';
-      final weekData = await _firestoreService.getWeek(widget.cycleId, weekId);
+      final weekData = await _firestoreService
+          .getWeek(widget.cycleId, weekId)
+          .timeout(const Duration(seconds: 15));
 
       if (weekData != null && weekData['stations'] != null) {
         final stations = List<Map<String, dynamic>>.from(
@@ -507,6 +666,11 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
           _expandedStationIndex = -1;
         });
       }
+    } on TimeoutException {
+      setState(() {
+        _stationData = _getDefaultStations(5);
+        _expandedStationIndex = -1;
+      });
     } catch (e) {
       setState(() {
         _stationData = _getDefaultStations(5);
@@ -531,7 +695,8 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
           .doc(dayId)
           .collection('activities')
           .orderBy('timestamp', descending: true)
-          .get();
+          .get()
+          .timeout(const Duration(seconds: 15));
 
       final activities = activitiesSnapshot.docs.map((doc) {
         final data = doc.data();
@@ -552,7 +717,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
             activities.where((a) => a['completed'] as bool).toList();
       });
     } catch (e) {
-      debugPrint('Error loading daily log: $e');
       setState(() {
         _dailyActiveTasks = [];
         _dailyCompletedTasks = [];
@@ -568,42 +732,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
       _expandedStationIndex =
           _expandedStationIndex == index ? -1 : index;
     });
-  }
-
-  void _increment(int index, String key) {
-    if (_isCurrentWeekLocked) return;
-    setState(() {
-      _stationData[index][key] = (_stationData[index][key] as int) + 1;
-      if (key == 'damaged' && _stationData[index][key] > 0) {
-        _stationData[index]['fawObserved'] = true;
-      }
-    });
-    _scheduleAutoSave();
-  }
-
-  void _decrement(int index, String key) {
-    if (_isCurrentWeekLocked) return;
-    if (_stationData[index][key] as int <= 0) return;
-    setState(() {
-      _stationData[index][key] = (_stationData[index][key] as int) - 1;
-      if (key == 'damaged' && _stationData[index][key] == 0) {
-        final hasOtherSigns =
-            (_stationData[index]['eggMasses'] as int) > 0 ||
-                (_stationData[index]['larvae'] as int) > 0 ||
-                (_stationData[index]['pupae'] as int) > 0;
-        if (!hasOtherSigns) _stationData[index]['fawObserved'] = false;
-      }
-    });
-    _scheduleAutoSave();
-  }
-
-  void _completeStation(int index) {
-    if (_isCurrentWeekLocked) return;
-    setState(() {
-      _stationData[index]['completed'] = true;
-      _expandedStationIndex = -1;
-    });
-    _scheduleAutoSave();
   }
 
   void _updateNotes(int index, String value) {
@@ -630,6 +758,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
         'eggs': _totalEggs,
         'larvae': _totalLarvae,
         'pupae': _totalPupae,
+        'moths': _totalMoths,
       },
       'timestamp': FieldValue.serverTimestamp(),
       'completedStations': _completedCount,
@@ -687,6 +816,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
       }
     }
   }
+
 
   // ========================
   // BUILD
@@ -2070,21 +2200,20 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     bool isLocked = false,
   }) {
     final isCompleted = data['completed'] as bool? ?? false;
+    final plantsInspected = data['plantsInspected'] as int? ?? 0;
+    final needsVerification = data['verificationRequired'] as bool? ?? false;
+    const requiredPlants = 10;
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeInOut,
       margin: const EdgeInsets.only(bottom: 12),
-      padding: isExpanded
-          ? const EdgeInsets.all(20)
-          : const EdgeInsets.all(16),
+      padding: isExpanded ? const EdgeInsets.all(20) : const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(isExpanded ? 20 : 16),
         border: Border.all(
-          color: isExpanded
-              ? kActionGreen
-              : kBorderColor.withValues(alpha: 0.6),
+          color: isExpanded ? kActionGreen : kBorderColor.withValues(alpha: 0.6),
           width: isExpanded ? 2 : 1,
         ),
       ),
@@ -2096,236 +2225,323 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
             child: Row(
               children: [
                 CircleAvatar(
-                    radius: 14,
-                    backgroundColor: isCompleted
-                        ? const Color.fromARGB(255, 155, 228, 61)
-                        : (isExpanded
-                            ? kPrimaryGreen
-                            : const Color(0xFFE0E0E0)),
-                    child: isCompleted
-                        ? const Icon(Icons.check,
-                            size: 14,
-                            color: Color.fromARGB(255, 23, 94, 27))
-                        : Text(stationNumber,
-                            style: TextStyle(
-                                color: isExpanded
-                                    ? Colors.white
-                                    : kTextGrey,
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold))),
+                  radius: 14,
+                  backgroundColor: isCompleted
+                      ? const Color.fromARGB(255, 155, 228, 61)
+                      : (isExpanded ? kPrimaryGreen : const Color(0xFFE0E0E0)),
+                  child: isCompleted
+                      ? const Icon(Icons.check, size: 14, color: Color.fromARGB(255, 23, 94, 27))
+                      : Text(
+                          stationNumber,
+                          style: TextStyle(
+                            color: isExpanded ? Colors.white : kTextGrey,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Text(title,
-                      style: GoogleFonts.inter(
-                          fontWeight: isExpanded
-                              ? FontWeight.w700
-                              : FontWeight.w600,
-                          fontSize: isExpanded ? 15 : 14)),
+                  child: Text(
+                    title,
+                    style: GoogleFonts.inter(
+                      fontWeight: isExpanded ? FontWeight.w700 : FontWeight.w600,
+                      fontSize: isExpanded ? 15 : 14,
+                    ),
+                  ),
                 ),
                 if (isCompleted)
                   Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                          color: const Color(0xFFE8F5E9),
-                          borderRadius: BorderRadius.circular(10)),
-                      child: Text('COMPLETED',
-                          style: GoogleFonts.inter(
-                              fontSize: 9,
-                              fontWeight: FontWeight.bold,
-                              color: const Color.fromARGB(
-                                  255, 49, 114, 51)))),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE8F5E9),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      'COMPLETED',
+                      style: GoogleFonts.inter(
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold,
+                        color: const Color.fromARGB(255, 49, 114, 51),
+                      ),
+                    ),
+                  ),
                 if (isCompleted) const SizedBox(width: 8),
                 AnimatedRotation(
                   duration: const Duration(milliseconds: 300),
                   turns: isExpanded ? 0.5 : 0.0,
-                  child:
-                      const Icon(Icons.keyboard_arrow_down, color: kTextGrey),
+                  child: const Icon(Icons.keyboard_arrow_down, color: kTextGrey),
                 ),
               ],
             ),
           ),
           AnimatedCrossFade(
-            firstChild:
-                const SizedBox(width: double.infinity, height: 0),
+            firstChild: const SizedBox(width: double.infinity, height: 0),
             secondChild: AbsorbPointer(
-              absorbing: isLocked,
+              absorbing: isLocked || isCompleted,
               child: Opacity(
-                opacity: isLocked ? 0.45 : 1.0,
+                opacity: isLocked || isCompleted ? 0.45 : 1.0,
                 child: Column(
                   children: [
                     const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildCounterBox(
-                            label: 'PLANTS INSPECTED',
-                            value: data['plantsInspected'] as int? ?? 0,
-                            onDecrement: () =>
-                                _decrement(index, 'plantsInspected'),
-                            onIncrement: () =>
-                                _increment(index, 'plantsInspected'),
+                    
+                    // Plants Inspected - Increment to 10
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF5F5F5),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'PLANTS INSPECTED',
+                            style: GoogleFonts.inter(
+                              fontSize: 9,
+                              color: kTextGrey,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _buildCounterBox(
-                            label: 'DAMAGED',
-                            value: data['damaged'] as int? ?? 0,
-                            onDecrement: () =>
-                                _decrement(index, 'damaged'),
-                            onIncrement: () =>
-                                _increment(index, 'damaged'),
-                            valueColor:
-                                (data['damaged'] as int? ?? 0) > 0
-                                    ? kAccentRed
-                                    : kTextDark,
+                          Row(
+                            children: [
+                              if (plantsInspected < requiredPlants)
+                                GestureDetector(
+                                  onTap: () => _updatePlantsInspected(index),
+                                  child: Container(
+                                    width: 32,
+                                    height: 32,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: kBorderColor),
+                                    ),
+                                    child: const Icon(Icons.add, size: 16, color: kActionGreen),
+                                  ),
+                                ),
+                              const SizedBox(width: 12),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: plantsInspected >= requiredPlants ? kLightGreenBg : Colors.white,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: kBorderColor),
+                                ),
+                                child: Text(
+                                  '$plantsInspected / $requiredPlants',
+                                  style: GoogleFonts.inter(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                    color: plantsInspected >= requiredPlants ? kActionGreen : kTextDark,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
+                    
+                    const SizedBox(height: 16),
+                    
+                    // Damaged counter (still adjustable)
+                    _buildCounterBox(
+                      label: 'DAMAGED PLANTS',
+                      value: data['damaged'] as int? ?? 0,
+                      onDecrement: () => _decrement(index, 'damaged'),
+                      onIncrement: () => _increment(index, 'damaged'),
+                      valueColor: (data['damaged'] as int? ?? 0) > 0 ? kAccentRed : kTextDark,
+                    ),
+                    
                     if (data['fawObserved'] as bool? ?? false) ...[
                       const SizedBox(height: 16),
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                            color: const Color(0xFFFFEBEE),
-                            borderRadius: BorderRadius.circular(12)),
+                          color: const Color(0xFFFFEBEE),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                         child: Row(
                           children: [
                             Container(
-                                padding: const EdgeInsets.all(2),
-                                decoration: const BoxDecoration(
-                                    color: kAccentRed,
-                                    shape: BoxShape.circle),
-                                child: const Icon(Icons.check,
-                                    color: Colors.white, size: 10)),
+                              padding: const EdgeInsets.all(2),
+                              decoration: const BoxDecoration(
+                                color: kAccentRed,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.check, color: Colors.white, size: 10),
+                            ),
                             const SizedBox(width: 8),
-                            Text('FAW damage observed',
-                                style: GoogleFonts.inter(
-                                    color: kAccentRed,
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 13))
+                            Text(
+                              'FAW damage observed',
+                              style: GoogleFonts.inter(
+                                color: kAccentRed,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13,
+                              ),
+                            ),
                           ],
                         ),
                       ),
                     ],
+                    
                     const SizedBox(height: 16),
+                    
+                    // Updated life stages: Egg Masses, Larvae, Pupae, Moths
                     Row(
-                      mainAxisAlignment:
-                          MainAxisAlignment.spaceBetween,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         _buildSmallCounter(
                           label: 'EGG MASSES',
                           value: data['eggMasses'] as int? ?? 0,
-                          valueColor:
-                              (data['eggMasses'] as int? ?? 0) > 0
-                                  ? kAccentRed
-                                  : kTextDark,
-                          onDecrement: () =>
-                              _decrement(index, 'eggMasses'),
-                          onIncrement: () =>
-                              _increment(index, 'eggMasses'),
+                          valueColor: (data['eggMasses'] as int? ?? 0) > 0 ? kAccentRed : kTextDark,
+                          onDecrement: () => _decrement(index, 'eggMasses'),
+                          onIncrement: () => _increment(index, 'eggMasses'),
                         ),
                         _buildSmallCounter(
                           label: 'LARVAE',
                           value: data['larvae'] as int? ?? 0,
-                          valueColor:
-                              (data['larvae'] as int? ?? 0) > 0
-                                  ? kAccentRed
-                                  : kTextDark,
-                          onDecrement: () =>
-                              _decrement(index, 'larvae'),
-                          onIncrement: () =>
-                              _increment(index, 'larvae'),
+                          valueColor: (data['larvae'] as int? ?? 0) > 0 ? kAccentRed : kTextDark,
+                          onDecrement: () => _decrement(index, 'larvae'),
+                          onIncrement: () => _increment(index, 'larvae'),
                         ),
                         _buildSmallCounter(
                           label: 'PUPAE',
                           value: data['pupae'] as int? ?? 0,
-                          valueColor:
-                              (data['pupae'] as int? ?? 0) > 0
-                                  ? kAccentRed
-                                  : kTextDark,
-                          onDecrement: () =>
-                              _decrement(index, 'pupae'),
-                          onIncrement: () =>
-                              _increment(index, 'pupae'),
+                          valueColor: (data['pupae'] as int? ?? 0) > 0 ? kAccentRed : kTextDark,
+                          onDecrement: () => _decrement(index, 'pupae'),
+                          onIncrement: () => _increment(index, 'pupae'),
                         ),
                       ],
                     ),
+                    
+                    const SizedBox(height: 12),
+                    
+                    // Moths row (new)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildSmallCounter(
+                            label: 'MOTHS',
+                            value: data['moths'] as int? ?? 0,
+                            valueColor: (data['moths'] as int? ?? 0) > 0 ? kAccentRed : kTextDark,
+                            onDecrement: () => _decrement(index, 'moths'),
+                            onIncrement: () => _increment(index, 'moths'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(child: SizedBox()), // Placeholder for alignment
+                      ],
+                    ),
+                    
                     const SizedBox(height: 16),
+                    
                     _buildEditableNotesBox(
                       notes: data['notes'] as String? ?? '',
                       onChanged: (val) => _updateNotes(index, val),
                     ),
+                    
                     const SizedBox(height: 16),
-                    OutlinedButton.icon(
-                      onPressed: isLocked ? null : () {},
-                      icon: const Icon(Icons.photo_camera_outlined,
-                          size: 18),
-                      label: const Text('Upload Photo'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor:
-                            isLocked ? kTextGrey : kTextDark,
-                        minimumSize:
-                            const Size(double.infinity, 50),
-                        side: BorderSide(
-                            color: isLocked
-                                ? kBorderColor
-                                : kBorderColor),
-                        shape: RoundedRectangleBorder(
-                            borderRadius:
-                                BorderRadius.circular(25)),
-                      ),
+                    
+                    // Updated button row - Upload Photo and Verify
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: isLocked ? null : () => _uploadPhotoForStation(index),
+                            icon: const Icon(Icons.photo_camera_outlined, size: 18),
+                            label: const Text('Upload Photo'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: isLocked ? kTextGrey : kTextDark,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              side: BorderSide(color: isLocked ? kBorderColor : kBorderColor),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(25),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: () async {
+                              if (isLocked) return;
+                              await _verifyPestObservations(index, data);
+                            },
+                            icon: const Icon(Icons.verified_outlined, size: 18),
+                            label: const Text('Verify'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: needsVerification ? Colors.orange : kActionGreen,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(25),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
+                    
                     const SizedBox(height: 16),
+                    
+                    // Show verification warning if needed
+                    if (needsVerification && !(data['verificationCompleted'] as bool? ?? false))
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.shade50,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.orange.shade200),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.warning_amber, color: Colors.orange, size: 18),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Verification required: Please verify observed pests before completing',
+                                style: GoogleFonts.inter(
+                                  fontSize: 11,
+                                  color: Colors.orange.shade800,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    
+                    const SizedBox(height: 16),
+                    
+                    // Complete/Update Station button (disabled if verification needed)
                     SizedBox(
                       width: double.infinity,
                       height: 52,
                       child: ElevatedButton(
-                        onPressed: isLocked
+                        onPressed: (isLocked || (needsVerification && !(data['verificationCompleted'] as bool? ?? false)))
                             ? null
                             : () => _completeStation(index),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: isCompleted
-                              ? Colors.white
-                              : kActionGreen,
-                          disabledBackgroundColor:
-                              const Color(0xFFE0E0E0),
+                          backgroundColor: isCompleted ? Colors.white : kActionGreen,
+                          disabledBackgroundColor: const Color(0xFFE0E0E0),
                           shape: RoundedRectangleBorder(
-                              borderRadius:
-                                  BorderRadius.circular(26),
-                              side: isCompleted
-                                  ? const BorderSide(
-                                      color: kActionGreen)
-                                  : BorderSide.none),
+                            borderRadius: BorderRadius.circular(26),
+                            side: isCompleted ? const BorderSide(color: kActionGreen) : BorderSide.none,
+                          ),
                           elevation: 0,
                         ),
                         child: Row(
-                          mainAxisAlignment:
-                              MainAxisAlignment.center,
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(
-                                isCompleted
-                                    ? Icons.update_outlined
-                                    : Icons.check_circle_outline,
-                                color: isLocked
-                                    ? kTextGrey
-                                    : (isCompleted
-                                        ? kActionGreen
-                                        : Colors.white),
-                                size: 20),
+                              isCompleted ? Icons.update_outlined : Icons.check_circle_outline,
+                              color: isLocked ? kTextGrey : (isCompleted ? kActionGreen : Colors.white),
+                              size: 20,
+                            ),
                             const SizedBox(width: 8),
                             Text(
-                              isCompleted
-                                  ? 'Update Station'
-                                  : 'Complete Station',
+                              isCompleted ? 'Update Station' : 'Complete Station',
                               style: GoogleFonts.inter(
-                                color: isLocked
-                                    ? kTextGrey
-                                    : (isCompleted
-                                        ? kActionGreen
-                                        : Colors.white),
+                                color: isLocked ? kTextGrey : (isCompleted ? kActionGreen : Colors.white),
                                 fontWeight: FontWeight.bold,
                                 fontSize: 15,
                               ),
@@ -2338,9 +2554,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
                 ),
               ),
             ),
-            crossFadeState: isExpanded
-                ? CrossFadeState.showSecond
-                : CrossFadeState.showFirst,
+            crossFadeState: isExpanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
             duration: const Duration(milliseconds: 300),
             sizeCurve: Curves.easeInOut,
           ),

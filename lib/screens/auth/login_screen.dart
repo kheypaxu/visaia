@@ -33,54 +33,32 @@ class _LoginPageState extends State<LoginPage> {
     super.dispose();
   }
 
-  // STEP 2: Update the _login method to navigate
   void _login() async {
-    if (_formKey.currentState!.validate()) {
-      setState(() {
-        _isLoading = true;
-      });
+    if (!_formKey.currentState!.validate()) return;
 
-      try {
-        await _authService.signInWithEmailAndPassword(
-          _emailController.text.trim(),
-          _passwordController.text.trim(),
+    setState(() => _isLoading = true);
+
+    try {
+      // This will throw if user is not verified
+      await _authService.signInAndVerify(
+        _emailController.text.trim(),
+        _passwordController.text.trim(),
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Login Successful!'), backgroundColor: Color(0xFF8DBA60)),
         );
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Login Successful!'),
-              backgroundColor: Color(0xFF8DBA60),
-              duration: Duration(seconds: 1),
-            ),
-          );
-
-          // We navigate back to root or to AuthGate after login. Given the app flow, 
-          // onboarding can still trigger, or we can just navigate to the app root using AuthGate.
-          Future.delayed(const Duration(milliseconds: 500), () {
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(builder: (_) => const AuthGate()),
-            );
-          });
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(e.toString().replaceAll('Exception: ', '')),
-              backgroundColor: Colors.redAccent,
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-      } finally {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const AuthGate()));
       }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString().replaceAll('Exception: ', '')), backgroundColor: Colors.redAccent),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -321,7 +299,7 @@ class _LoginPageState extends State<LoginPage> {
                             height: 40,
                             child: ElevatedButton(
                               onPressed: () {
-                                _emailController.text = 'nuqui.axeljohn0815@gmail.com';
+                                _emailController.text = 'aksil@gmail.com';
                                 _passwordController.text = 'password123';
                                 _login();
                               },

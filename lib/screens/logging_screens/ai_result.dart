@@ -2,6 +2,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:visaia/screens/logging_screens/assign_pest_detected.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:convert';
 
 class AIResultScreen extends StatelessWidget {
   final String pestName;
@@ -16,6 +18,9 @@ class AIResultScreen extends StatelessWidget {
   final File? imageFile;
   final String? annotatedImageUrl;
   final String userId;
+  final double? latitude;
+  final double? longitude;
+  final String? areaName;
 
   const AIResultScreen({
     super.key,
@@ -31,6 +36,9 @@ class AIResultScreen extends StatelessWidget {
     this.imageFile,
     this.annotatedImageUrl,
     required this.userId,
+    this.latitude,
+    this.longitude,
+    this.areaName,
   });
 
   // ── Palette ──────────────────────────────────────────────────────────────
@@ -59,6 +67,137 @@ class AIResultScreen extends StatelessWidget {
     if (s.contains('HIGH') || s.contains('CRITICAL')) return Icons.warning_amber_rounded;
     if (s.contains('MEDIUM') || s.contains('MOD')) return Icons.info_outline_rounded;
     return Icons.check_circle_outline_rounded;
+  }
+
+  // ── Save to Firestore ─────────────────────────────────────────────────────
+  Future<void> _saveToReports(BuildContext context) async {
+    try {
+      // Show loading indicator
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(
+            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1A5C30)),
+          ),
+        ),
+      );
+
+      String? base64Image;
+      
+      // Convert image file to base64 if available
+      if (imageFile != null) {
+        final bytes = await imageFile!.readAsBytes();
+        final base64String = base64Encode(bytes);  // ✅ correct encoding
+        base64Image = 'data:image/jpeg;base64,$base64String';
+      }
+
+      // Prepare report data matching your Firestore structure
+      final reportData = {
+        'detection': pestName,
+        'scientificName': scientificName,
+        'lifeStage': detectionStage.toLowerCase(),
+        'confidence': confidencePercent / 100, // Store as decimal (0-1)
+        'risk': _getRiskLevel(),
+        'cropAffected': cropAffected,
+        'analysis': analysis,
+        'treatment': treatment,
+        'historicalContext': historicalContext,
+        'imageBase64': base64Image,
+        'annotatedImageUrl': annotatedImageUrl,
+        'farmerId': userId,
+        'farmerName': await _getFarmerName(),
+        'status': 'pending', // Default status
+        'timestamp': FieldValue.serverTimestamp(),
+        'location': {
+          'lat': latitude ?? 0.0,
+          'lng': longitude ?? 0.0,
+          'areaName': areaName ?? 'Unknown Area',
+        },
+      };
+
+      // Save to Firestore
+      final docRef = await FirebaseFirestore.instance
+          .collection('reports')
+          .add(reportData);
+
+      // Close loading dialog
+      Navigator.pop(context);
+
+      // Show success message
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Report saved successfully! ID: ${docRef.id.substring(0, 8)}...',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: _green,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      // Close loading dialog
+      if (context.mounted) Navigator.pop(context);
+      
+      // Show error message
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error_outline, color: Colors.white, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Failed to save report: ${e.toString()}',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.red.shade700,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+    }
+  }
+
+  String _getRiskLevel() {
+    final s = severity.toUpperCase();
+    if (s.contains('HIGH') || s.contains('CRITICAL')) return 'High';
+    if (s.contains('MEDIUM') || s.contains('MOD')) return 'Medium';
+    return 'Low';
+  }
+
+  Future<String> _getFarmerName() async {
+    try {
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .get();
+      
+      if (userDoc.exists) {
+        final data = userDoc.data();
+        return data?['name'] ?? data?['displayName'] ?? 'Unknown Farmer';
+      }
+      return 'Unknown Farmer';
+    } catch (e) {
+      return 'Unknown Farmer';
+    }
   }
 
   @override
@@ -122,6 +261,36 @@ class AIResultScreen extends StatelessWidget {
           letterSpacing: -0.3,
         ),
       ),
+      actions: [
+        // Save button in app bar
+        GestureDetector(
+          onTap: () => _saveToReports(context),
+          child: Container(
+            margin: const EdgeInsets.all(10),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.white24),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.save_rounded, color: Colors.white, size: 18),
+                const SizedBox(width: 6),
+                Text(
+                  'Save',
+                  style: GoogleFonts.manrope(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
       flexibleSpace: FlexibleSpaceBar(
         background: Stack(
           fit: StackFit.expand,
@@ -598,83 +767,116 @@ class AIResultScreen extends StatelessWidget {
   // ── Action Buttons ────────────────────────────────────────────────────────
 
   Widget _buildActionButtons(BuildContext context) {
-    return Row(
+    return Column(
       children: [
-        Expanded(
-          child: GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 15),
-              decoration: BoxDecoration(
-                color: _card,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: _border, width: 1.5),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.camera_alt_outlined,
-                      color: _green, size: 16),
-                  const SizedBox(width: 7),
-                  Text(
-                    'Retake',
-                    style: GoogleFonts.manrope(
-                      color: _green,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 14,
-                    ),
+        Row(
+          children: [
+            Expanded(
+              child: GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  decoration: BoxDecoration(
+                    color: _card,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: _border, width: 1.5),
                   ),
-                ],
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          flex: 2,
-          child: GestureDetector(
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => AssignPestScreen(
-                    userId: userId,
-                    pestName: pestName,
-                    detectedStage: detectionStage.toLowerCase(),
-                    imagePath: imageFile?.path,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.camera_alt_outlined,
+                          color: _green, size: 16),
+                      const SizedBox(width: 7),
+                      Text(
+                        'Retake',
+                        style: GoogleFonts.manrope(
+                          color: _green,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              );
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 15),
-              decoration: BoxDecoration(
-                color: _green,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: _green.withOpacity(0.3),
-                    blurRadius: 14,
-                    offset: const Offset(0, 5),
-                  ),
-                ],
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.add_task_rounded,
-                      color: Colors.white, size: 16),
-                  const SizedBox(width: 7),
-                  Text(
-                    'Assign to Cycle',
-                    style: GoogleFonts.manrope(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 14,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              flex: 2,
+              child: GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => AssignPestScreen(
+                        userId: userId,
+                        pestName: pestName,
+                        detectedStage: detectionStage.toLowerCase(),
+                        imagePath: imageFile?.path,
+                      ),
                     ),
+                  );
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  decoration: BoxDecoration(
+                    color: _green,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: _green.withOpacity(0.3),
+                        blurRadius: 14,
+                        offset: const Offset(0, 5),
+                      ),
+                    ],
                   ),
-                ],
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.add_task_rounded,
+                          color: Colors.white, size: 16),
+                      const SizedBox(width: 7),
+                      Text(
+                        'Assign to Cycle',
+                        style: GoogleFonts.manrope(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        // Save Report Button
+        GestureDetector(
+          onTap: () => _saveToReports(context),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 15),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _accentGreen, width: 1.5),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.cloud_upload_outlined,
+                    color: Color(0xFF1A5C30), size: 18),
+                const SizedBox(width: 8),
+                Text(
+                  'Monitor Report for Risk Map',
+                  style: GoogleFonts.manrope(
+                    color: _green,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
+              ],
             ),
           ),
         ),

@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:visaia/services/api_service.dart';
 import 'package:visaia/screens/logging_screens/ai_result.dart';
+import 'package:geolocator/geolocator.dart';  // Add this
+import 'package:geocoding/geocoding.dart';  
 
 /// Full-screen cinematic loading overlay shown while the AI analyzes the image.
 /// Push this as a transparent route over UploadPestScreen, then it will
@@ -11,11 +13,15 @@ import 'package:visaia/screens/logging_screens/ai_result.dart';
 class AnalyzingScreen extends StatefulWidget {
   final File imageFile;
   final String userId;
+  final String? sourceContext;
+  final String? pestType;
 
   const AnalyzingScreen({
     super.key,
     required this.imageFile,
     required this.userId,
+    this.sourceContext,
+    this.pestType,
   });
 
   @override
@@ -127,22 +133,37 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
       await Future.delayed(const Duration(milliseconds: 400));
       if (!mounted) return;
 
+      // Get current location
+      final locationData = await _getCurrentLocation();
+      
+      // Ensure scientificName is not null
+      final scientificName = result.scientificName.isNotEmpty 
+          ? result.scientificName 
+          : _getScientificNameForPest(result.pestName);
+      
+      if (!mounted) return;
+      
       Navigator.pushReplacement(
         context,
         PageRouteBuilder(
           pageBuilder: (_, __, ___) => AIResultScreen(
             pestName: result.pestName,
-            scientificName: result.pestName,
-            severity: result.riskLevel,
+            scientificName: scientificName,
+            severity: _mapRiskToSeverity(result.riskLevel),
             confidencePercent: _calculateConfidence(result.boxes),
             detectionStage: result.lifeStage,
-            cropAffected: 'Maize',
+            cropAffected: result.cropAffected.isNotEmpty ? result.cropAffected : 'Maize',
             analysis: result.analysis,
             treatment: result.treatment,
-            historicalContext: 'AI analysis from uploaded image.',
+            historicalContext: result.historicalContext.isNotEmpty 
+                ? result.historicalContext 
+                : 'AI analysis from uploaded image.',
             imageFile: widget.imageFile,
             annotatedImageUrl: result.annotatedImageUrl,
             userId: widget.userId,
+            latitude: locationData.latitude,
+            longitude: locationData.longitude,
+            areaName: locationData.areaName,
           ),
           transitionsBuilder: (_, anim, __, child) =>
               FadeTransition(opacity: anim, child: child),
@@ -158,6 +179,98 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
           backgroundColor: Colors.red.shade700,
         ),
       );
+    }
+  }
+
+  // Helper method to map risk level to severity format
+  String _mapRiskToSeverity(String riskLevel) {
+    final risk = riskLevel.toLowerCase();
+    if (risk == 'high' || risk == 'critical' || risk == 'severe') {
+      return 'High';
+    } else if (risk == 'medium' || risk == 'moderate') {
+      return 'Medium';
+    } else {
+      return 'Low';
+    }
+  }
+
+  // Helper method to get scientific name based on pest name
+  String _getScientificNameForPest(String pestName) {
+    final pestMap = {
+      'Fall Armyworm': 'Spodoptera frugiperda',
+      'African Armyworm': 'Spodoptera exempta',
+      'Corn Earworm': 'Helicoverpa zea',
+      'European Corn Borer': 'Ostrinia nubilalis',
+      'Cotton Bollworm': 'Helicoverpa armigera',
+      'Diamondback Moth': 'Plutella xylostella',
+    };
+    
+    return pestMap[pestName] ?? 'Species unidentified';
+  }
+
+  // Add this method to get current location
+  Future<LocationData> _getCurrentLocation() async {
+    try {
+      // Check if location services are enabled
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        debugPrint('Location services are disabled');
+        return LocationData(latitude: 0.0, longitude: 0.0, areaName: 'Unknown');
+      }
+      
+      // Check and request permissions
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          debugPrint('Location permissions denied');
+          return LocationData(latitude: 0.0, longitude: 0.0, areaName: 'Unknown');
+        }
+      }
+      
+      if (permission == LocationPermission.deniedForever) {
+        debugPrint('Location permissions permanently denied');
+        return LocationData(latitude: 0.0, longitude: 0.0, areaName: 'Unknown');
+      }
+      
+      // Get current position
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      
+      // Get area name from coordinates (reverse geocoding)
+      String areaName = 'Unknown Area';
+      try {
+        final placemarks = await placemarkFromCoordinates(
+          position.latitude,
+          position.longitude,
+        );
+        
+        if (placemarks.isNotEmpty) {
+          final place = placemarks.first;
+          List<String> locationParts = [];
+          
+          if (place.subLocality != null && place.subLocality!.isNotEmpty) 
+            locationParts.add(place.subLocality!);
+          if (place.locality != null && place.locality!.isNotEmpty) 
+            locationParts.add(place.locality!);
+          if (place.administrativeArea != null && place.administrativeArea!.isNotEmpty) 
+            locationParts.add(place.administrativeArea!);
+          
+          areaName = locationParts.isNotEmpty ? locationParts.join(', ') : 'Unknown Area';
+        }
+      } catch (e) {
+        debugPrint('Reverse geocoding error: $e');
+      }
+      
+      return LocationData(
+        latitude: position.latitude,
+        longitude: position.longitude,
+        areaName: areaName,
+      );
+    } catch (e) {
+      debugPrint('Error getting location: $e');
+      return LocationData(latitude: 0.0, longitude: 0.0, areaName: 'Unknown');
     }
   }
 
@@ -551,4 +664,17 @@ class _DashedRingPainter extends CustomPainter {
   @override
   bool shouldRepaint(_DashedRingPainter old) =>
       old.color != color || old.strokeWidth != strokeWidth;
+}
+
+// Helper class for location data
+class LocationData {
+  final double latitude;
+  final double longitude;
+  final String areaName;
+  
+  LocationData({
+    required this.latitude,
+    required this.longitude,
+    required this.areaName,
+  });
 }
