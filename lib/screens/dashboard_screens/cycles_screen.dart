@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:provider/provider.dart';
 import 'package:visaia/core/models/cycle_model.dart';
+import 'package:visaia/core/providers/farm_provider.dart';
 import 'package:visaia/screens/cycle_screens/start_cycle.dart';
 import 'package:visaia/screens/cycle_screens/record_previous_cycle.dart';
 import 'package:visaia/screens/cycle_screens/cycle_details.dart';
@@ -26,8 +28,6 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
   String searchQuery = '';
 
   final user = FirebaseAuth.instance.currentUser;
-
-  // ================= HELPER METHODS =================
 
   Map<String, dynamic> _getCycleStatus(CycleModel cycle) {
     if (cycle.progress >= 0.8) {
@@ -74,18 +74,19 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
         cycle.cropVariety.toLowerCase().contains(query);
   }
 
-  Widget _buildCycleListWithoutOrdering() {
+  // Fallback stream without ordering (when index is missing)
+  Widget _buildCycleListWithoutOrdering(String? farmId) {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('users')
           .doc(user!.uid)
           .collection('cycles')
+          .where('farmId', isEqualTo: farmId)
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return _buildLoadingState();
         }
-
         if (snapshot.hasError) {
           return _buildEmptyState('Error loading cycles');
         }
@@ -106,13 +107,10 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
             filteredCycles.where((c) => !c.shouldBeCompleted).toList();
         final completedCycles =
             filteredCycles.where((c) => c.shouldBeCompleted).toList();
-
-        final displayCycles = isCompletedView ? completedCycles : activeCycles;
+        final displayCycles =
+            isCompletedView ? completedCycles : activeCycles;
 
         if (displayCycles.isEmpty) {
-          if (filteredCycles.isEmpty && searchQuery.isNotEmpty) {
-            return _buildEmptyState('No cycles found for "$searchQuery"');
-          }
           return _buildEmptyState(
             isCompletedView ? 'No completed cycles yet' : 'No active cycles found',
           );
@@ -132,9 +130,11 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
     );
   }
 
-  // ================= BUILD METHOD =================
   @override
   Widget build(BuildContext context) {
+    // Watch provider so this screen rebuilds when farm changes
+    final farmId = context.watch<FarmProvider>().activeFarmId;
+
     return Scaffold(
       backgroundColor: scaffoldBg,
       body: SafeArea(
@@ -147,7 +147,6 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const SizedBox(height: 20),
-                    // Header row
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -158,17 +157,17 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                             fontWeight: FontWeight.w800,
                             color: headingBlack,
                           ),
-                        ), 
+                        ),
                       ],
                     ),
                     const SizedBox(height: 20),
                     _buildSearchBar(),
                     const SizedBox(height: 20),
-                    _buildFilterRow(),
+                    _buildFilterRow(farmId),
                     const SizedBox(height: 20),
-                    _buildCycleList(),
+                    _buildCycleList(farmId),
                     const SizedBox(height: 32),
-                    _buildActionButtons(),
+                    _buildActionButtons(farmId),
                     const SizedBox(height: 40),
                   ],
                 ),
@@ -180,8 +179,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
     );
   }
 
-  // ================= CYCLE LIST FROM FIREBASE =================
-  Widget _buildCycleList() {
+  Widget _buildCycleList(String? farmId) {
     if (user == null) {
       return _buildEmptyState('Please sign in to view cycles');
     }
@@ -191,6 +189,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
           .collection('users')
           .doc(user!.uid)
           .collection('cycles')
+          .where('farmId', isEqualTo: farmId)
           .orderBy('createdAt', descending: true)
           .snapshots(),
       builder: (context, snapshot) {
@@ -200,7 +199,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
 
         if (snapshot.hasError) {
           if (snapshot.error.toString().contains('index')) {
-            return _buildCycleListWithoutOrdering();
+            return _buildCycleListWithoutOrdering(farmId);
           }
           return _buildEmptyState('Error loading cycles');
         }
@@ -215,8 +214,8 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
             filteredCycles.where((c) => !c.shouldBeCompleted).toList();
         final completedCycles =
             filteredCycles.where((c) => c.shouldBeCompleted).toList();
-
-        final displayCycles = isCompletedView ? completedCycles : activeCycles;
+        final displayCycles =
+            isCompletedView ? completedCycles : activeCycles;
 
         if (displayCycles.isEmpty) {
           if (filteredCycles.isEmpty && searchQuery.isNotEmpty) {
@@ -241,7 +240,6 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
     );
   }
 
-  // ================= BUILD ACTIVE CARD =================
   Widget _buildActiveCard(CycleModel cycle) {
     final statusInfo = _getCycleStatus(cycle);
     final cropIcon = _getCropIcon(cycle.cropVariety);
@@ -264,14 +262,14 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
         Navigator.push(
           context,
           MaterialPageRoute(
-              builder: (context) =>
-                  CycleDetailsScreen(cycleId: cycle.id, uid: user!.uid)),
+            builder: (context) =>
+                CycleDetailsScreen(cycleId: cycle.id, uid: user!.uid),
+          ),
         );
       },
     );
   }
 
-  // ================= BUILD COMPLETED CARD =================
   Widget _buildCompletedCard(CycleModel cycle) {
     return Screen2CompletedCard(
       title: cycle.cycleName,
@@ -282,14 +280,14 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
         Navigator.push(
           context,
           MaterialPageRoute(
-              builder: (context) => CompletedCycleScreen(
-                  cycleId: cycle.id, userId: user!.uid)),
+            builder: (context) =>
+                CompletedCycleScreen(cycleId: cycle.id, userId: user!.uid),
+          ),
         );
       },
     );
   }
 
-  // ================= UI STATES =================
   Widget _buildLoadingState() {
     return Column(
       children: [
@@ -358,8 +356,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
             Text(
               'Start your first cropping cycle to see it here',
               style: GoogleFonts.manrope(
-                  fontSize: 13,
-                  color: textGray.withValues(alpha: 0.7)),
+                  fontSize: 13, color: textGray.withValues(alpha: 0.7)),
               textAlign: TextAlign.center,
             ),
           ],
@@ -368,7 +365,6 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
     );
   }
 
-  // ================= MAIN SCREEN UI COMPONENTS =================
   Widget _buildSearchBar() {
     return Container(
       height: 52,
@@ -410,26 +406,26 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
           if (searchQuery.isNotEmpty)
             GestureDetector(
               onTap: () => setState(() => searchQuery = ''),
-              child: Icon(Icons.close,
-                  color: Colors.grey.shade400, size: 18),
+              child: Icon(Icons.close, color: Colors.grey.shade400, size: 18),
             ),
         ],
       ),
     );
   }
 
-  Widget _buildFilterRow() {
+  Widget _buildFilterRow(String? farmId) {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('users')
           .doc(user?.uid)
           .collection('cycles')
+          .where('farmId', isEqualTo: farmId)
           .snapshots(),
       builder: (context, snapshot) {
         int activeCount = 0;
         int completedCount = 0;
 
-        if (snapshot.hasData && snapshot.data != null) {
+        if (snapshot.hasData) {
           final cycles = snapshot.data!.docs
               .map((doc) => CycleModel.fromDoc(doc))
               .toList();
@@ -467,8 +463,8 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                             boxShadow: !isCompletedView
                                 ? [
                                     BoxShadow(
-                                      color: Colors.black
-                                          .withValues(alpha: 0.06),
+                                      color:
+                                          Colors.black.withValues(alpha: 0.06),
                                       blurRadius: 4,
                                       offset: const Offset(0, 1),
                                     ),
@@ -480,8 +476,9 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                             'Active ($activeCount)',
                             style: GoogleFonts.manrope(
                               color: !isCompletedView ? darkGreen : textGray,
-                              fontWeight:
-                                  !isCompletedView ? FontWeight.w800 : FontWeight.w600,
+                              fontWeight: !isCompletedView
+                                  ? FontWeight.w800
+                                  : FontWeight.w600,
                               fontSize: 13,
                             ),
                           ),
@@ -502,8 +499,8 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                             boxShadow: isCompletedView
                                 ? [
                                     BoxShadow(
-                                      color: Colors.black
-                                          .withValues(alpha: 0.06),
+                                      color:
+                                          Colors.black.withValues(alpha: 0.06),
                                       blurRadius: 4,
                                       offset: const Offset(0, 1),
                                     ),
@@ -515,8 +512,9 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                             'Completed ($completedCount)',
                             style: GoogleFonts.manrope(
                               color: isCompletedView ? darkGreen : textGray,
-                              fontWeight:
-                                  isCompletedView ? FontWeight.w800 : FontWeight.w600,
+                              fontWeight: isCompletedView
+                                  ? FontWeight.w800
+                                  : FontWeight.w600,
                               fontSize: 13,
                             ),
                           ),
@@ -564,15 +562,16 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
     );
   }
 
-  Widget _buildActionButtons() {
+  Widget _buildActionButtons(String? farmId) {
     return FutureBuilder<bool>(
       future: _hasPreviousCycle(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const SizedBox(
             height: 80,
-            child:
-                Center(child: CircularProgressIndicator(strokeWidth: 2, color: darkGreen)),
+            child: Center(
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: darkGreen)),
           );
         }
 
@@ -584,7 +583,8 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
             if (!hasPreviousCycle)
               Container(
                 margin: const EdgeInsets.only(bottom: 16),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                 decoration: BoxDecoration(
                   color: const Color(0xFFFFFBF0),
                   borderRadius: BorderRadius.circular(14),
@@ -593,10 +593,10 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.only(top: 1),
+                    const Padding(
+                      padding: EdgeInsets.only(top: 1),
                       child: Icon(Icons.info_outline,
-                          color: const Color(0xFFD48806), size: 18),
+                          color: Color(0xFFD48806), size: 18),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
@@ -612,7 +612,6 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                   ],
                 ),
               ),
-
             _actionItem(
               icon: Icons.eco,
               title: 'Start New Cycle',
@@ -626,8 +625,9 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                            builder: (context) =>
-                                StartCroppingCycleScreen()),
+                          builder: (context) =>
+                              StartCroppingCycleScreen(farmId: farmId),
+                        ),
                       );
                     }
                   : null,
@@ -646,9 +646,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                     builder: (context) =>
                         RecordCycleScreen(userId: user!.uid),
                   ),
-                ).then((_) {
-                  setState(() {});
-                });
+                ).then((_) => setState(() {}));
               },
             ),
             const SizedBox(height: 70),
@@ -683,7 +681,8 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                     ? darkGreen.withValues(alpha: 0.2)
                     : Colors.black.withValues(alpha: 0.04),
                 blurRadius: isPrimary ? 12 : 4,
-                offset: isPrimary ? const Offset(0, 4) : const Offset(0, 1),
+                offset:
+                    isPrimary ? const Offset(0, 4) : const Offset(0, 1),
               ),
             ],
           ),
@@ -743,7 +742,6 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
     );
   }
 
-  // ================= OVERLAY AND LOGIC COMPONENTS =================
   void _showScreen2BottomSheet(
       BuildContext context, String cropName, String cycleId) {
     showModalBottomSheet(
@@ -772,48 +770,38 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                   ),
                 ),
                 const SizedBox(height: 20),
-                _sheetTile(
-                  Icons.edit_outlined,
-                  'Edit Cycle',
-                  darkGreen,
-                  () {
-                    Navigator.pop(context);
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) =>
-                              EditCropCycleScreen(cycleId: cycleId)),
-                    );
-                  },
-                ),
+                _sheetTile(Icons.edit_outlined, 'Edit Cycle', darkGreen, () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) =>
+                            EditCropCycleScreen(cycleId: cycleId)),
+                  );
+                }),
                 _sheetTile(
                     Icons.share_outlined, 'Share Data', darkGreen, () {}),
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Container(height: 1, color: const Color(0xFFF0F1ED)),
+                  child:
+                      Container(height: 1, color: const Color(0xFFF0F1ED)),
                 ),
                 _sheetTile(
-                  Icons.check_circle_outline,
-                  'Mark as Completed',
-                  darkGreen,
-                  () {
-                    Navigator.pop(context);
-                    _markCycleCompleted(cycleId);
-                  },
-                ),
+                    Icons.check_circle_outline, 'Mark as Completed', darkGreen,
+                    () {
+                  Navigator.pop(context);
+                  _markCycleCompleted(cycleId);
+                }),
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Container(height: 1, color: const Color(0xFFF0F1ED)),
+                  child:
+                      Container(height: 1, color: const Color(0xFFF0F1ED)),
                 ),
-                _sheetTile(
-                  Icons.delete_outline_rounded,
-                  'Delete Cycle',
-                  const Color(0xFFBA1A1A),
-                  () {
-                    Navigator.pop(context);
-                    _showScreen3DeleteOverlay(context, cropName, cycleId);
-                  },
-                ),
+                _sheetTile(Icons.delete_outline_rounded, 'Delete Cycle',
+                    const Color(0xFFBA1A1A), () {
+                  Navigator.pop(context);
+                  _showScreen3DeleteOverlay(context, cropName, cycleId);
+                }),
                 const SizedBox(height: 12),
                 Container(
                   width: double.infinity,
@@ -824,13 +812,11 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                   ),
                   child: TextButton(
                     onPressed: () => Navigator.pop(context),
-                    child: Text(
-                      'Cancel',
-                      style: GoogleFonts.manrope(
-                          color: textGray,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 15),
-                    ),
+                    child: Text('Cancel',
+                        style: GoogleFonts.manrope(
+                            color: textGray,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 15)),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -852,31 +838,29 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
           .update({'isCompleted': true});
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Cycle marked as completed',
-                style: GoogleFonts.manrope(
-                    fontWeight: FontWeight.w600, color: Colors.white)),
-            backgroundColor: darkGreen,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Cycle marked as completed',
+              style: GoogleFonts.manrope(
+                  fontWeight: FontWeight.w600, color: Colors.white)),
+          backgroundColor: darkGreen,
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        ));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to update cycle',
-                style: GoogleFonts.manrope(
-                    fontWeight: FontWeight.w600, color: Colors.white)),
-            backgroundColor: const Color(0xFFBA1A1A),
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Failed to update cycle',
+              style: GoogleFonts.manrope(
+                  fontWeight: FontWeight.w600, color: Colors.white)),
+          backgroundColor: const Color(0xFFBA1A1A),
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        ));
       }
     }
   }
@@ -892,39 +876,36 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
 
       if (mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Cycle deleted successfully',
-                style: GoogleFonts.manrope(
-                    fontWeight: FontWeight.w600, color: Colors.white)),
-            backgroundColor: darkGreen,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Cycle deleted successfully',
+              style: GoogleFonts.manrope(
+                  fontWeight: FontWeight.w600, color: Colors.white)),
+          backgroundColor: darkGreen,
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        ));
       }
     } catch (e) {
       if (mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to delete cycle',
-                style: GoogleFonts.manrope(
-                    fontWeight: FontWeight.w600, color: Colors.white)),
-            backgroundColor: const Color(0xFFBA1A1A),
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Failed to delete cycle',
+              style: GoogleFonts.manrope(
+                  fontWeight: FontWeight.w600, color: Colors.white)),
+          backgroundColor: const Color(0xFFBA1A1A),
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        ));
       }
     }
   }
 
   Future<bool> _hasPreviousCycle() async {
     if (user == null) return false;
-
     try {
       final snapshot = await FirebaseFirestore.instance
           .collection('users')
@@ -933,7 +914,6 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
           .where('isCompleted', isEqualTo: true)
           .limit(1)
           .get();
-
       return snapshot.docs.isNotEmpty;
     } catch (e) {
       return false;
@@ -952,11 +932,9 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
         ),
         child: Icon(icon, color: color, size: 20),
       ),
-      title: Text(
-        label,
-        style: GoogleFonts.manrope(
-            color: color, fontWeight: FontWeight.w700, fontSize: 15),
-      ),
+      title: Text(label,
+          style: GoogleFonts.manrope(
+              color: color, fontWeight: FontWeight.w700, fontSize: 15)),
       onTap: onTap,
       contentPadding: const EdgeInsets.symmetric(vertical: 2),
     );
@@ -970,68 +948,55 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
       builder: (context) {
         return Dialog(
           insetPadding: const EdgeInsets.symmetric(horizontal: 24),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(28)),
           backgroundColor: Colors.white,
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 24),
+            padding:
+                const EdgeInsets.symmetric(vertical: 36, horizontal: 24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
                   padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFEE2E2),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFFEE2E2),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(
-                    Icons.delete_outline_rounded,
-                    color: Color(0xFFBA1A1A),
-                    size: 40,
-                  ),
+                  child: const Icon(Icons.delete_outline_rounded,
+                      color: Color(0xFFBA1A1A), size: 40),
                 ),
                 const SizedBox(height: 28),
-                Text(
-                  'Delete Cropping Cycle?',
-                  style: GoogleFonts.epilogue(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                    color: headingBlack,
-                  ),
-                ),
+                Text('Delete Cropping Cycle?',
+                    style: GoogleFonts.epilogue(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: headingBlack)),
                 const SizedBox(height: 12),
                 RichText(
                   textAlign: TextAlign.center,
                   text: TextSpan(
                     style: GoogleFonts.manrope(
-                        fontSize: 14,
-                        color: textGray,
-                        height: 1.5),
+                        fontSize: 14, color: textGray, height: 1.5),
                     children: [
-                      const TextSpan(text: 'Are you sure you want to delete '),
+                      const TextSpan(
+                          text: 'Are you sure you want to delete '),
                       TextSpan(
                         text: cropName,
                         style: GoogleFonts.manrope(
-                            fontWeight: FontWeight.w800, color: headingBlack),
+                            fontWeight: FontWeight.w800,
+                            color: headingBlack),
                       ),
                       const TextSpan(text: '? This cannot be undone.'),
                     ],
                   ),
                 ),
                 const SizedBox(height: 32),
-                _dialogBtn(
-                  'Delete',
-                  const Color(0xFFBA1A1A),
-                  Colors.white,
-                  () => _deleteCycle(cycleId),
-                ),
+                _dialogBtn('Delete', const Color(0xFFBA1A1A), Colors.white,
+                    () => _deleteCycle(cycleId)),
                 const SizedBox(height: 10),
-                _dialogBtn(
-                  'Cancel',
-                  const Color(0xFFF3F5EE),
-                  headingBlack,
-                  () => Navigator.pop(context),
-                ),
+                _dialogBtn('Cancel', const Color(0xFFF3F5EE), headingBlack,
+                    () => Navigator.pop(context)),
               ],
             ),
           ),
@@ -1040,30 +1005,31 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
     );
   }
 
-  Widget _dialogBtn(String label, Color bg, Color text, VoidCallback onTap) {
+  Widget _dialogBtn(
+      String label, Color bg, Color text, VoidCallback onTap) {
     return SizedBox(
       width: double.infinity,
       height: 52,
       child: ElevatedButton(
         style: ElevatedButton.styleFrom(
           backgroundColor: bg,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14)),
           elevation: 0,
         ),
         onPressed: onTap,
-        child: Text(
-          label,
-          style: GoogleFonts.manrope(
-              color: text, fontWeight: FontWeight.w800, fontSize: 15),
-        ),
+        child: Text(label,
+            style: GoogleFonts.manrope(
+                color: text,
+                fontWeight: FontWeight.w800,
+                fontSize: 15)),
       ),
     );
   }
 }
 
-// ==========================================
-// ACTIVE CROP CARD
-// ==========================================
+// ========== CARD WIDGETS (unchanged) ==========
+
 class CropCycleCard extends StatelessWidget {
   final String title, subtitle, harvestDate, statusText;
   final double progress;
@@ -1120,44 +1086,37 @@ class CropCycleCard extends StatelessWidget {
                         Container(
                           width: 48,
                           height: 48,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF0F1ED),
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFF0F1ED),
                             shape: BoxShape.circle,
                           ),
-                          child:
-                              Icon(icon, color: iconColor, size: 24),
+                          child: Icon(icon, color: iconColor, size: 24),
                         ),
                         const SizedBox(width: 14),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                title,
-                                style: GoogleFonts.manrope(
-                                  fontSize: 17,
-                                  fontWeight: FontWeight.w800,
-                                  color: const Color(0xFF1A1C18),
-                                ),
-                              ),
+                              Text(title,
+                                  style: GoogleFonts.manrope(
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w800,
+                                      color: const Color(0xFF1A1C18))),
                               const SizedBox(height: 2),
-                              Text(
-                                subtitle,
-                                style: GoogleFonts.manrope(
-                                  fontSize: 13,
-                                  color: const Color(0xFF43483E)
-                                      .withValues(alpha: 0.7),
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
+                              Text(subtitle,
+                                  style: GoogleFonts.manrope(
+                                      fontSize: 13,
+                                      color: const Color(0xFF43483E)
+                                          .withValues(alpha: 0.7),
+                                      fontWeight: FontWeight.w500)),
                             ],
                           ),
                         ),
                         Container(
                           width: 36,
                           height: 36,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF3F5EE),
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFF3F5EE),
                             shape: BoxShape.circle,
                           ),
                           child: IconButton(
@@ -1185,31 +1144,25 @@ class CropCycleCard extends StatelessWidget {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(
-                          'Est. Harvest: $harvestDate',
-                          style: GoogleFonts.manrope(
-                            fontSize: 12,
-                            color: const Color(0xFF43483E)
-                                .withValues(alpha: 0.7),
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        Text(
-                          '${(progress * 100).toInt()}%',
-                          style: GoogleFonts.manrope(
-                            fontSize: 13,
-                            color: progressColor,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
+                        Text('Est. Harvest: $harvestDate',
+                            style: GoogleFonts.manrope(
+                                fontSize: 12,
+                                color: const Color(0xFF43483E)
+                                    .withValues(alpha: 0.7),
+                                fontWeight: FontWeight.w500)),
+                        Text('${(progress * 100).toInt()}%',
+                            style: GoogleFonts.manrope(
+                                fontSize: 13,
+                                color: progressColor,
+                                fontWeight: FontWeight.w800)),
                       ],
                     ),
                   ],
                 ),
               ),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 18, vertical: 12),
                 decoration: BoxDecoration(
                   color: statusBgColor,
                   borderRadius: const BorderRadius.vertical(
@@ -1219,14 +1172,11 @@ class CropCycleCard extends StatelessWidget {
                   children: [
                     Icon(statusIcon, color: statusColor, size: 16),
                     const SizedBox(width: 8),
-                    Text(
-                      statusText,
-                      style: GoogleFonts.manrope(
-                        color: statusColor,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                      ),
-                    ),
+                    Text(statusText,
+                        style: GoogleFonts.manrope(
+                            color: statusColor,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13)),
                   ],
                 ),
               ),
@@ -1238,9 +1188,6 @@ class CropCycleCard extends StatelessWidget {
   }
 }
 
-// ==========================================
-// COMPLETED CROP CARD
-// ==========================================
 class Screen2CompletedCard extends StatelessWidget {
   final String title, harvestDate, income;
   final bool hasIncome;
@@ -1278,27 +1225,26 @@ class Screen2CompletedCard extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Expanded(
-                  child: Text(
-                    title,
-                    style: GoogleFonts.manrope(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w800,
-                      color: const Color(0xFF0D4D33),
-                    ),
-                  ),
+                  child: Text(title,
+                      style: GoogleFonts.manrope(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          color: const Color(0xFF0D4D33))),
                 ),
                 _badge(),
               ],
             ),
             const SizedBox(height: 18),
-            _infoRow(Icons.calendar_today_outlined, 'Harvested: $harvestDate'),
+            _infoRow(
+                Icons.calendar_today_outlined, 'Harvested: $harvestDate'),
             const SizedBox(height: 10),
             _infoRow(
               Icons.payments_outlined,
               'Income: $income',
               isBold: hasIncome,
-              textColor:
-                  hasIncome ? const Color(0xFF173408) : const Color(0xFF43483E),
+              textColor: hasIncome
+                  ? const Color(0xFF173408)
+                  : const Color(0xFF43483E),
             ),
             const SizedBox(height: 18),
             Align(
@@ -1314,15 +1260,12 @@ class Screen2CompletedCard extends StatelessWidget {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(
-                          'VIEW DETAILS',
-                          style: GoogleFonts.manrope(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.8,
-                            color: const Color(0xFF0D4D33),
-                          ),
-                        ),
+                        Text('VIEW DETAILS',
+                            style: GoogleFonts.manrope(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.8,
+                                color: const Color(0xFF0D4D33))),
                         const SizedBox(width: 4),
                         const Icon(Icons.arrow_forward,
                             size: 14, color: Color(0xFF0D4D33)),
@@ -1344,37 +1287,28 @@ class Screen2CompletedCard extends StatelessWidget {
           color: const Color(0xFFEDF5E1),
           borderRadius: BorderRadius.circular(8),
         ),
-        child: Text(
-          'COMPLETED',
-          style: GoogleFonts.manrope(
-            fontSize: 10,
-            color: const Color(0xFF173408),
-            fontWeight: FontWeight.w800,
-            letterSpacing: 0.5,
-          ),
-        ),
+        child: Text('COMPLETED',
+            style: GoogleFonts.manrope(
+                fontSize: 10,
+                color: const Color(0xFF173408),
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.5)),
       );
 
-  Widget _infoRow(
-    IconData icon,
-    String text, {
-    bool isBold = false,
-    Color textColor = const Color(0xFF1A1C18),
-  }) =>
+  Widget _infoRow(IconData icon, String text,
+          {bool isBold = false,
+          Color textColor = const Color(0xFF1A1C18)}) =>
       Row(
         children: [
           Icon(icon,
               size: 16,
               color: const Color(0xFF43483E).withValues(alpha: 0.6)),
           const SizedBox(width: 10),
-          Text(
-            text,
-            style: GoogleFonts.manrope(
-              fontSize: 14,
-              fontWeight: isBold ? FontWeight.w800 : FontWeight.w500,
-              color: textColor,
-            ),
-          ),
+          Text(text,
+              style: GoogleFonts.manrope(
+                  fontSize: 14,
+                  fontWeight: isBold ? FontWeight.w800 : FontWeight.w500,
+                  color: textColor)),
         ],
       );
 }

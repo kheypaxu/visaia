@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import 'package:visaia/core/providers/farm_provider.dart';
 import 'package:visaia/screens/map/map_screen.dart';
 import 'package:visaia/screens/dashboard_screens/dashboard.dart';
 import 'package:visaia/screens/onboarding/farm_area_setup.dart';
@@ -17,8 +19,6 @@ import 'package:visaia/screens/cycle_screens/start_cycle.dart';
 import 'package:visaia/screens/dashboard_screens/cycles_screen.dart';
 
 enum NavItem { mitigation, home, cycle, map, profile }
-
-// ─── Add Log Modal ────────────────────────────────────────────────────────────
 
 void showAddLogModal(BuildContext context) {
   showModalBottomSheet(
@@ -49,7 +49,6 @@ class _AddLogModal extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Handle bar
           Center(
             child: Container(
               width: 40,
@@ -61,42 +60,33 @@ class _AddLogModal extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 20),
-
-          // Header
-          Text(
-            'Add a Log',
-            style: GoogleFonts.inter(
-              color: const Color(0xFF0C503C),
-              fontWeight: FontWeight.w800,
-              fontSize: 20,
-            ),
-          ),
+          Text('Add a Log',
+              style: GoogleFonts.inter(
+                  color: const Color(0xFF0C503C),
+                  fontWeight: FontWeight.w800,
+                  fontSize: 20)),
           const SizedBox(height: 4),
-          Text(
-            'What would you like to record?',
-            style: GoogleFonts.inter(
-              color: const Color(0xFF9E9E9E),
-              fontSize: 13,
-              fontWeight: FontWeight.w400,
-            ),
-          ),
+          Text('What would you like to record?',
+              style: GoogleFonts.inter(
+                  color: const Color(0xFF9E9E9E),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w400)),
           const SizedBox(height: 20),
-
-          // Option tiles
           _LogOptionTile(
             icon: Icons.edit_note_rounded,
             title: 'Daily Log',
             description: 'Record routine farm activities',
             onTap: () {
               Navigator.pop(context);
-
               Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => DailyLogFormScreen(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => DailyLogFormScreen(
                     userId: user!.uid,
                     cycleId: '',
                     shouldAssignCycle: true,
-                    )),
+                  ),
+                ),
               );
             },
           ),
@@ -108,10 +98,12 @@ class _AddLogModal extends StatelessWidget {
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => FieldScoutingFormScreen(
-                  userId: user!.uid,
-                  cycleId: '',
-                )),
+                MaterialPageRoute(
+                  builder: (context) => FieldScoutingFormScreen(
+                    userId: user!.uid,
+                    cycleId: '',
+                  ),
+                ),
               );
             },
           ),
@@ -159,46 +151,34 @@ class _LogOptionTile extends StatelessWidget {
         ),
         child: Row(
           children: [
-            // Icon circle
             Container(
               width: 48,
               height: 48,
               decoration: const BoxDecoration(
-                color: Color(0xFF1A5C30),
-                shape: BoxShape.circle,
-              ),
+                  color: Color(0xFF1A5C30), shape: BoxShape.circle),
               child: Icon(icon, color: Colors.white, size: 22),
             ),
             const SizedBox(width: 14),
-
-            // Text
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    title,
-                    style: GoogleFonts.inter(
-                      color: const Color(0xFF0C503C),
-                      fontWeight: FontWeight.w700,
-                      fontSize: 15,
-                    ),
-                  ),
+                  Text(title,
+                      style: GoogleFonts.inter(
+                          color: const Color(0xFF0C503C),
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15)),
                   const SizedBox(height: 2),
-                  Text(
-                    description,
-                    style: GoogleFonts.inter(
-                      color: const Color(0xFF9E9E9E),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w400,
-                    ),
-                  ),
+                  Text(description,
+                      style: GoogleFonts.inter(
+                          color: const Color(0xFF9E9E9E),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w400)),
                 ],
               ),
             ),
-
-            // Chevron
-            const Icon(Icons.chevron_right_rounded, color: Color(0xFFBDBDBD), size: 22),
+            const Icon(Icons.chevron_right_rounded,
+                color: Color(0xFFBDBDBD), size: 22),
           ],
         ),
       ),
@@ -236,7 +216,6 @@ class _VisaiaAppRootState extends State<VisaiaAppRoot> {
         if (doc.exists) {
           final hasFarm = doc.data()?['hasFarm'] as bool? ?? false;
           final hasFields = doc.data()?['hasFields'] as bool? ?? false;
-
           setState(() => _isFarmSetupComplete = hasFarm && hasFields);
         } else {
           setState(() => _isFarmSetupComplete = false);
@@ -252,11 +231,17 @@ class _VisaiaAppRootState extends State<VisaiaAppRoot> {
   Future<void> _completeFarmSetup() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
-      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-        'hasFarm': true,
-        'hasFields': true,
-      }, SetOptions(merge: true));
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .set({'hasFarm': true, 'hasFields': true}, SetOptions(merge: true));
     }
+
+    if (mounted) {
+      // Initialize the farm provider after setup completes
+      await context.read<FarmProvider>().init();
+    }
+
     setState(() => _isFarmSetupComplete = true);
   }
 
@@ -265,8 +250,7 @@ class _VisaiaAppRootState extends State<VisaiaAppRoot> {
     if (_isFarmSetupComplete == null) {
       return const Scaffold(
         body: Center(
-          child: CircularProgressIndicator(color: Color(0xFF8DBA60)),
-        ),
+            child: CircularProgressIndicator(color: Color(0xFF8DBA60))),
       );
     }
     if (_isFarmSetupComplete == false) {
@@ -302,14 +286,6 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
     NavItem.mitigation,
   ];
 
-  List<Widget> get _pages => [
-    HomeDashboard(userId: userId),
-    CroppingCyclesScreen(),
-    MapViewScreen(),
-    MitigationScreen(),
-    ProfileScreen(),
-  ];
-
   static const _itemMeta = [
     (Icons.eco_outlined, Icons.eco, 'HOME'),
     (Icons.recycling_rounded, Icons.recycling_rounded, 'CYCLE'),
@@ -329,6 +305,11 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(milliseconds: 400),
     );
+
+    // Initialize farm provider on first load
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<FarmProvider>().init();
+    });
   }
 
   @override
@@ -372,6 +353,10 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    // Watch the provider — when farmId changes, this rebuilds
+    final farmProvider = context.watch<FarmProvider>();
+    final activeFarmId = farmProvider.activeFarmId;
+
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     final bool isMapScreen = _selectedItem == NavItem.map;
 
@@ -380,13 +365,13 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
       appBar: isMapScreen
           ? null
           : AppBar(
-            backgroundColor: Colors.white,
-            elevation: 0,
-            scrolledUnderElevation: 0,
-            centerTitle: false,
-
+              backgroundColor: Colors.white,
+              elevation: 0,
+              scrolledUnderElevation: 0,
+              centerTitle: false,
               leading: IconButton(
-                icon: const Icon(Icons.menu_rounded, color: Color(0xFF0C503C), size: 28),
+                icon: const Icon(Icons.menu_rounded,
+                    color: Color(0xFF0C503C), size: 28),
                 onPressed: () {},
               ),
               title: Text('VISAIA',
@@ -395,69 +380,74 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
                       fontWeight: FontWeight.w800,
                       fontSize: 22)),
               actions: [
-                GestureDetector (
+                GestureDetector(
                   onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => AlertsPage())
-                    );
+                    Navigator.push(context,
+                        MaterialPageRoute(builder: (context) => AlertsPage()));
                   },
                   child: Stack(
-                  alignment: Alignment.topRight,
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.only(top: 8, right: 8),
-                      child: Icon(
-                        Icons.notifications_none_rounded,
-                        color: Color(0xFF0C503C),
-                        size: 28,
+                    alignment: Alignment.topRight,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.only(top: 8, right: 8),
+                        child: Icon(Icons.notifications_none_rounded,
+                            color: Color(0xFF0C503C), size: 28),
                       ),
-                    ),
-                    Positioned(
-                      right: 8,
-                      top: 10,
-                      child: Container(
-                        height: 10,
-                        width: 10,
-                        decoration: BoxDecoration(
-                          color: Colors.red,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 2),
+                      Positioned(
+                        right: 8,
+                        top: 10,
+                        child: Container(
+                          height: 10,
+                          width: 10,
+                          decoration: BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
+                          ),
                         ),
                       ),
-                    )
-                  ],
-                ),
-              ),        
-
-              const SizedBox(width: 8),
-
-              // ─── PROFILE (KEPT YOUR NAV LOGIC) ───
-              GestureDetector(
-                onTap: () => _onNavTapped(NavItem.profile),
-                child: const CircleAvatar(
-                  radius: 20,
-                  backgroundColor: Color(0xFFE0E0E0),
-                  backgroundImage: NetworkImage(
-                    'https://ui-avatars.com/api/?background=0D4D33&color=fff&name=AJ',
+                    ],
                   ),
                 ),
-              ),
-
-              const SizedBox(width: 16),
-            ],
-          ),    
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: () => _onNavTapped(NavItem.profile),
+                  child: const CircleAvatar(
+                    radius: 20,
+                    backgroundColor: Color(0xFFE0E0E0),
+                    backgroundImage: NetworkImage(
+                      'https://ui-avatars.com/api/?background=0D4D33&color=fff&name=AJ',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+              ],
+            ),
       body: Stack(
         children: [
           IndexedStack(
             index: _getCurrentStackIndex(),
-            children: _pages,
+            children: [
+              // ValueKey forces full rebuild when farm switches
+              HomeDashboard(
+                key: ValueKey('home_$activeFarmId'),
+                userId: userId,
+              ),
+              CroppingCyclesScreen(
+                key: ValueKey('cycles_$activeFarmId'),
+              ),
+              MapViewScreen(
+                key: ValueKey('map_$activeFarmId'),
+              ),
+              MitigationScreen(),
+              ProfileScreen(),
+            ],
           ),
 
           if (_isMenuOpen || _menuController.isAnimating)
             IgnorePointer(
               ignoring: !_isMenuOpen,
-              child: _buildCircularMenu(bottomPadding),
+              child: _buildCircularMenu(bottomPadding, activeFarmId),
             ),
 
           Positioned(
@@ -471,7 +461,7 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildCircularMenu(double bottomPadding) {
+  Widget _buildCircularMenu(double bottomPadding, String? activeFarmId) {
     return AnimatedBuilder(
       animation: _menuController,
       builder: (context, child) {
@@ -482,29 +472,34 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
             "icon": Icons.shutter_speed_outlined,
             "label": "Upload\nPest",
             "onTap": () {
-              final userId = FirebaseAuth.instance.currentUser?.uid ?? '';
-              if (userId.isEmpty) {
+              final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+              if (uid.isEmpty) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('User not authenticated')),
-                );
+                    const SnackBar(content: Text('User not authenticated')));
                 return;
               }
-              Navigator.push(context, MaterialPageRoute(builder: (context) => UploadPestScreen(userId: userId)));
+              Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => UploadPestScreen(userId: uid)));
             },
           },
           {
             "icon": Icons.description_outlined,
             "label": "Add Logs",
-            // ── KEY CHANGE: opens the modal ──────────────────────────────
-            "onTap": () {
-              showAddLogModal(context);
-            },
+            "onTap": () => showAddLogModal(context),
           },
           {
             "icon": Icons.eco_outlined,
             "label": "Start New Cycle",
             "onTap": () {
-              Navigator.push(context, MaterialPageRoute(builder: (context) => StartCroppingCycleScreen()));
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) =>
+                      StartCroppingCycleScreen(farmId: activeFarmId),
+                ),
+              );
             },
           },
           {
@@ -512,12 +507,10 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
             "label": "Full\nAnalysis",
             "onTap": () {
               Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const IncomeEstimationScreen(),
-                ),
-              );
-            }
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => const IncomeEstimationScreen()));
+            },
           },
         ];
 
@@ -533,10 +526,9 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
             GestureDetector(
               onTap: _toggleMenu,
               child: Container(
-                color: Colors.black.withOpacity(0.3 * _menuController.value),
-              ),
+                  color:
+                      Colors.black.withOpacity(0.3 * _menuController.value)),
             ),
-
             ...List.generate(actions.length, (index) {
               final action = actions[index];
               final offset = offsets[index];
@@ -559,27 +551,20 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(
-                            action["label"],
-                            textAlign: TextAlign.center,
-                            style: GoogleFonts.inter(
-                              color: Colors.white,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
+                          Text(action["label"],
+                              textAlign: TextAlign.center,
+                              style: GoogleFonts.inter(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600)),
                           const SizedBox(height: 8),
                           Container(
                             width: 54,
                             height: 54,
                             decoration: const BoxDecoration(
-                              color: Colors.white,
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(
-                              action["icon"],
-                              color: const Color(0xFF1A5C30),
-                            ),
+                                color: Colors.white, shape: BoxShape.circle),
+                            child: Icon(action["icon"],
+                                color: const Color(0xFF1A5C30)),
                           ),
                         ],
                       ),
@@ -623,7 +608,6 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
               ),
             ),
           ),
-
           Positioned(
             top: bubbleRadius,
             left: 0,
@@ -639,7 +623,6 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
               ],
             ),
           ),
-
           Positioned.fill(
             child: LayoutBuilder(builder: (context, constraints) {
               final slotWidth = constraints.maxWidth / 5;
@@ -658,8 +641,8 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
                   if (!_navItems.contains(_selectedItem)) {
                     return const SizedBox.shrink();
                   }
-
-                  final t = Curves.easeInOut.transform(_navController.value);
+                  final t =
+                      Curves.easeInOut.transform(_navController.value);
                   final cx = _lerpD(
                       getSlotX(previousIndex), getSlotX(currentIndex), t);
 
@@ -694,7 +677,6 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
               );
             }),
           ),
-
           Positioned(
             top: 0,
             left: MediaQuery.of(context).size.width / 2 - 32,
@@ -708,10 +690,9 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
                   shape: BoxShape.circle,
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black26,
-                      blurRadius: 12,
-                      offset: Offset(0, 4),
-                    ),
+                        color: Colors.black26,
+                        blurRadius: 12,
+                        offset: Offset(0, 4))
                   ],
                 ),
                 child: Center(

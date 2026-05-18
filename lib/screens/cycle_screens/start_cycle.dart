@@ -6,7 +6,8 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 class StartCroppingCycleScreen extends StatefulWidget {
-  const StartCroppingCycleScreen({super.key});
+  final String? farmId;
+  const StartCroppingCycleScreen({super.key, this.farmId});
 
   @override
   State<StartCroppingCycleScreen> createState() =>
@@ -24,6 +25,7 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
 
   String? selectedFieldId;
   String? selectedFieldName;
+  String? selectedFarmId;
 
   final cycleNameController = TextEditingController();
   final cropVarietyController = TextEditingController();
@@ -104,9 +106,9 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
 
     if (snapshot.docs.isNotEmpty) {
       final data = snapshot.docs.first.data();
+      selectedFarmId = snapshot.docs.first.id; // ← store the farm doc ID
 
       final raw = data['boundaries'] as List;
-
       farmBoundary = raw.map((p) {
         return LatLng(
           (p['lat'] as num).toDouble(),
@@ -167,7 +169,7 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
             : null,
         'seedDensity': double.tryParse(seedDensityController.text) ?? 0,
         'isCompleted': false,
-        'farmId': selectedFieldId,
+        'farmId': widget.farmId ?? selectedFarmId,
         'createdAt': FieldValue.serverTimestamp(),
       });
 

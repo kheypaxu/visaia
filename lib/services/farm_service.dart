@@ -30,6 +30,7 @@ class FarmService {
 
   // ================= SAVE FIELDS =================
   Future<void> saveFields({
+    required String farmId,
     required List<Map<String, dynamic>> fields,
   }) async {
     final user = _auth.currentUser;
@@ -42,11 +43,15 @@ class FarmService {
       final acres = GeoUtils.toAcres(areaSqm);
 
       await _db.collection('users').doc(user.uid).collection('fields').add({
+        'farmId': farmId,
         'name': field['name'],
-        'acres': acres, // ✅ FIXED HERE TOO
+        'acres': acres,
         'crop': field['crop'],
         'boundaries': boundaries
-            .map((p) => {'lat': p.latitude, 'lng': p.longitude})
+            .map((p) => {
+                  'lat': p.latitude,
+                  'lng': p.longitude,
+                })
             .toList(),
         'createdAt': FieldValue.serverTimestamp(),
       });

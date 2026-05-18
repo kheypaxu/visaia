@@ -8,6 +8,7 @@ import 'package:visaia/screens/root_screen.dart';
 import 'package:visaia/services/farm_service.dart';
 
 class FieldAreaSetupScreen extends StatefulWidget {
+  final String farmId;
   final List<LatLng> farmBoundary;
   final String farmName;
   final VoidCallback onFinished;
@@ -17,6 +18,7 @@ class FieldAreaSetupScreen extends StatefulWidget {
     required this.farmBoundary,
     required this.farmName,
     required this.onFinished,
+    required this.farmId,
   });
 
   @override
@@ -232,7 +234,7 @@ class _FieldAreaSetupState extends State<FieldAreaSetupScreen> {
                     ? () async {
                         try {
                           // 1. Save fields to Firestore
-                          await _farmService.saveFields(fields: _fields);
+                          await _farmService.saveFields(fields: _fields, farmId: widget.farmId,);
 
                           // 2. Update user document
                           final user = FirebaseAuth.instance.currentUser;

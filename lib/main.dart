@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import 'package:visaia/core/providers/farm_provider.dart';
 import 'package:visaia/screens/auth/login_screen.dart';
 import 'package:visaia/screens/root_screen.dart';
 import 'package:visaia/screens/auth/registration_screen.dart';
@@ -7,15 +9,18 @@ import 'package:visaia/screens/onboarding/get_started_screen.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 
-void main() async{
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // 2. Initialize Firebase
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  runApp(const MyApp());
+  runApp(
+    ChangeNotifierProvider(
+      create: (_) => FarmProvider(),
+      child: const MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
@@ -32,17 +37,11 @@ class MyApp extends StatelessWidget {
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
       initialRoute: '/get-started',
-    routes: {
-        // FIRST SCREEN
+      routes: {
         '/get-started': (context) => const GetStartedPage(),
-
-        // AUTH
         '/login': (context) => const LoginPage(),
         '/register': (context) => const RegistrationPage(),
-
-        // MAIN APP
         '/root': (context) => const VisaiaAppRoot(),
-        
       },
     );
   }

@@ -39,7 +39,7 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
   // REMOVED unused field: DateTime? _plantingDate;
   late final MonitoringFirestoreService _firestoreService;
   
-  final TextEditingController _plantsInspectedController = TextEditingController(text: '100');
+  final TextEditingController _plantsInspectedController = TextEditingController(text: '10');
   final TextEditingController _damagedPlantsController = TextEditingController(text: '0');
   final TextEditingController _eggMassesController = TextEditingController(text: '0');
   final TextEditingController _larvaeController = TextEditingController(text: '0');

@@ -41,19 +41,28 @@ class _FarmAreaSetupState extends State<FarmAreaSetup> {
       final areaSqm = GeoUtils.calculateAreaSqm(_points);
       final acres = GeoUtils.toAcres(areaSqm);
 
-      // 🧾 2. SAVE FARM (include acres if your service supports it OR store separately)
-      await FirebaseFirestore.instance
+      final farmRef = await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
           .collection('farms')
           .add({
         'name': _nameController.text,
-        'acres': acres, // ✅ NOW REAL VALUE
+        'acres': acres,
         'boundaries': _points
-            .map((p) => {'lat': p.latitude, 'lng': p.longitude})
+            .map((p) => {
+                  'lat': p.latitude,
+                  'lng': p.longitude,
+                })
             .toList(),
         'createdAt': FieldValue.serverTimestamp(),
       });
+
+      await FirebaseFirestore.instance
+          .collection('farmers')
+          .doc(user.uid)
+          .set({
+        'activeFarmId': farmRef.id,
+      }, SetOptions(merge: true));
 
       // 👤 3. Update user flag
       await FirebaseFirestore.instance
@@ -67,6 +76,7 @@ class _FarmAreaSetupState extends State<FarmAreaSetup> {
           context,
           MaterialPageRoute(
             builder: (context) => FieldAreaSetupScreen(
+              farmId: farmRef.id,
               farmBoundary: _points,
               farmName: _nameController.text,
               onFinished: widget.onFinished,
