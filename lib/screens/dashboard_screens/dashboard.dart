@@ -265,6 +265,117 @@ class MonitoringFirestoreService {
             }));
   }
 
+ Stream<List<PestModel>> getPestsFromScouting() async* {
+  await for (final cycles in getActiveCycles()) {
+    List<PestModel> allPests = [];
+    for (final cycle in cycles) {
+      try {
+        final weekDoc = await _getLatestWeek(cycle.id);
+        if (weekDoc != null && weekDoc.exists) {
+          final pests = _extractPestsFromWeek(weekDoc, cycle.fieldName, cycle.id);
+          allPests.addAll(pests);
+        }
+      } catch (e) {
+        print('Error processing cycle ${cycle.id}: $e');
+      }
+    }
+    yield allPests;
+  }
+}
+
+Future<DocumentSnapshot?> _getLatestWeek(String cycleId) async {
+  try {
+    final query = await _db
+        .collection('users')
+        .doc(_userId)
+        .collection('cycles')
+        .doc(cycleId)
+        .collection('weeks')
+        .orderBy('timestamp', descending: true)
+        .limit(1)
+        .get();
+    return query.docs.isNotEmpty ? query.docs.first : null;
+  } catch (e) {
+    print('Error getting latest week for cycle $cycleId: $e');
+    return null;
+  }
+}
+
+List<PestModel> _extractPestsFromWeek(
+    DocumentSnapshot weekDoc, String fieldName, String cycleId) {
+  final data = weekDoc.data() as Map<String, dynamic>?;
+  if (data == null) return [];
+
+  // Get timestamp safely
+  DateTime detectedAt;
+  final ts = data['timestamp'];
+  if (ts is Timestamp) {
+    detectedAt = ts.toDate();
+  } else if (ts is DateTime) {
+    detectedAt = ts;
+  } else {
+    detectedAt = DateTime.now(); // fallback
+  }
+
+  final stations = data['stations'] as List<dynamic>? ?? [];
+  int totalEggs = 0;
+  int totalLarvae = 0;
+  int totalPupae = 0;
+
+  for (var station in stations) {
+    final stationMap = station as Map<String, dynamic>?;
+    if (stationMap != null) {
+      totalEggs += (stationMap['eggMasses'] as int?) ?? 0;
+      totalLarvae += (stationMap['larvae'] as int?) ?? 0;
+      totalPupae += (stationMap['pupae'] as int?) ?? 0;
+    }
+  }
+
+  final List<PestModel> pests = [];
+  if (totalEggs > 0) {
+    pests.add(PestModel(
+      id: '${weekDoc.id}_eggs',
+      fieldId: cycleId, // cycleId is the parent cycle document ID
+      fieldName: fieldName,
+      name: 'FAW Eggs',
+      severity: _severityFromCount(totalEggs),
+      detectedAt: detectedAt,
+      isActive: true,
+    ));
+  }
+  if (totalLarvae > 0) {
+    pests.add(PestModel(
+      id: '${weekDoc.id}_larvae',
+      fieldId: cycleId,
+      fieldName: fieldName,
+      name: 'FAW Larvae',
+      severity: _severityFromCount(totalLarvae),
+      detectedAt: detectedAt,
+      isActive: true,
+    ));
+  }
+  if (totalPupae > 0) {
+    pests.add(PestModel(
+      id: '${weekDoc.id}_pupae',
+      fieldId: cycleId,
+      fieldName: fieldName,
+      name: 'FAW Pupae',
+      severity: _severityFromCount(totalPupae),
+      detectedAt: detectedAt,
+      isActive: true,
+    ));
+  }
+  return pests;
+}
+
+String _severityFromCount(int count) {
+  if (count == 0) return 'low';
+  if (count <= 5) return 'low';
+  if (count <= 20) return 'moderate';
+  return 'high';
+}
+
+
   // ----- (Optional) NET INCOME if you have expenses collection -----
   // Stream<double> getNetIncome() { ... }
 }
@@ -320,7 +431,7 @@ class HomeDashboard extends StatelessWidget {
                       return _buildMetricCard(
                         title: "TOTAL YIELD",
                         value: totalYield.toStringAsFixed(1),
-                        unit: "kg",
+                        unit: "tons",
                         icon: Icons.agriculture_rounded,
                         bgColor: const Color(0xFFC5E1A5),
                         textColor: darkGreen,
@@ -371,24 +482,24 @@ class HomeDashboard extends StatelessWidget {
 
             // ----- Active Pests Section -----
             Text(
-              "Active Pests",
+              "FAW Assessment",
               style: GoogleFonts.epilogue(
                   fontSize: 28, fontWeight: FontWeight.w800, color: headingBlack),
             ),
             Text(
-              "Critical monitoring required",
+              "FAW Life Stages",
               style: GoogleFonts.manrope(
                   fontSize: 16, color: textGray, fontWeight: FontWeight.w500),
             ),
             const SizedBox(height: 24),
             StreamBuilder<List<PestModel>>(
-              stream: service.getActivePests(),
+              stream: service.getPestsFromScouting(),
               builder: (ctx, snapshot) {
                 final pests = snapshot.data ?? [];
                 if (pests.isEmpty) {
                   return const Padding(
                     padding: EdgeInsets.symmetric(vertical: 20),
-                    child: Text("No active pest alerts"),
+                    child: Text("No pests detected in recent scouting"),
                   );
                 }
                 return Column(

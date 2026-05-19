@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:visaia/screens/logging_screens/assign_pest_detected.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:convert';
+import 'package:flutter_markdown/flutter_markdown.dart';
 
 class AIResultScreen extends StatelessWidget {
   final String pestName;
@@ -617,14 +618,14 @@ class AIResultScreen extends StatelessWidget {
             icon: Icons.analytics_rounded,
             iconBg: _lightGreen,
             iconColor: _green,
-            title: 'AI Analysis',
+            title: 'Analysis based on FAW Guidelines',
           ),
           const SizedBox(height: 16),
-          RichText(
-            text: _parseBoldText(analysis),
-            textAlign: TextAlign.left,
-            softWrap: true,
-          ),
+          MarkdownBody(
+            data: analysis,
+            styleSheet: _markdownStyleSheet(isDark: false),
+            selectable: true,
+          )
         ],
       ),
     );
@@ -673,9 +674,10 @@ class AIResultScreen extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 16),
-          RichText(
-            text: _parseBoldText(treatment, onDark: true),
-            softWrap: true,
+          MarkdownBody(
+            data: treatment,
+            styleSheet: _markdownStyleSheet(isDark: true),
+            selectable: true,
           ),
           const SizedBox(height: 20),
           GestureDetector(
@@ -929,43 +931,30 @@ class AIResultScreen extends StatelessWidget {
     );
   }
 
-  TextSpan _parseBoldText(String text, {bool onDark = false}) {
-    final Color normal = onDark
-        ? Colors.white.withOpacity(0.7)
-        : _bodyText;
-    final Color bold = onDark ? Colors.white : _green;
+  MarkdownStyleSheet _markdownStyleSheet({required bool isDark}) {
+    final baseTextStyle = GoogleFonts.manrope(fontSize: 13, height: 1.65);
+    final bodyColor = isDark ? Colors.white.withOpacity(0.7) : _bodyText;
+    final headingColor = isDark ? Colors.white : _darkGreen;
 
-    final List<TextSpan> spans = [];
-    final RegExp boldRegex = RegExp(r'\*\*(.+?)\*\*');
-    int lastIndex = 0;
-
-    for (final match in boldRegex.allMatches(text)) {
-      if (match.start > lastIndex) {
-        spans.add(TextSpan(
-          text: text.substring(lastIndex, match.start),
-          style: GoogleFonts.manrope(
-              fontSize: 13, height: 1.65, color: normal),
-        ));
-      }
-      spans.add(TextSpan(
-        text: match.group(1),
-        style: GoogleFonts.manrope(
-          fontSize: 13,
-          height: 1.65,
-          fontWeight: FontWeight.w700,
-          color: bold,
-        ),
-      ));
-      lastIndex = match.end;
-    }
-
-    if (lastIndex < text.length) {
-      spans.add(TextSpan(
-        text: text.substring(lastIndex),
-        style: GoogleFonts.manrope(fontSize: 13, height: 1.65, color: normal),
-      ));
-    }
-
-    return TextSpan(children: spans);
+    return MarkdownStyleSheet(
+      p: baseTextStyle.copyWith(color: bodyColor),
+      h1: GoogleFonts.manrope(fontSize: 20, fontWeight: FontWeight.w800, color: headingColor, height: 1.3),
+      h2: GoogleFonts.manrope(fontSize: 18, fontWeight: FontWeight.w700, color: headingColor, height: 1.3),
+      h3: GoogleFonts.manrope(fontSize: 16, fontWeight: FontWeight.w700, color: headingColor, height: 1.35),
+      h4: GoogleFonts.manrope(fontSize: 15, fontWeight: FontWeight.w700, color: headingColor, height: 1.4),
+      strong: GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w800, color: isDark ? _accentGreen : _green),
+      em: GoogleFonts.manrope(fontSize: 13, fontStyle: FontStyle.italic, color: bodyColor),
+      listBullet: baseTextStyle.copyWith(color: bodyColor),
+      blockquote: baseTextStyle.copyWith(  // ✅ fixed: blockquote (lowercase 'q')
+        color: isDark ? Colors.white70 : const Color(0xFF6B4F12),
+        fontSize: 13,
+        fontWeight: FontWeight.w500,
+      ),
+      blockquoteDecoration: BoxDecoration(  // ✅ fixed: blockquoteDecoration (lowercase 'q')
+        border: Border(left: BorderSide(color: isDark ? _accentGreen : const Color(0xFFF59E0B), width: 4)),
+        color: isDark ? Colors.white.withOpacity(0.05) : const Color(0xFFFFFBF0),
+      ),
+      code: GoogleFonts.manrope(fontSize: 12, color: Colors.blue.shade300, backgroundColor: Colors.black12),
+    );
   }
 }

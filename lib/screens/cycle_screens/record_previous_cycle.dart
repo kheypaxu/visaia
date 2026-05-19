@@ -1,7 +1,36 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
-import 'package:visaia/screens/map/location_picker.dart';
+import 'package:provider/provider.dart';
+import 'package:visaia/core/providers/farm_provider.dart';
+import 'package:visaia/screens/onboarding/farm_area_setup.dart';
+
+class FarmModel {
+  final String id;
+  final String name;
+  final String? address;
+  final double? latitude;
+  final double? longitude;
+
+  FarmModel({
+    required this.id,
+    required this.name,
+    this.address,
+    this.latitude,
+    this.longitude,
+  });
+
+  factory FarmModel.fromFirestore(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    return FarmModel(
+      id: doc.id,
+      name: data['name'] ?? 'Unnamed Farm',
+      address: data['address'],
+      latitude: (data['latitude'] as num?)?.toDouble(),
+      longitude: (data['longitude'] as num?)?.toDouble(),
+    );
+  }
+}
 
 class RecordCycleScreen extends StatefulWidget {
   final String userId;
@@ -29,11 +58,6 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
   final TextEditingController _locationController = TextEditingController();
   final TextEditingController _areaController = TextEditingController();
   
-  // Location data
-  String _selectedLocation = '';
-  double? _latitude;
-  double? _longitude;
-  
   // Date controllers
   DateTime? _plantingDate;
   DateTime? _harvestDate;
@@ -58,7 +82,6 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
   static const Color surfaceGrey = Color(0xFFF1F4F2);
   static const Color textPrimary = Color(0xFF1A1C1E);
   static const Color textSecondary = Color(0xFF44474E);
-  static const Color accentLightGreen = Color(0xFFA6F78E);
 
   @override
   void initState() {
@@ -125,26 +148,6 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
     }
   }
 
-  Future<void> _openLocationPicker() async {
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (context) => LocationPickerModal(
-        initialLocation: _selectedLocation,
-        initialLatitude: _latitude,
-        initialLongitude: _longitude,
-      ),
-    );
-    
-    if (result != null && mounted) {
-      setState(() {
-        _selectedLocation = result['location'] ?? '';
-        _latitude = result['latitude'];
-        _longitude = result['longitude'];
-        _locationController.text = _selectedLocation;
-      });
-    }
-  }
-
   String _generateCycleName() {
     if (_cycleNameController.text.isNotEmpty) {
       return _cycleNameController.text;
@@ -157,82 +160,80 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
     return '$crop Cycle $year';
   }
 
-  Future<void> _savePreviousCycle() async {
-    // Validate form
-    if (!_formKey.currentState!.validate()) {
-      return;
-    }
-    
-    if (_plantingDate == null) {
-      _showSnackbar('Please select planting date');
-      return;
-    }
-    
-    if (_harvestDate == null) {
-      _showSnackbar('Please select harvest date');
-      return;
-    }
-    
-    if (_harvestDate!.isBefore(_plantingDate!)) {
-      _showSnackbar('Harvest date must be after planting date');
-      return;
-    }
-    
-    if (_selectedLocation.isEmpty) {
-      _showSnackbar('Please select a location');
-      return;
-    }
+Future<void> _savePreviousCycle() async {
+  if (!_formKey.currentState!.validate()) return;
 
-    setState(() => _isSaving = true);
+  final farmProvider = context.read<FarmProvider>();
+  final activeFarmId = farmProvider.activeFarmId;
+  final activeFarmName = farmProvider.activeFarmName;
 
-    try {
-      final cycleName = _generateCycleName();
-      
-      final cycleData = {
-        'cycleName': cycleName,
-        'customName': _cycleNameController.text.isNotEmpty ? _cycleNameController.text : null,
-        'cropType': _cropTypeController.text,
-        'fieldName': _selectedLocation,
-        'area': double.tryParse(_areaController.text) ?? 0.0,
-        'cropVariety': _varietyController.text,
-        'plantingDate': Timestamp.fromDate(_plantingDate!),
-        'harvestDate': Timestamp.fromDate(_harvestDate!),
-        'isCompleted': true,
-        'isPreviousCycle': true,
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-        'totalYield': _totalYield,
-        'pestLoss': _pestLoss,
-        'otherLoss': _otherLoss,
-        'grossIncome': _grossIncome,
-        'netIncome': _calculatedNetIncome,
-        'status': 'completed',
-        'location': _selectedLocation,
-        'latitude': _latitude,
-        'longitude': _longitude,
-      };
-
-      // Add to Firestore
-      final docRef = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.userId)
-          .collection('cycles')
-          .add(cycleData);
-      
-      // Also create a completed weeks document for the cycle
-      await _createCompletedWeekData(docRef.id);
-      
-      if (mounted) {
-        _showSnackbar('Previous cycle "$cycleName" recorded successfully!', isError: false);
-        Navigator.pop(context, true);
-      }
-    } catch (e) {
-      _showSnackbar('Error saving cycle: $e');
-      debugPrint('Error saving cycle: $e');
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
-    }
+  if (activeFarmId == null || activeFarmName == null) {
+    _showSnackbar('No active farm selected. Please set up a farm first.');
+    return;
   }
+
+  if (_plantingDate == null) {
+    _showSnackbar('Please select planting date');
+    return;
+  }
+
+  if (_harvestDate == null) {
+    _showSnackbar('Please select harvest date');
+    return;
+  }
+
+  if (_harvestDate!.isBefore(_plantingDate!)) {
+    _showSnackbar('Harvest date must be after planting date');
+    return;
+  }
+
+  setState(() => _isSaving = true);
+
+  try {
+    final cycleName = _generateCycleName();
+
+    final cycleData = {
+      'cycleName': cycleName,
+      'customName': _cycleNameController.text.isNotEmpty ? _cycleNameController.text : null,
+      'cropType': _cropTypeController.text,
+      'area': double.tryParse(_areaController.text) ?? 0.0,
+      'cropVariety': _varietyController.text,
+      'plantingDate': Timestamp.fromDate(_plantingDate!),
+      'harvestDate': Timestamp.fromDate(_harvestDate!),
+      'isCompleted': true,
+      'isPreviousCycle': true,
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+      'totalYield': _totalYield,
+      'pestLoss': _pestLoss,
+      'otherLoss': _otherLoss,
+      'grossIncome': _grossIncome,
+      'netIncome': _calculatedNetIncome,
+      'status': 'completed',
+      'farmId': activeFarmId,
+      'farmName': activeFarmName,
+      // Optional: you can also fetch farm address/coordinates from Firestore if needed
+    };
+
+    final docRef = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(widget.userId)
+        .collection('cycles')
+        .add(cycleData);
+
+    await _createCompletedWeekData(docRef.id);
+
+    if (mounted) {
+      _showSnackbar('Previous cycle "$cycleName" recorded successfully!', isError: false);
+      Navigator.pop(context, true);
+    }
+  } catch (e) {
+    _showSnackbar('Error saving cycle: $e');
+    debugPrint('Error saving cycle: $e');
+  } finally {
+    if (mounted) setState(() => _isSaving = false);
+  }
+}
 
   Future<void> _createCompletedWeekData(String cycleId) async {
     try {
@@ -389,7 +390,7 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
       children: [
         _buildCycleNameInput(),
         const SizedBox(height: 16),
-        _buildLocationCard(),
+        _buildCurrentFarmCard(),
         const SizedBox(height: 16),
         _buildInfoTile('CROP TYPE', _cropTypeController, Icons.spa_outlined, 
             hint: 'e.g., Corn, Rice, Wheat', 
@@ -464,7 +465,12 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
     );
   }
 
-  Widget _buildLocationCard() {
+Widget _buildCurrentFarmCard() {
+  final farmProvider = context.watch<FarmProvider>();
+  final activeFarmId = farmProvider.activeFarmId;
+  final activeFarmName = farmProvider.activeFarmName;
+
+  if (activeFarmId == null) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -472,48 +478,62 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
         borderRadius: BorderRadius.circular(28),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('LOCATION CONTEXT', 
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: primaryGreen, letterSpacing: 0.5)),
-          const SizedBox(height: 16),
-          GestureDetector(
-            onTap: _openLocationPicker,
-            child: Row(
-              children: [
-                const CircleAvatar(
-                  backgroundColor: accentLightGreen,
-                  child: Icon(Icons.map_outlined, color: primaryGreen),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _selectedLocation.isEmpty ? 'Tap to select location' : _selectedLocation,
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                          color: _selectedLocation.isEmpty ? textSecondary : textPrimary,
-                        ),
-                      ),
-                      if (_latitude != null && _longitude != null)
-                        Text(
-                          'Lat: ${_latitude!.toStringAsFixed(6)}, Lng: ${_longitude!.toStringAsFixed(6)}',
-                          style: const TextStyle(color: textSecondary, fontSize: 12),
-                        ),
-                    ],
-                  ),
-                ),
-                const Icon(Icons.chevron_right, color: primaryGreen),
-              ],
-            ),
+          const Icon(Icons.error_outline, color: Colors.red, size: 40),
+          const SizedBox(height: 12),
+          const Text('No active farm selected.'),
+          const SizedBox(height: 12),
+          ElevatedButton(
+            onPressed: () {
+              // Optionally navigate to farm setup
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => FarmAreaSetup(onFinished: () {})),
+              );
+            },
+            child: const Text('Go to Farms'),
           ),
         ],
       ),
     );
   }
+
+  return Container(
+    padding: const EdgeInsets.all(20),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(28),
+    ),
+    child: Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFFA6F78E), // accentLightGreen
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: const Icon(Icons.agriculture, color: primaryGreen),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('ACTIVE FARM',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: primaryGreen)),
+              const SizedBox(height: 4),
+              Text(
+                activeFarmName!,
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+        ),
+        const Icon(Icons.check_circle, color: primaryGreen),
+      ],
+    ),
+  );
+}
 
   Widget _buildAreaInput() {
     return Container(
@@ -709,12 +729,11 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
       height: 56,
       child: ElevatedButton(
         onPressed: () {
-          if (_formKey.currentState!.validate() && _selectedLocation.isNotEmpty) {
+          final farmProvider = context.read<FarmProvider>();
+          if (_formKey.currentState!.validate() && farmProvider.activeFarmId != null) {
             setState(() => _isCycleInfo = false);
           } else {
-            if (_selectedLocation.isEmpty) {
-              _showSnackbar('Please select a location');
-            }
+            _showSnackbar('No active farm. Please set up a farm first.');
           }
         },
         style: ElevatedButton.styleFrom(
