@@ -273,14 +273,12 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
           SnackBar(
             content: Text('Added 1 ${widget.detectedStage} to Station $_selectedStation'),
             backgroundColor: _green,
+            duration: const Duration(seconds: 1),
           ),
         );
-        // Pop back to dashboard
-        // Stack: RootLayout -> UploadPest -> AIResult -> AssignPest
-        // Pop 3 times to get back to RootLayout
-        Navigator.pop(context); // AssignPest -> AIResult
-        Navigator.pop(context); // AIResult -> UploadPest
-        Navigator.pop(context); // UploadPest -> RootLayout
+
+        // Return the cycleId to AIResultScreen and close only this screen
+        Navigator.pop(context, _selectedCycleId);
       }
     } catch (e) {
       print('❌ Error saving pest record: $e');

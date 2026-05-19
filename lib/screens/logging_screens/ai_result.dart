@@ -6,7 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:convert';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
-class AIResultScreen extends StatelessWidget {
+class AIResultScreen extends StatefulWidget {
   final String pestName;
   final String scientificName;
   final String severity;
@@ -42,6 +42,14 @@ class AIResultScreen extends StatelessWidget {
     this.areaName,
   });
 
+  @override
+  State<AIResultScreen> createState() => _AIResultScreenState();
+}
+
+class _AIResultScreenState extends State<AIResultScreen> {
+  // ── State variable for assigned cycle ─────────────────────────────────────
+  String? _assignedCycleId;
+
   // ── Palette ──────────────────────────────────────────────────────────────
   static const _bg = Color(0xFFF2F6F3);
   static const _darkGreen = Color(0xFF0C3D28);
@@ -55,7 +63,7 @@ class AIResultScreen extends StatelessWidget {
 
   // ── Severity helpers ─────────────────────────────────────────────────────
   Color get _severityColor {
-    final s = severity.toUpperCase();
+    final s = widget.severity.toUpperCase();
     if (s.contains('HIGH') || s.contains('CRITICAL')) return const Color(0xFFD32F2F);
     if (s.contains('MEDIUM') || s.contains('MOD')) return const Color(0xFFF57C00);
     return const Color(0xFF2E7D32);
@@ -64,7 +72,7 @@ class AIResultScreen extends StatelessWidget {
   Color get _severityBg => _severityColor.withOpacity(0.09);
 
   IconData get _severityIcon {
-    final s = severity.toUpperCase();
+    final s = widget.severity.toUpperCase();
     if (s.contains('HIGH') || s.contains('CRITICAL')) return Icons.warning_amber_rounded;
     if (s.contains('MEDIUM') || s.contains('MOD')) return Icons.info_outline_rounded;
     return Icons.check_circle_outline_rounded;
@@ -72,6 +80,30 @@ class AIResultScreen extends StatelessWidget {
 
   // ── Save to Firestore ─────────────────────────────────────────────────────
   Future<void> _saveToReports(BuildContext context) async {
+    // Check if cycle has been assigned
+    if (_assignedCycleId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.error_outline, color: Colors.white, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Please assign this detection to a farming cycle before saving.',
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+      return;
+    }
+
     try {
       // Show loading indicator
       showDialog(
@@ -87,33 +119,34 @@ class AIResultScreen extends StatelessWidget {
       String? base64Image;
       
       // Convert image file to base64 if available
-      if (imageFile != null) {
-        final bytes = await imageFile!.readAsBytes();
-        final base64String = base64Encode(bytes);  // ✅ correct encoding
+      if (widget.imageFile != null) {
+        final bytes = await widget.imageFile!.readAsBytes();
+        final base64String = base64Encode(bytes);
         base64Image = 'data:image/jpeg;base64,$base64String';
       }
 
       // Prepare report data matching your Firestore structure
       final reportData = {
-        'detection': pestName,
-        'scientificName': scientificName,
-        'lifeStage': detectionStage.toLowerCase(),
-        'confidence': confidencePercent / 100, // Store as decimal (0-1)
+        'detection': widget.pestName,
+        'scientificName': widget.scientificName,
+        'lifeStage': widget.detectionStage.toLowerCase(),
+        'confidence': widget.confidencePercent / 100, // Store as decimal (0-1)
         'risk': _getRiskLevel(),
-        'cropAffected': cropAffected,
-        'analysis': analysis,
-        'treatment': treatment,
-        'historicalContext': historicalContext,
+        'cropAffected': widget.cropAffected,
+        'analysis': widget.analysis,
+        'treatment': widget.treatment,
+        'historicalContext': widget.historicalContext,
         'imageBase64': base64Image,
-        'annotatedImageUrl': annotatedImageUrl,
-        'farmerId': userId,
+        'annotatedImageUrl': widget.annotatedImageUrl,
+        'farmerId': widget.userId,
         'farmerName': await _getFarmerName(),
+        'cycleId': _assignedCycleId,
         'status': 'pending', // Default status
         'timestamp': FieldValue.serverTimestamp(),
         'location': {
-          'lat': latitude ?? 0.0,
-          'lng': longitude ?? 0.0,
-          'areaName': areaName ?? 'Unknown Area',
+          'lat': widget.latitude ?? 0.0,
+          'lng': widget.longitude ?? 0.0,
+          'areaName': widget.areaName ?? 'Unknown Area',
         },
       };
 
@@ -178,7 +211,7 @@ class AIResultScreen extends StatelessWidget {
   }
 
   String _getRiskLevel() {
-    final s = severity.toUpperCase();
+    final s = widget.severity.toUpperCase();
     if (s.contains('HIGH') || s.contains('CRITICAL')) return 'High';
     if (s.contains('MEDIUM') || s.contains('MOD')) return 'Medium';
     return 'Low';
@@ -187,13 +220,13 @@ class AIResultScreen extends StatelessWidget {
   Future<String> _getFarmerName() async {
     try {
       final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(userId)
+          .collection('farmers')
+          .doc(widget.userId)
           .get();
       
       if (userDoc.exists) {
         final data = userDoc.data();
-        return data?['name'] ?? data?['displayName'] ?? 'Unknown Farmer';
+        return data?['name'] ?? data?['fullName'] ?? 'Unknown Farmer';
       }
       return 'Unknown Farmer';
     } catch (e) {
@@ -297,14 +330,14 @@ class AIResultScreen extends StatelessWidget {
           fit: StackFit.expand,
           children: [
             // Hero image
-            if (annotatedImageUrl != null)
+            if (widget.annotatedImageUrl != null)
               Image.network(
-                annotatedImageUrl!,
+                widget.annotatedImageUrl!,
                 fit: BoxFit.cover,
                 errorBuilder: (_, __, ___) => _imageFallback(),
               )
-            else if (imageFile != null)
-              Image.file(imageFile!, fit: BoxFit.cover)
+            else if (widget.imageFile != null)
+              Image.file(widget.imageFile!, fit: BoxFit.cover)
             else
               _imageFallback(),
 
@@ -333,13 +366,13 @@ class AIResultScreen extends StatelessWidget {
                 children: [
                   _heroPill(
                     icon: _severityIcon,
-                    label: severity,
+                    label: widget.severity,
                     color: _severityColor,
                   ),
                   const SizedBox(width: 8),
                   _heroPill(
                     icon: Icons.verified_rounded,
-                    label: '$confidencePercent% match',
+                    label: '${widget.confidencePercent}% match',
                     color: _accentGreen,
                   ),
                 ],
@@ -417,7 +450,7 @@ class AIResultScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      pestName,
+                      widget.pestName,
                       style: GoogleFonts.manrope(
                         fontSize: 24,
                         fontWeight: FontWeight.w800,
@@ -428,7 +461,7 @@ class AIResultScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      scientificName,
+                      widget.scientificName,
                       style: GoogleFonts.manrope(
                         fontSize: 13,
                         fontStyle: FontStyle.italic,
@@ -449,7 +482,7 @@ class AIResultScreen extends StatelessWidget {
                 child: Column(
                   children: [
                     Text(
-                      '$confidencePercent%',
+                      '${widget.confidencePercent}%',
                       style: GoogleFonts.manrope(
                         fontSize: 20,
                         fontWeight: FontWeight.w800,
@@ -479,7 +512,7 @@ class AIResultScreen extends StatelessWidget {
                 child: _infoCell(
                   icon: Icons.biotech_rounded,
                   label: 'LIFE STAGE',
-                  value: detectionStage,
+                  value: widget.detectionStage,
                 ),
               ),
               Container(width: 1, height: 40, color: _border),
@@ -487,7 +520,7 @@ class AIResultScreen extends StatelessWidget {
                 child: _infoCell(
                   icon: Icons.grass_rounded,
                   label: 'CROP',
-                  value: cropAffected,
+                  value: widget.cropAffected,
                   alignment: CrossAxisAlignment.end,
                 ),
               ),
@@ -557,7 +590,7 @@ class AIResultScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Risk Level: $severity',
+                  'Risk Level: ${widget.severity}',
                   style: GoogleFonts.manrope(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
@@ -582,7 +615,7 @@ class AIResultScreen extends StatelessWidget {
               border: Border.all(color: _severityColor.withOpacity(0.3)),
             ),
             child: Text(
-              severity.toUpperCase(),
+              widget.severity.toUpperCase(),
               style: GoogleFonts.manrope(
                 fontSize: 10,
                 fontWeight: FontWeight.w800,
@@ -597,7 +630,7 @@ class AIResultScreen extends StatelessWidget {
   }
 
   String get _severitySubtext {
-    final s = severity.toUpperCase();
+    final s = widget.severity.toUpperCase();
     if (s.contains('HIGH') || s.contains('CRITICAL'))
       return 'Immediate action recommended';
     if (s.contains('MEDIUM') || s.contains('MOD'))
@@ -622,7 +655,7 @@ class AIResultScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           MarkdownBody(
-            data: analysis,
+            data: widget.analysis,
             styleSheet: _markdownStyleSheet(isDark: false),
             selectable: true,
           )
@@ -675,7 +708,7 @@ class AIResultScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           MarkdownBody(
-            data: treatment,
+            data: widget.treatment,
             styleSheet: _markdownStyleSheet(isDark: true),
             selectable: true,
           ),
@@ -751,7 +784,7 @@ class AIResultScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 5),
                 Text(
-                  historicalContext,
+                  widget.historicalContext,
                   style: GoogleFonts.manrope(
                     fontSize: 13,
                     color: const Color(0xFF6B4F12),
@@ -806,18 +839,52 @@ class AIResultScreen extends StatelessWidget {
             Expanded(
               flex: 2,
               child: GestureDetector(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => AssignPestScreen(
-                        userId: userId,
-                        pestName: pestName,
-                        detectedStage: detectionStage.toLowerCase(),
-                        imagePath: imageFile?.path,
-                      ),
-                    ),
-                  );
+                onTap: () async {
+                      final returnedId = await Navigator.push<String>(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => AssignPestScreen(
+                            userId: widget.userId,
+                            pestName: widget.pestName,
+                            detectedStage: widget.detectionStage.toLowerCase(),
+                            imagePath: widget.imageFile?.path,
+                          ),
+                        ),
+                      );
+
+                      if (returnedId != null && returnedId.isNotEmpty) {
+                        setState(() {
+                          _assignedCycleId = returnedId;
+                        });
+                        
+                        // ✅ Automatically save the report now
+                        await _saveToReports(context);
+
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Row(
+                            children: [
+                              const Icon(Icons.check_circle,
+                                  color: Colors.white, size: 20),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  'Farming cycle assigned successfully!',
+                                  style: const TextStyle(fontSize: 13),
+                                ),
+                              ),
+                            ],
+                          ),
+                          backgroundColor: _green,
+                          behavior: SnackBarBehavior.floating,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
+                    }
+                  }
                 },
                 child: Container(
                   padding: const EdgeInsets.symmetric(vertical: 15),
@@ -839,7 +906,9 @@ class AIResultScreen extends StatelessWidget {
                           color: Colors.white, size: 16),
                       const SizedBox(width: 7),
                       Text(
-                        'Assign to Cycle',
+                        _assignedCycleId != null
+                            ? 'Cycle Assigned ✓'
+                            : 'Assign to Cycle',
                         style: GoogleFonts.manrope(
                           color: Colors.white,
                           fontWeight: FontWeight.w700,
@@ -854,26 +923,67 @@ class AIResultScreen extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 12),
-        // Save Report Button
+        // Save Report Button — disabled if no cycle assigned
         GestureDetector(
-          onTap: () => _saveToReports(context),
-          child: Container(
+          onTap: _assignedCycleId == null
+              ? () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Row(
+                        children: [
+                          const Icon(Icons.info_outline,
+                              color: Colors.white, size: 20),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'Please assign this detection to a farming cycle first.',
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          ),
+                        ],
+                      ),
+                      backgroundColor: Colors.orange.shade700,
+                      behavior: SnackBarBehavior.floating,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                  );
+                }
+              : () => _saveToReports(context),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
             padding: const EdgeInsets.symmetric(vertical: 15),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: _assignedCycleId == null
+                  ? Colors.grey.shade100
+                  : Colors.white,
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: _accentGreen, width: 1.5),
+              border: Border.all(
+                color: _assignedCycleId == null
+                    ? Colors.grey.shade300
+                    : _accentGreen,
+                width: 1.5,
+              ),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.cloud_upload_outlined,
-                    color: Color(0xFF1A5C30), size: 18),
+                Icon(
+                  Icons.cloud_upload_outlined,
+                  color: _assignedCycleId == null
+                      ? Colors.grey.shade400
+                      : const Color(0xFF1A5C30),
+                  size: 18,
+                ),
                 const SizedBox(width: 8),
                 Text(
-                  'Monitor Report for Risk Map',
+                  _assignedCycleId == null
+                      ? 'Assign a Cycle to Enable Report Saving'
+                      : 'Monitor Report for Risk Map',
                   style: GoogleFonts.manrope(
-                    color: _green,
+                    color: _assignedCycleId == null
+                        ? Colors.grey.shade400
+                        : _green,
                     fontWeight: FontWeight.w700,
                     fontSize: 14,
                   ),
@@ -945,12 +1055,12 @@ class AIResultScreen extends StatelessWidget {
       strong: GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w800, color: isDark ? _accentGreen : _green),
       em: GoogleFonts.manrope(fontSize: 13, fontStyle: FontStyle.italic, color: bodyColor),
       listBullet: baseTextStyle.copyWith(color: bodyColor),
-      blockquote: baseTextStyle.copyWith(  // ✅ fixed: blockquote (lowercase 'q')
+      blockquote: baseTextStyle.copyWith(
         color: isDark ? Colors.white70 : const Color(0xFF6B4F12),
         fontSize: 13,
         fontWeight: FontWeight.w500,
       ),
-      blockquoteDecoration: BoxDecoration(  // ✅ fixed: blockquoteDecoration (lowercase 'q')
+      blockquoteDecoration: BoxDecoration(
         border: Border(left: BorderSide(color: isDark ? _accentGreen : const Color(0xFFF59E0B), width: 4)),
         color: isDark ? Colors.white.withOpacity(0.05) : const Color(0xFFFFFBF0),
       ),

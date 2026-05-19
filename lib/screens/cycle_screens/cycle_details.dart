@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:visaia/screens/monitoring_screens/monitoring.dart';
 import 'package:visaia/screens/logging_screens/harvest_recording.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 
 class CycleDetailsScreen extends StatefulWidget {
   final String cycleId;
@@ -79,6 +80,189 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
         _isLoading = false;
       });
     }
+  }
+
+  Future<List<QueryDocumentSnapshot>> _fetchReports() async {
+    // Fetch all reports for this farmer (default index exists on 'farmerId')
+    final snapshot = await FirebaseFirestore.instance
+        .collection('reports')
+        .where('farmerId', isEqualTo: widget.uid)
+        .get();
+
+    // Filter by cycleId and sort in memory (no extra index needed)
+    final filtered = snapshot.docs
+        .where((doc) => doc.get('cycleId') == widget.cycleId)
+        .toList();
+
+    // Sort by timestamp descending (most recent first)
+    filtered.sort((a, b) {
+      final aTime = (a.data()['timestamp'] as Timestamp?)?.toDate() ?? DateTime(0);
+      final bTime = (b.data()['timestamp'] as Timestamp?)?.toDate() ?? DateTime(0);
+      return bTime.compareTo(aTime);
+    });
+
+    return filtered;
+  }
+  
+  List<String> _extractRecommendations(List<QueryDocumentSnapshot> reports) {
+    final List<String> recs = [];
+    for (final doc in reports) {
+      final data = doc.data() as Map<String, dynamic>;
+      final analysis = data['analysis'] as String?;
+      final treatment = data['treatment'] as String?;
+      final detection = data['detection'] as String?;
+      final risk = data['risk'] as String?;
+
+      if (analysis != null && analysis.isNotEmpty) {
+        recs.add(analysis);
+      } else if (treatment != null && treatment.isNotEmpty) {
+        recs.add(treatment);
+      } else {
+        recs.add('${detection ?? 'Pest'} detected. Risk: ${risk ?? 'unknown'}.');
+      }
+    }
+    return recs;
+  }
+
+  Widget _buildRecommendationsSection() {
+    return FutureBuilder<List<QueryDocumentSnapshot>>(
+      future: _fetchReports(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const SizedBox(
+            height: 80,
+            child: Center(
+              child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF1B5E37)),
+            ),
+          );
+        }
+        if (snapshot.hasError) {
+          return Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.error_outline, color: Colors.grey.shade500),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Could not load recommendations: ${snapshot.error}',
+                    style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+        final reports = snapshot.data!;
+        final recommendations = _extractRecommendations(reports);
+
+        if (recommendations.isEmpty) {
+          return Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.lightbulb_outline, color: Colors.grey.shade400),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'No reports available yet. Recommendations will appear once pest/disease reports are recorded.',
+                    style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        return Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: ExpansionTile(
+            leading: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF0C002).withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.lightbulb_outline, size: 18, color: Color(0xFFD4A002)),
+            ),
+            title: const Text(
+              'Recommendations',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+            subtitle: Text(
+              '${recommendations.length} actionable ${recommendations.length == 1 ? 'insight' : 'insights'}',
+              style: TextStyle(fontSize: 12, color: const Color(0xFF5E6266).withValues(alpha: 0.7)),
+            ),
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: recommendations.asMap().entries.map((entry) {
+                    final index = entry.key;
+                    final rec = entry.value;
+                    return Padding(
+                      padding: EdgeInsets.only(bottom: index == recommendations.length - 1 ? 0 : 16),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            margin: const EdgeInsets.only(top: 4),
+                            width: 6,
+                            height: 6,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF1B5E37),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: MarkdownBody(
+                              data: rec,
+                              styleSheet: MarkdownStyleSheet(
+                                p: const TextStyle(fontSize: 14, height: 1.4, color: Color(0xFF2D3132)),
+                                strong: const TextStyle(fontWeight: FontWeight.w800, color: Color(0xFF1B5E37)),
+                                em: const TextStyle(fontStyle: FontStyle.italic),
+                                listBullet: const TextStyle(fontSize: 14, height: 1.4, color: Color(0xFF2D3132)),
+                                blockquote: const TextStyle(fontSize: 13, color: Color(0xFF6B6B6B), fontStyle: FontStyle.italic),
+                                blockquoteDecoration: BoxDecoration(
+                                  border: Border(left: BorderSide(color: const Color(0xFF1B5E37).withValues(alpha: 0.4), width: 3)),
+                                  color: const Color(0xFFF7F8F5),
+                                ),
+                              ),
+                              selectable: true,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   int get _totalDays {
@@ -261,6 +445,8 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
                       _buildActionButtons(context),
                       const SizedBox(height: 16),
                       _buildRiskAlert(),
+                      const SizedBox(height: 16),
+                      _buildRecommendationsSection(),
                       const SizedBox(height: 16),
                       _buildMapPreview(),
                       const SizedBox(height: 16),
@@ -537,73 +723,10 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
             }
           },
         ),
-        const SizedBox(height: 10),
-        GestureDetector(
-          onTap: () {
-            // TODO: Navigate to recommendations
-          },
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(
-                horizontal: 16, vertical: 14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                  color:
-                      const Color(0xFFF0C002).withValues(alpha: 0.3)),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.03),
-                  blurRadius: 4,
-                  offset: const Offset(0, 1),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color:
-                        const Color(0xFFF0C002).withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(Icons.lightbulb_outline,
-                      size: 18, color: Color(0xFFD4A002)),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Recommendations',
-                          style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF1A1C1E))),
-                      Text(
-                        'Suggested actions for this cycle',
-                        style: TextStyle(
-                            fontSize: 12,
-                            color: const Color(0xFF5E6266)
-                                .withValues(alpha: 0.7)),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(Icons.arrow_forward_ios_rounded,
-                    size: 14,
-                    color: const Color(0xFF5E6266)
-                        .withValues(alpha: 0.4)),
-              ],
-            ),
-          ),
-        ),
       ],
     );
   }
+
 
   Widget _buildActionButton({
     required IconData icon,

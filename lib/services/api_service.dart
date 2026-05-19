@@ -195,7 +195,7 @@ class ApiService {
   // Helper method to get scientific name based on pest name
   static String _getScientificNameForPest(String pestName) {
     final pestMap = {
-      'Fall Armyworm': 'Spodoptera frugiperda',
+      'Fall Army Worm': 'Spodoptera frugiperda',
       'African Armyworm': 'Spodoptera exempta',
       'Corn Earworm': 'Helicoverpa zea',
       'European Corn Borer': 'Ostrinia nubilalis',
