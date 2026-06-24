@@ -46,6 +46,122 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
   }
 
+  void _showLogoutDialog() {
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+      ),
+      title: Row(
+        children: [
+          Icon(Icons.logout_rounded, color: const Color(0xFFD32F2F), size: 28),
+          const SizedBox(width: 12),
+          Text(
+            'Logout',
+            style: GoogleFonts.epilogue(
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+              color: const Color(0xFFD32F2F),
+            ),
+          ),
+        ],
+      ),
+      content: Text(
+        'Are you sure you want to logout?',
+        style: GoogleFonts.manrope(
+          fontSize: 16,
+          color: ProfileScreen.textGray,
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(
+            'Cancel',
+            style: GoogleFonts.manrope(
+              fontWeight: FontWeight.w600,
+              color: ProfileScreen.textGray,
+            ),
+          ),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            Navigator.pop(context); // Close dialog
+            _logout();
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFFD32F2F),
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          ),
+          child: Text(
+            'Logout',
+            style: GoogleFonts.manrope(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+Future<void> _logout() async {
+  try {
+    // Show loading indicator
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    // Sign out from Firebase
+    await _auth.signOut();
+    
+    // Close the loading dialog
+    if (mounted) {
+      Navigator.pop(context);
+    }
+
+    // Navigate to login screen
+    if (mounted) {
+      // You need to replace this with your actual login screen route
+      // Navigator.pushAndRemoveUntil(
+      //   context,
+      //   MaterialPageRoute(builder: (context) => const LoginScreen()),
+      //   (route) => false,
+      // );
+      
+      // For now, just pop back to previous screen
+      Navigator.pop(context);
+    }
+  } catch (e) {
+    // Close loading dialog if open
+    if (mounted) {
+      Navigator.pop(context); // Close loading dialog
+    }
+    
+    // Show error message
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error logging out: $e'),
+          backgroundColor: const Color(0xFFD32F2F),
+        ),
+      );
+    }
+  }
+}
+
   void _addFarm() async {
     await Navigator.push(
       context,
@@ -532,7 +648,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 icon: Icons.logout_rounded,
                 title: 'Logout',
                 isDestructive: true,
-                onTap: () {},
+                onTap: _showLogoutDialog,
               ),
             ],
           ),

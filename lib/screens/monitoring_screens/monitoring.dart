@@ -78,25 +78,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   DateTime? _plantingDate;
   DateTime? _harvestDate;
 
-  // Add this method to check if traps are installed
-  Future<bool> _areTrapsInstalled() async {
-    try {
-      final cycleDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(_userId)
-          .collection('cycles')
-          .doc(widget.cycleId)
-          .get();
-      
-      if (!cycleDoc.exists) return false;
-      
-      final cycleData = cycleDoc.data()!;
-      return cycleData['trapsInstalled'] == true;
-    } catch (e) {
-      return false;
-    }
-  }
-
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();

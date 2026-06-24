@@ -31,7 +31,6 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen>
   // Color constants
   static const _forestGreen = Color(0xFF1B3015);
   static const _cream = Color(0xFFF8F5EF);
-  static const _gold = Color(0xFFC8A84B);
 
   @override
   Widget build(BuildContext context) {
