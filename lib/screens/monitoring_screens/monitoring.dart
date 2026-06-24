@@ -6,11 +6,16 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:visaia/screens/cycle_screens/completed_cycle_details.dart';
 import 'package:visaia/widgets/success_modal.dart';
 import 'package:visaia/services/firestore_service.dart';
 import 'package:visaia/screens/logging_screens/daily_log_screen.dart';
 import 'package:visaia/screens/logging_screens/analyzing.dart';
 import 'package:visaia/screens/logging_screens/pest_verification.dart';
+import 'package:flutter/gestures.dart';
+import 'package:visaia/screens/logging_screens/field_scouting_demo.dart';
+import 'package:visaia/screens/logging_screens/trap_lists.dart';
+import 'package:visaia/screens/logging_screens/trap_guide.dart';
 
 // ==========================================
 // BRAND COLORS
@@ -40,6 +45,11 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   late final MonitoringFirestoreService _firestoreService;
   late final String _userId;
   Timer? _autoSaveTimer;
+  bool _isCalculatingThreshold = false;
+  String? _selectedControlMethod;
+  bool _wasThresholdTriggered = false;
+  Map<String, dynamic>? _pendingChemicalRecommendation;
+  bool _trapsInstalled = false;
 
   @override
   void initState() {
@@ -67,6 +77,34 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   String _fieldName = '';
   DateTime? _plantingDate;
   DateTime? _harvestDate;
+
+  // Add this method to check if traps are installed
+  Future<bool> _areTrapsInstalled() async {
+    try {
+      final cycleDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(_userId)
+          .collection('cycles')
+          .doc(widget.cycleId)
+          .get();
+      
+      if (!cycleDoc.exists) return false;
+      
+      final cycleData = cycleDoc.data()!;
+      return cycleData['trapsInstalled'] == true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Refresh daily log when returning from child screens
+    if (!_isInitialLoading) {
+      _loadDailyLogData(_dailySelectedDay);
+    }
+  }
 
   // Computed dates
   int get _totalDays =>
@@ -551,6 +589,135 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     _scheduleAutoSave();
   }
 
+Future<void> _checkThresholdAfterCompletion() async {
+  setState(() {
+    _isCalculatingThreshold = true;
+    _wasThresholdTriggered = true; // Mark that threshold was triggered
+  });
+  
+  // Simulate a short loading animation (500ms)
+  await Future.delayed(const Duration(milliseconds: 500));
+  
+  // Calculate totals
+  int totalDamaged = 0;
+  int totalInspected = 0;
+  for (var station in _stationData) {
+    totalDamaged += station['damaged'] as int? ?? 0;
+    totalInspected += station['plantsInspected'] as int? ?? 0;
+  }
+  
+  setState(() => _isCalculatingThreshold = false);
+  
+  // Avoid division by zero
+  double damagePercent = (totalInspected > 0) ? (totalDamaged / totalInspected) * 100 : 0.0;
+  
+  if (damagePercent >= 10.0) {
+    _showControlMethodModalWithResult(damagePercent, totalDamaged, totalInspected);
+  } else {
+    _showSafeModal(damagePercent, totalDamaged, totalInspected);
+    _wasThresholdTriggered = false; // Reset if no threshold
+  }
+}
+
+void _showControlMethodModalWithResult(double percent, int damaged, int inspected) {
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      title: Row(
+        children: [
+          Icon(Icons.warning_amber_rounded, color: kAccentRed, size: 28),
+          const SizedBox(width: 10),
+          const Text('Action Required', style: TextStyle(fontWeight: FontWeight.bold)),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Damage threshold exceeded!',
+            style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w700, color: kAccentRed),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Damaged plants: $damaged out of $inspected inspected (${percent.toStringAsFixed(1)}%).',
+            style: GoogleFonts.inter(fontSize: 14),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Immediate control measures are strongly recommended to prevent yield loss.',
+            style: GoogleFonts.inter(fontSize: 13, color: kTextGrey),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            'Select a control method:',
+            style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Later', style: TextStyle(color: kTextGrey)),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            Navigator.pop(context);
+            setState(() => _showControlModal = true);
+          },
+          style: ElevatedButton.styleFrom(backgroundColor: kWhite),
+          child: const Text('View Control Methods'),
+        ),
+      ],
+    ),
+  );
+}
+
+void _showSafeModal(double percent, int damaged, int inspected) {
+  showDialog(
+    context: context,
+    barrierDismissible: true,
+    builder: (context) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      title: Row(
+        children: [
+          Icon(Icons.check_circle, color: kActionGreen, size: 28),
+          const SizedBox(width: 10),
+          const Text('All Good!', style: TextStyle(fontWeight: FontWeight.bold)),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Damage is under control.',
+            style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w700, color: kActionGreen),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Damaged plants: $damaged out of $inspected inspected (${percent.toStringAsFixed(1)}%).',
+            style: GoogleFonts.inter(fontSize: 14),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'No immediate control action required. Continue monitoring as usual.',
+            style: GoogleFonts.inter(fontSize: 13, color: kTextGrey),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('OK', style: TextStyle(color: kActionGreen, fontWeight: FontWeight.bold)),
+        ),
+      ],
+    ),
+  );
+}
+
   void _completeStationItem(int index) {
     if (_isCurrentWeekLocked) return;
     
@@ -576,6 +743,13 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
       _expandedStationIndex = -1;
     });
     _scheduleAutoSave();
+    
+    // Check if all stations are now completed
+    final totalStations = _stationData.length;
+    final completedCount = _stationData.where((s) => s['completed'] as bool? ?? false).length;
+    if (completedCount == totalStations && totalStations > 0) {
+      _checkThresholdAfterCompletion();
+    }
   }
 
   // ========================
@@ -613,6 +787,8 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
         return;
       }
 
+      final controlMethod = cycle['controlMethod'] as String?;
+
       setState(() {
         _plantingDate = planting;
         _harvestDate = harvest;
@@ -623,6 +799,8 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
           _selectedWeek * 7,
           ((_selectedWeek * 7 + 6).clamp(0, _totalDays - 1)),
         );
+        _selectedControlMethod = controlMethod;
+        _trapsInstalled = cycle['trapsInstalled'] == true;
       });
 
       await _loadWeekData(_selectedWeek);
@@ -817,6 +995,75 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     }
   }
 
+  Future<void> _logChemicalApplicationToDailyLog(Map<String, dynamic> task) async {
+  try {
+    final dayId = 'day_${(_dailySelectedDay + 1).toString().padLeft(2, '0')}';
+    final chemicalName = task['title'] ?? 'Chemical Application';
+    final details = task['details'] ?? task['description'] ?? '';
+    
+    // Create a log entry in daily log
+    final docRef = FirebaseFirestore.instance
+        .collection('users')
+        .doc(_userId)
+        .collection('cycles')
+        .doc(widget.cycleId)
+        .collection('dailyLogs')
+        .doc(dayId)
+        .collection('activities')
+        .doc();
+    
+    await docRef.set({
+      'type': 'Chemical Application: $chemicalName',
+      'notes': details,
+      'images': [],
+      'completed': true,
+      'completedAt': FieldValue.serverTimestamp(),
+      'timestamp': FieldValue.serverTimestamp(),
+      'isChemicalApplication': true,
+      'chemicalName': chemicalName,
+    });
+    
+    // Update Firestore cycle with chemical application record
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(_userId)
+        .collection('cycles')
+        .doc(widget.cycleId)
+        .collection('chemicalApplications')
+        .add({
+      'chemicalName': chemicalName,
+      'weekApplied': _selectedWeek + 1,
+      'dayApplied': _dailySelectedDay + 1,
+      'stage': task['stage'] ?? 'Unknown',
+      'appliedAt': FieldValue.serverTimestamp(),
+    });
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('✅ $chemicalName logged to daily activities'),
+          backgroundColor: kActionGreen,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+    
+    // Refresh daily log
+    await _loadDailyLogData(_dailySelectedDay);
+    
+  } catch (e) {
+    debugPrint('Error logging chemical application: $e');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to log chemical application: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+}
+
 
   // ========================
   // BUILD
@@ -865,8 +1112,32 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
               buttonText: 'Back to Monitoring',
               onClose: () => setState(() => _showSuccessModal = false),
             ),
+            if (_isCalculatingThreshold)
+            Container(
+              color: Colors.black.withOpacity(0.5),
+              child: const Center(
+                child: Card(
+                  elevation: 8,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(20))),
+                  child: Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(color: kActionGreen),
+                        SizedBox(height: 16),
+                        Text(
+                          'Analyzing field data...',
+                          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
-      ),
+      )
     );
   }
 
@@ -909,7 +1180,12 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          const Icon(Icons.arrow_back, color: kTextDark),
+          GestureDetector(
+            onTap: () {
+              Navigator.pop(context);
+            },
+          child: const Icon(Icons.arrow_back, color: kTextDark),
+          ),
           Expanded(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -933,69 +1209,603 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   // ========================
   // CONTROL METHODS CARD
   // ========================
-  Widget _buildControlMethodsCard() {
-    return GestureDetector(
-      onTap: () => setState(() => _showControlModal = true),
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 20),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: kBorderColor.withValues(alpha: 0.8)),
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withValues(alpha: 0.02), blurRadius: 10)
-          ],
+Widget _buildControlMethodsCard() {
+  bool isBiological = _selectedControlMethod == "biological";
+  bool isChemical = _selectedControlMethod == "chemical";
+
+  // Chemical Control Card
+  if (isChemical) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFC62828).withValues(alpha: 0.3)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 10
+          )
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 4,
+            height: 40,
+            decoration: const BoxDecoration(
+              color: Color(0xFFC62828),
+              borderRadius: BorderRadius.all(Radius.circular(2))
+            )
+          ),
+          const SizedBox(width: 12),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFEBEE),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.science, color: Color(0xFFC62828), size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Chemical Control Active',
+                  style: GoogleFonts.inter(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    color: const Color(0xFFC62828),
+                  )
+                ),
+                RichText(
+                  text: TextSpan(
+                    style: GoogleFonts.inter(fontSize: 11, color: kTextGrey),
+                    children: [
+                      const TextSpan(text: 'Using chemical control - '),
+                      TextSpan(
+                        text: 'View options',
+                        style: const TextStyle(
+                          color: Color(0xFFC62828),
+                          decoration: TextDecoration.underline,
+                        ),
+                        recognizer: TapGestureRecognizer()
+                          ..onTap = () => _showChemicalInfoDialog(),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          GestureDetector(
+            onTap: () => _showChemicalInfoDialog(),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFEBEE),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFFC62828), width: 1),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Info',
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFFC62828),
+                    ),
+                  ),
+                  const Icon(Icons.arrow_forward, color: Color(0xFFC62828), size: 16),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+// Biological Control Card
+if (isBiological) {
+  // Check if traps are installed
+  bool trapsInstalled = _trapsInstalled;
+  
+  return GestureDetector(
+    onTap: () async {
+      if (trapsInstalled) {
+        // View existing traps - navigate to review screen
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => TrapSetupScreen(
+              cycleId: widget.cycleId,
+              userId: _userId,
+              initialStep: 2, // Start at review step (Step 3)
+              viewOnly: true, // View only mode
+            ),
+          ),
+        );
+      } else {
+        // Install new traps - start from step 1
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => TrapSetupScreen(
+              cycleId: widget.cycleId,
+              userId: _userId,
+              initialStep: 0, // Start from Step 1
+            ),
+          ),
+        );
+      }
+      // Refresh daily log after returning
+      await _loadDailyLogData(_dailySelectedDay);
+      // Refresh traps installed status
+      final cycleDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(_userId)
+          .collection('cycles')
+          .doc(widget.cycleId)
+          .get();
+      if (cycleDoc.exists) {
+        setState(() {
+          _trapsInstalled = cycleDoc.data()?['trapsInstalled'] == true;
+        });
+      }
+    },
+    child: Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: trapsInstalled 
+              ? const Color(0xFF2E7D32).withValues(alpha: 0.3)
+              : const Color(0xFF2E7D32).withValues(alpha: 0.3),
+          width: 2,
         ),
-        child: Row(
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02), 
+            blurRadius: 10
+          )
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 4,
+            height: 40,
+            decoration: BoxDecoration(
+              color: trapsInstalled 
+                  ? const Color(0xFF0F5234)
+                  : const Color(0xFF2E7D32),
+              borderRadius: const BorderRadius.all(Radius.circular(2))
+            )
+          ),
+          const SizedBox(width: 12),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: trapsInstalled 
+                  ? const Color(0xFFE8F5E9)
+                  : const Color(0xFFE8F5E9),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              trapsInstalled ? Icons.visibility : Icons.ads_click, 
+              color: const Color(0xFF2E7D32), 
+              size: 20
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  trapsInstalled ? 'View Traps' : 'Install Traps?',
+                  style: GoogleFonts.inter(
+                    fontWeight: FontWeight.w600, 
+                    fontSize: 14,
+                    color: const Color(0xFF2E7D32)
+                  )
+                ),
+                RichText(
+                  text: TextSpan(
+                    style: GoogleFonts.inter(fontSize: 11, color: kTextGrey),
+                    children: [
+                      TextSpan(
+                        text: trapsInstalled 
+                            ? '${_trapsInstalled ? 'View existing traps' : 'No traps installed'}. '
+                            : 'Track potential outbreaks. '
+                      ),
+                      TextSpan(
+                        text: trapsInstalled ? 'Manage traps?' : 'Know more?',
+                        style: const TextStyle(
+                          color: Color.fromARGB(255, 120, 168, 64),
+                          decoration: TextDecoration.underline,
+                        ),
+                        recognizer: TapGestureRecognizer()
+                          ..onTap = () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const TrapGuideScreen(),
+                              ),
+                            );
+                          },
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Icon(
+            trapsInstalled ? Icons.arrow_forward : Icons.arrow_forward,
+            color: const Color(0xFF2E7D32), 
+            size: 22
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+  // Default Control Methods Card (no selection yet)
+  return GestureDetector(
+    onTap: () => setState(() => _showControlModal = true),
+    child: Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: kBorderColor.withValues(alpha: 0.8)),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.02), blurRadius: 10)
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+              width: 4,
+              height: 40,
+              decoration: const BoxDecoration(
+                  color: kActionGreen,
+                  borderRadius: BorderRadius.all(Radius.circular(2)))),
+          const SizedBox(width: 12),
+          Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                  color: Colors.grey.withValues(alpha: 0.1),
+                  shape: BoxShape.circle),
+              child: const Icon(Icons.bug_report, color: kActionGreen, size: 20)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Control Methods',
+                    style: GoogleFonts.inter(
+                        fontWeight: FontWeight.w600, fontSize: 14)),
+                RichText(
+                  text: TextSpan(
+                    style: GoogleFonts.inter(fontSize: 11, color: kTextGrey),
+                    children: const [
+                      TextSpan(text: 'Track potential outbreaks. '),
+                      TextSpan(
+                          text: 'Know more?',
+                          style: TextStyle(
+                              color: Color.fromARGB(255, 120, 168, 64),
+                              decoration: TextDecoration.underline)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Icon(Icons.arrow_circle_right_outlined,
+              color: kTextGrey, size: 22),
+        ],
+      ),
+    ),
+  );
+}
+
+  Future<void> _selectControlMethod(String method) async {
+  setState(() {
+    _selectedControlMethod = method;
+    _showControlModal = false;
+  });
+
+  try {
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(_userId)
+        .collection('cycles')
+        .doc(widget.cycleId)
+        .update({
+      'controlMethod': method,
+      'controlMethodSelectedAt': FieldValue.serverTimestamp(),
+    });
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            method == 'biological'
+                ? 'Biological control selected. Install traps to start monitoring.'
+                : 'Chemical control selected. Chemical recommendations will appear in your tasks.',
+          ),
+          backgroundColor: method == 'biological' 
+              ? const Color(0xFF2E7D32)
+              : const Color(0xFFC62828),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+
+    // If chemical, add chemical recommendation tasks
+    if (method == 'chemical' && mounted) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      _addChemicalRecommendationsToTasks();
+    }
+  } catch (e) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to save control method: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+}
+
+void _showChemicalInfoDialog() {
+  final recommendation = _getChemicalRecommendation();
+  
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      title: Row(
+        children: [
+          Icon(Icons.science, color: const Color(0xFFC62828), size: 28),
+          const SizedBox(width: 10),
+          const Text('Chemical Control Info', style: TextStyle(fontWeight: FontWeight.bold)),
+        ],
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Container(
-                width: 4,
-                height: 40,
-                decoration: const BoxDecoration(
-                    color: kActionGreen,
-                    borderRadius: BorderRadius.all(Radius.circular(2)))),
-            const SizedBox(width: 12),
-            Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                    color: Colors.grey.withValues(alpha: 0.1),
-                    shape: BoxShape.circle),
-                child:
-                    const Icon(Icons.bug_report, color: kActionGreen, size: 20)),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFEBEE),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
                 children: [
-                  Text('Control Methods',
+                  Icon(Icons.warning_amber_rounded, color: const Color(0xFFC62828), size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Always follow safety guidelines and wear protective equipment.',
                       style: GoogleFonts.inter(
-                          fontWeight: FontWeight.w600, fontSize: 14)),
-                  RichText(
-                    text: TextSpan(
-                      style:
-                          GoogleFonts.inter(fontSize: 11, color: kTextGrey),
-                      children: const [
-                        TextSpan(text: 'Track potential outbreaks. '),
-                        TextSpan(
-                            text: 'Know more?',
-                            style: TextStyle(
-                                color: Color.fromARGB(255, 120, 168, 64),
-                                decoration: TextDecoration.underline)),
-                      ],
+                        fontSize: 12,
+                        color: const Color(0xFFC62828),
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
-            const Icon(Icons.arrow_circle_right_outlined,
-                color: kTextGrey, size: 22),
+            const SizedBox(height: 16),
+            Text(
+              'Current Recommendation:',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF5F5F5),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    recommendation['title'] ?? '',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFFC62828),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    recommendation['description'] ?? '',
+                    style: GoogleFonts.inter(
+                      fontSize: 13,
+                      color: kTextGrey,
+                    ),
+                  ),
+                  if (recommendation['details'] != null) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF3E0),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        recommendation['details']!,
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color: const Color(0xFFE65100),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Chemical Options:',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            ...(recommendation['chemicals'] as List<String>).map((chemical) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  children: [
+                    const Icon(Icons.check_circle, color: Color(0xFFC62828), size: 16),
+                    const SizedBox(width: 8),
+                    Text(
+                      chemical,
+                      style: GoogleFonts.inter(fontSize: 13),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
           ],
         ),
       ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
+        ElevatedButton.icon(
+          onPressed: () {
+            Navigator.pop(context);
+            _addChemicalRecommendationsToTasks();
+          },
+          icon: const Icon(Icons.add_task, color: Colors.white),
+          label: const Text('Add to Tasks'),
+          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFC62828)),
+        ),
+      ],
+    ),
+  );
+}
+
+Map<String, dynamic> _getChemicalRecommendation() {
+  final weekNumber = _selectedWeek + 1;
+  final hasThresholdTriggered = _wasThresholdTriggered;
+  
+  // Analyze pest data
+  bool hasHighEggs = _totalEggs > 5;
+  bool hasHighLarvae = _totalLarvae > 3;
+  bool hasHighMoths = _totalMoths > 2;
+  
+  Map<String, dynamic> recommendation = {};
+  
+  // Determine based on crop stage (from Chemical Agents PDF)
+  if (weekNumber <= 2) {
+    recommendation = {
+      'title': 'Apply Prevathon 5SC or Exalt',
+      'description': 'Early vegetative stage - best for small larvae. Protects emerging growing point.',
+      'chemicals': ['Prevathon 5SC', 'Exalt 60 SC'],
+      'stage': 'Early Vegetative (V1-V5)',
+      'icon': Icons.agriculture,
+    };
+  } else if (weekNumber <= 4) {
+    recommendation = {
+      'title': 'Apply Exalt or Atabron',
+      'description': 'Late vegetative - fast kill (Exalt) or molting prevention (Atabron).',
+      'chemicals': ['Exalt 60 SC', 'Atabron 5E'],
+      'stage': 'Late Vegetative (V6-VT)',
+      'icon': Icons.science,
+    };
+  } else if (weekNumber <= 6) {
+    recommendation = {
+      'title': 'Apply Prevathon',
+      'description': 'Tasseling/Silking stage - safer for pollinators compared to others.',
+      'chemicals': ['Prevathon 5SC'],
+      'stage': 'Tasseling/Silking (VT-R1)',
+      'icon': Icons.eco,
+    };
+  } else {
+    recommendation = {
+      'title': 'Scout & Spot-treat Only',
+      'description': 'Ear stage - observe PHI before harvest. Spot-treat if needed.',
+      'chemicals': ['Prevathon 5SC', 'Atabron 5E'],
+      'stage': 'Ear Stage (R2+)',
+      'icon': Icons.search,
+    };
+  }
+  
+  // Add pest-specific guidance if threshold triggered
+  if (hasThresholdTriggered) {
+    if (hasHighEggs) {
+      recommendation['details'] = '⚠️ High egg masses detected. Consider Atabron (IGR) to prevent larval development.';
+      recommendation['priority'] = 'high';
+    } else if (hasHighLarvae) {
+      recommendation['details'] = '⚠️ Larvae detected. Use Exalt for quick knockdown or Prevathon for residual control.';
+      recommendation['priority'] = 'high';
+    } else if (hasHighMoths) {
+      recommendation['details'] = '⚠️ High moth activity. Apply contact insecticide for immediate control.';
+      recommendation['priority'] = 'medium';
+    } else {
+      recommendation['details'] = '⚠️ Damage threshold exceeded. Apply recommended chemical control immediately.';
+      recommendation['priority'] = 'high';
+    }
+  }
+  
+  return recommendation;
+}
+
+void _addChemicalRecommendationsToTasks() {
+  final recommendation = _getChemicalRecommendation();
+  
+  // Store for use in tasks
+  setState(() {
+    _pendingChemicalRecommendation = recommendation;
+  });
+  
+  // Add as recommended task
+  final weekNumber = _selectedWeek + 1;
+  if (weekNumber <= 8) {
+    // We'll add chemical tasks to the recommended section
+    // This will be handled in _buildRecommendedTasksSection
+    setState(() {});
+  }
+  
+  if (mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Chemical recommendations added to your tasks!'),
+        backgroundColor: const Color(0xFFC62828),
+        duration: const Duration(seconds: 2),
+      ),
     );
   }
+}
 
   // ========================
   // WEEKLY CONTENT (main body — no tabs)
@@ -1226,20 +2036,31 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
           RichText(
             text: TextSpan(
               style: GoogleFonts.inter(fontSize: 12, color: kTextGrey),
-              children: const [
+              children: [
+                const TextSpan(
+                  text: 'Inspect 10 plants per point and record FAW signs\n',
+                ),
+                const TextSpan(
+                  text: 'More info about field scouting? ',
+                  style: TextStyle(color: Color.fromARGB(255, 76, 114, 33)),
+                ),
                 TextSpan(
-                    text:
-                        'Inspect 10 plants per point and record FAW signs\n'),
-                TextSpan(
-                    text: 'More info about field scouting? ',
-                    style: TextStyle(
-                        color: Color.fromARGB(255, 76, 114, 33))),
-                TextSpan(
-                    text: 'Click here.',
-                    style: TextStyle(
-                        color: Color.fromARGB(255, 76, 114, 33),
-                        decoration: TextDecoration.underline,
-                        fontStyle: FontStyle.italic)),
+                  text: 'Click here.',
+                  style: const TextStyle(
+                    color: Color.fromARGB(255, 76, 114, 33),
+                    decoration: TextDecoration.underline,
+                    fontStyle: FontStyle.italic,
+                  ),
+                  recognizer: TapGestureRecognizer()
+                    ..onTap = () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => FieldScoutingScreen(),
+                        ),
+                      );
+                    },
+                ),
               ],
             ),
           ),
@@ -1335,316 +2156,412 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     );
   }
 
+  List<Map<String, dynamic>> _getChemicalTasksForWeek(int weekNumber) {
+  if (_selectedControlMethod != 'chemical') return [];
+  
+  List<Map<String, dynamic>> chemicalTasks = [];
+  
+  // Add chemical recommendation if available
+  if (_pendingChemicalRecommendation != null) {
+    chemicalTasks.add({
+      'title': _pendingChemicalRecommendation!['title'] ?? 'Apply Chemical Control',
+      'description': _pendingChemicalRecommendation!['description'] ?? 'Apply recommended chemical treatment.',
+      'icon': Icons.science,
+      'category': 'Chemical Control',
+      'isChemical': true,
+      'details': _pendingChemicalRecommendation!['details'],
+      'chemicals': _pendingChemicalRecommendation!['chemicals'],
+      'stage': _pendingChemicalRecommendation!['stage'],
+    });
+  }
+  
+  return chemicalTasks;
+}
+
   // ========================
   // RECOMMENDED TASKS SECTION
   // ========================
-  Widget _buildRecommendedTasksSection() {
-    // Only show for weeks 1–8
-    final weekNumber = _selectedWeek + 1;
-    if (weekNumber > 8) return const SizedBox.shrink();
+Widget _buildRecommendedTasksSection() {
+  final weekNumber = _selectedWeek + 1;
+  if (weekNumber > 8) return const SizedBox.shrink();
 
-    final tasks = _weeklyRecommendedTasks[weekNumber] ?? [];
-    final stateMap = _recommendedTaskState[_selectedWeek] ?? {};
+  // Get regular recommended tasks
+  final regularTasks = _weeklyRecommendedTasks[weekNumber] ?? [];
+  
+  // Get chemical tasks (if chemical control is selected)
+  final chemicalTasks = _getChemicalTasksForWeek(weekNumber);
+  
+  // Combine tasks
+  final allTasks = [...regularTasks, ...chemicalTasks];
+  
+  final stateMap = _recommendedTaskState[_selectedWeek] ?? {};
 
-    // Separate into active and completed (not deleted)
-    final activeTasks = <MapEntry<int, Map<String, dynamic>>>[];
-    final completedTasks = <MapEntry<int, Map<String, dynamic>>>[];
+  // Separate into active and completed (not deleted)
+  final activeTasks = <MapEntry<int, Map<String, dynamic>>>[];
+  final completedTasks = <MapEntry<int, Map<String, dynamic>>>[];
 
-    for (int i = 0; i < tasks.length; i++) {
-      final status = stateMap[i];
-      if (status == 'deleted') continue;
-      if (status == 'completed') {
-        completedTasks.add(MapEntry(i, tasks[i]));
-      } else {
-        activeTasks.add(MapEntry(i, tasks[i]));
-      }
+  for (int i = 0; i < allTasks.length; i++) {
+    final status = stateMap[i];
+    if (status == 'deleted') continue;
+    if (status == 'completed') {
+      completedTasks.add(MapEntry(i, allTasks[i]));
+    } else {
+      activeTasks.add(MapEntry(i, allTasks[i]));
     }
+  }
 
-    final visibleCount = activeTasks.length + completedTasks.length;
-    if (visibleCount == 0) return const SizedBox.shrink();
+  final visibleCount = activeTasks.length + completedTasks.length;
+  if (visibleCount == 0) return const SizedBox.shrink();
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Header
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      // Header
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Row(
+          children: [
+            Container(
+              width: 3,
+              height: 18,
+              decoration: BoxDecoration(
+                color: _selectedControlMethod == 'chemical' 
+                    ? const Color(0xFFC62828)
+                    : const Color(0xFFF9A825),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              _selectedControlMethod == 'chemical'
+                  ? 'Chemical Control Tasks'
+                  : 'Recommended for Week $weekNumber',
+              style: GoogleFonts.inter(
+                fontWeight: FontWeight.w700,
+                fontSize: 15,
+                color: _selectedControlMethod == 'chemical'
+                    ? const Color(0xFFC62828)
+                    : kTextDark,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: _selectedControlMethod == 'chemical'
+                    ? const Color(0xFFFFEBEE)
+                    : const Color(0xFFFFF8E1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                '${completedTasks.length}/${visibleCount}',
+                style: GoogleFonts.inter(
+                  fontSize: 11,
+                  color: _selectedControlMethod == 'chemical'
+                      ? const Color(0xFFC62828)
+                      : const Color(0xFFF57F17),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 4),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Text(
+          _selectedControlMethod == 'chemical'
+              ? 'System-recommended chemical applications based on current crop stage'
+              : 'System recommendations — mark done or remove as needed',
+          style: GoogleFonts.inter(fontSize: 12, color: kTextGrey),
+        ),
+      ),
+      const SizedBox(height: 12),
+
+      // Active recommended tasks
+      if (activeTasks.isNotEmpty)
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: Row(
+          child: Column(
+            children: activeTasks.map((entry) {
+              final isChemical = entry.value['isChemical'] == true;
+              return _buildRecommendedTaskCard(
+                taskIndex: entry.key,
+                task: entry.value,
+                isCompleted: false,
+                isChemical: isChemical,
+              );
+            }).toList(),
+          ),
+        ),
+
+      // Completed recommended tasks
+      if (completedTasks.isNotEmpty) ...[
+        const SizedBox(height: 4),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Column(
+            children: completedTasks.map((entry) {
+              final isChemical = entry.value['isChemical'] == true;
+              return _buildRecommendedTaskCard(
+                taskIndex: entry.key,
+                task: entry.value,
+                isCompleted: true,
+                isChemical: isChemical,
+              );
+            }).toList(),
+          ),
+        ),
+      ],
+
+      const SizedBox(height: 20),
+    ],
+  );
+}
+
+Widget _buildRecommendedTaskCard({
+  required int taskIndex,
+  required Map<String, dynamic> task,
+  required bool isCompleted,
+  bool isChemical = false, // Add this parameter
+}) {
+  final isChemicalTask = isChemical || task['isChemical'] == true;
+  
+  return AnimatedContainer(
+    duration: const Duration(milliseconds: 250),
+    margin: const EdgeInsets.only(bottom: 10),
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+    decoration: BoxDecoration(
+      color: isCompleted
+          ? const Color(0xFFF9FDF9)
+          : Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(
+        color: isCompleted
+            ? const Color(0xFFE8F5E9)
+            : isChemicalTask
+                ? const Color(0xFFFFCDD2)
+                : const Color(0xFFFFF9C4),
+        width: isChemicalTask ? 2 : 1.5,
+      ),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Icon badge
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: isCompleted
+                ? const Color(0xFFE8F5E9)
+                : isChemicalTask
+                    ? const Color(0xFFFFEBEE)
+                    : const Color(0xFFFFFDE7),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(
+            isChemicalTask ? Icons.science : (task['icon'] as IconData? ?? Icons.task),
+            color: isCompleted
+                ? const Color(0xFF2E7D32)
+                : isChemicalTask
+                    ? const Color(0xFFC62828)
+                    : const Color(0xFFF9A825),
+            size: 18,
+          ),
+        ),
+        const SizedBox(width: 12),
+
+        // Text
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 3,
-                height: 18,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF9A825),
-                  borderRadius: BorderRadius.circular(2),
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      task['title'] as String,
+                      style: GoogleFonts.inter(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                        color: isCompleted
+                            ? kTextDark.withValues(alpha: 0.5)
+                            : isChemicalTask
+                                ? const Color(0xFFC62828)
+                                : kTextDark,
+                        decoration: isCompleted
+                            ? TextDecoration.lineThrough
+                            : TextDecoration.none,
+                      ),
+                    ),
+                  ),
+                  // Category chip
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 7, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: isCompleted
+                          ? const Color(0xFFE8F5E9)
+                          : isChemicalTask
+                              ? const Color(0xFFFFEBEE)
+                              : kLightGreenBg,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      task['category'] as String? ?? 
+                          (isChemicalTask ? 'Chemical Control' : 'General'),
+                      style: GoogleFonts.inter(
+                        fontSize: 9,
+                        color: isCompleted
+                            ? const Color(0xFF2E7D32).withValues(alpha: 0.6)
+                            : isChemicalTask
+                                ? const Color(0xFFC62828)
+                                : kActionGreen,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 10),
-              Text(
-                'Recommended for Week $weekNumber',
-                style: GoogleFonts.inter(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 15,
-                  color: kTextDark,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF8E1),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  '${completedTasks.length}/${visibleCount}',
+              if (!isCompleted) ...[
+                const SizedBox(height: 4),
+                Text(
+                  task['description'] as String,
                   style: GoogleFonts.inter(
-                    fontSize: 11,
-                    color: const Color(0xFFF57F17),
-                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                    color: kTextGrey,
+                    height: 1.4,
                   ),
                 ),
+                // Show chemical details if available
+                if (isChemicalTask && task['details'] != null) ...[
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF3E0),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      task['details']!,
+                      style: GoogleFonts.inter(
+                        fontSize: 11,
+                        color: const Color(0xFFE65100),
+                      ),
+                    ),
+                  ),
+                ],
+                if (isChemicalTask && task['chemicals'] != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'Options: ${(task['chemicals'] as List).join(', ')}',
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
+                      color: const Color(0xFFC62828),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ],
+              const SizedBox(height: 10),
+
+              // Action buttons
+              Row(
+                children: [
+                  // Mark complete / Undo button
+                  GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _recommendedTaskState[_selectedWeek] ??= {};
+                        _recommendedTaskState[_selectedWeek]![taskIndex] =
+                            isCompleted ? 'active' : 'completed';
+                      });
+                      // If chemical task completed, log it to daily log
+                      if (!isCompleted && isChemicalTask) {
+                        _logChemicalApplicationToDailyLog(task);
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: isCompleted
+                            ? Colors.grey.shade200
+                            : isChemicalTask
+                                ? const Color(0xFFC62828)
+                                : kActionGreen,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            isCompleted
+                                ? Icons.refresh
+                                : Icons.check_circle_outline,
+                            color: isCompleted ? kTextGrey : Colors.white,
+                            size: 13,
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            isCompleted ? 'Undo' : 'Apply & Complete',
+                            style: GoogleFonts.inter(
+                              color: isCompleted ? kTextGrey : Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+
+                  // Delete button
+                  GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _recommendedTaskState[_selectedWeek] ??= {};
+                        _recommendedTaskState[_selectedWeek]![taskIndex] =
+                            'deleted';
+                      });
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFEBEE),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.delete_outline,
+                              color: kAccentRed, size: 13),
+                          const SizedBox(width: 5),
+                          Text(
+                            'Remove',
+                            style: GoogleFonts.inter(
+                              color: kAccentRed,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
         ),
-        const SizedBox(height: 4),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: Text(
-            'System recommendations — mark done or remove as needed',
-            style: GoogleFonts.inter(fontSize: 12, color: kTextGrey),
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        // Active recommended tasks
-        if (activeTasks.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Column(
-              children: activeTasks.map((entry) {
-                return _buildRecommendedTaskCard(
-                  taskIndex: entry.key,
-                  task: entry.value,
-                  isCompleted: false,
-                );
-              }).toList(),
-            ),
-          ),
-
-        // Completed recommended tasks (collapsible feel — shown below)
-        if (completedTasks.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Column(
-              children: completedTasks.map((entry) {
-                return _buildRecommendedTaskCard(
-                  taskIndex: entry.key,
-                  task: entry.value,
-                  isCompleted: true,
-                );
-              }).toList(),
-            ),
-          ),
-        ],
-
-        const SizedBox(height: 20),
       ],
-    );
-  }
-
-  Widget _buildRecommendedTaskCard({
-    required int taskIndex,
-    required Map<String, dynamic> task,
-    required bool isCompleted,
-  }) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 250),
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-      decoration: BoxDecoration(
-        color: isCompleted
-            ? const Color(0xFFF9FDF9)
-            : Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: isCompleted
-              ? const Color(0xFFE8F5E9)
-              : const Color(0xFFFFF9C4),
-          width: 1.5,
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Icon badge
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: isCompleted
-                  ? const Color(0xFFE8F5E9)
-                  : const Color(0xFFFFFDE7),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(
-              task['icon'] as IconData,
-              color: isCompleted
-                  ? const Color(0xFF2E7D32)
-                  : const Color(0xFFF9A825),
-              size: 18,
-            ),
-          ),
-          const SizedBox(width: 12),
-
-          // Text
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        task['title'] as String,
-                        style: GoogleFonts.inter(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                          color: isCompleted
-                              ? kTextDark.withValues(alpha: 0.5)
-                              : kTextDark,
-                          decoration: isCompleted
-                              ? TextDecoration.lineThrough
-                              : TextDecoration.none,
-                        ),
-                      ),
-                    ),
-                    // Category chip
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 7, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: isCompleted
-                            ? const Color(0xFFE8F5E9)
-                            : kLightGreenBg,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        task['category'] as String,
-                        style: GoogleFonts.inter(
-                          fontSize: 9,
-                          color: isCompleted
-                              ? const Color(0xFF2E7D32).withValues(alpha: 0.6)
-                              : kActionGreen,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                if (!isCompleted) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    task['description'] as String,
-                    style: GoogleFonts.inter(
-                      fontSize: 12,
-                      color: kTextGrey,
-                      height: 1.4,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 10),
-
-                // Action buttons
-                Row(
-                  children: [
-                    // Mark complete / Undo button
-                    GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _recommendedTaskState[_selectedWeek] ??= {};
-                          _recommendedTaskState[_selectedWeek]![taskIndex] =
-                              isCompleted ? 'active' : 'completed';
-                        });
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: isCompleted
-                              ? Colors.grey.shade200
-                              : kActionGreen,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              isCompleted
-                                  ? Icons.refresh
-                                  : Icons.check_circle_outline,
-                              color: isCompleted ? kTextGrey : Colors.white,
-                              size: 13,
-                            ),
-                            const SizedBox(width: 5),
-                            Text(
-                              isCompleted ? 'Undo' : 'Mark Done',
-                              style: GoogleFonts.inter(
-                                color: isCompleted ? kTextGrey : Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-
-                    // Delete button
-                    GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _recommendedTaskState[_selectedWeek] ??= {};
-                          _recommendedTaskState[_selectedWeek]![taskIndex] =
-                              'deleted';
-                        });
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFFEBEE),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.delete_outline,
-                                color: kAccentRed, size: 13),
-                            const SizedBox(width: 5),
-                            Text(
-                              'Remove',
-                              style: GoogleFonts.inter(
-                                color: kAccentRed,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+    ),
+  );
+}
 
   // ========================
   // DAILY ACTIVITY SECTION (integrated within weekly view)
@@ -2800,24 +3717,31 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Choose Your Control Method',
-                style:
-                    GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w700)),
+                style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
             Text(
                 'Explore detailed steps for each management strategy based on environmental impact.',
                 style: GoogleFonts.inter(fontSize: 14, color: kTextGrey)),
             const SizedBox(height: 24),
-            _modalOption(
-                Icons.bug_report,
-                'Biological Control',
-                'Utilize natural predators and parasitoids to manage pests with zero chemical footprint.',
-                true),
+            GestureDetector(
+              onTap: () => _selectControlMethod('biological'),
+              child: _modalOption(
+                  Icons.bug_report,
+                  'Biological Control',
+                  'Utilize natural predators and parasitoids to manage pests with zero chemical footprint.',
+                  false,
+                  const Color(0xFF2E7D32)),
+            ),
             const SizedBox(height: 16),
-            _modalOption(
-                Icons.science_outlined,
-                'Chemical Control',
-                'Targeted synthetic applications. Recommended only as a last resort for acute infestations.',
-                false),
+            GestureDetector(
+              onTap: () => _selectControlMethod('chemical'),
+              child: _modalOption(
+                  Icons.science_outlined,
+                  'Chemical Control',
+                  'Targeted synthetic applications. Recommended only as a last resort for acute infestations.',
+                  true,
+                  const Color(0xFFC62828)),
+            ),
             const SizedBox(height: 32),
             Center(
               child: InkWell(
@@ -2838,7 +3762,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   }
 
   Widget _modalOption(
-      IconData icon, String title, String desc, bool rec) {
+      IconData icon, String title, String desc, bool rec, Color accentColor) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -2853,9 +3777,9 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
           children: [
             Row(children: [
               CircleAvatar(
-                  backgroundColor: kLightGreenBg,
+                  backgroundColor: accentColor.withValues(alpha: 0.1),
                   radius: 18,
-                  child: Icon(icon, color: kActionGreen, size: 20)),
+                  child: Icon(icon, color: accentColor, size: 20)),
               const SizedBox(width: 12),
               Text(title,
                   style: const TextStyle(
@@ -2866,9 +3790,9 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                        color: kActionGreen,
+                        color: accentColor,
                         borderRadius: BorderRadius.circular(8)),
-                    child: const Text('RECOMMENDED',
+                    child: Text('RECOMMENDED',
                         style: TextStyle(
                             color: Colors.white,
                             fontSize: 8,

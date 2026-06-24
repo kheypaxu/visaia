@@ -57,7 +57,7 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
   final TextEditingController _varietyController = TextEditingController();
   final TextEditingController _locationController = TextEditingController();
   final TextEditingController _areaController = TextEditingController();
-  
+
   // Date controllers
   DateTime? _plantingDate;
   DateTime? _harvestDate;
@@ -90,24 +90,28 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
   }
 
   void _addListeners() {
-    _totalYieldController.addListener(_calculateNetIncome);
+    _totalYieldController.addListener(_updateTotalYield);  
     _pestLossController.addListener(_calculateNetIncome);
     _otherLossController.addListener(_calculateNetIncome);
     _grossIncomeController.addListener(_calculateNetIncome);
   }
 
   void _calculateNetIncome() {
-    _totalYield = double.tryParse(_totalYieldController.text) ?? 0.0;
+    _grossIncome = double.tryParse(_grossIncomeController.text) ?? 0.0;
     _pestLoss = double.tryParse(_pestLossController.text) ?? 0.0;
     _otherLoss = double.tryParse(_otherLossController.text) ?? 0.0;
-    _grossIncome = double.tryParse(_grossIncomeController.text) ?? 0.0;
     
-    final totalLossValue = (_totalYield * (_pestLoss / 100)) + _otherLoss;
-    _calculatedNetIncome = _grossIncome - totalLossValue;
+    // Net income = Gross income - total monetary losses
+    _calculatedNetIncome = _grossIncome - _pestLoss - _otherLoss;
     
     if (mounted) {
       setState(() {});
     }
+  }
+
+  void _updateTotalYield() {
+    _totalYield = double.tryParse(_totalYieldController.text) ?? 0.0;
+    if (mounted) setState(() {});
   }
 
   @override
@@ -184,6 +188,11 @@ Future<void> _savePreviousCycle() async {
 
   if (_harvestDate!.isBefore(_plantingDate!)) {
     _showSnackbar('Harvest date must be after planting date');
+    return;
+  }
+  
+  if (_totalYield <= 0) {
+    _showSnackbar('Please enter a valid total yield');
     return;
   }
 
@@ -788,9 +797,9 @@ Widget _buildCurrentFarmCard() {
             ],
           ),
           const SizedBox(height: 20),
-          const Text('TOTAL YIELD (Tons)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+          const Text('TOTAL YIELD (kilogram)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          _buildInputBox(_totalYieldController, 'tons', 
+          _buildInputBox(_totalYieldController, 'kg', 
               hint: 'Enter total harvest yield',
               validator: (value) {
                 if (value == null || value.isEmpty) {
@@ -804,11 +813,13 @@ Widget _buildCurrentFarmCard() {
           const SizedBox(height: 20),
           Row(
             children: [
-              Expanded(child: _buildColumnInput('PEST LOSS (%)', _pestLossController, 
-                  hint: 'Percentage of yield lost to pests')),
+              Expanded(child: _buildColumnInput('PEST LOSS (₱)', _pestLossController, 
+                  hint: 'Monetary loss due to pests',
+                  keyboardType: TextInputType.number)),
               const SizedBox(width: 16),
-              Expanded(child: _buildColumnInput('OTHER LOSS (Tons)', _otherLossController,
-                  hint: 'Loss due to other factors')),
+              Expanded(child: _buildColumnInput('OTHER LOSS (₱)', _otherLossController,
+                  hint: 'Monetary loss due to other factors',
+                  keyboardType: TextInputType.number)),
             ],
           )
         ],
@@ -896,7 +907,8 @@ Widget _buildCurrentFarmCard() {
     );
   }
 
-  Widget _buildColumnInput(String label, TextEditingController controller, {String? hint}) {
+  Widget _buildColumnInput(String label, TextEditingController controller, 
+      {String? hint, TextInputType? keyboardType}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -908,7 +920,7 @@ Widget _buildCurrentFarmCard() {
           decoration: BoxDecoration(color: surfaceGrey, borderRadius: BorderRadius.circular(8)),
           child: TextFormField(
             controller: controller,
-            keyboardType: TextInputType.number,
+            keyboardType: keyboardType ?? TextInputType.number,
             style: const TextStyle(fontSize: 18, color: textSecondary),
             decoration: InputDecoration(
               hintText: hint ?? '0',
@@ -917,6 +929,12 @@ Widget _buildCurrentFarmCard() {
               isDense: true,
               contentPadding: EdgeInsets.zero,
             ),
+            validator: (value) {
+              if (value != null && value.isNotEmpty && double.tryParse(value) == null) {
+                return 'Enter a valid number';
+              }
+              return null;
+            },
           ),
         ),
       ],

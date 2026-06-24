@@ -83,45 +83,86 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
   }
 
   Future<List<QueryDocumentSnapshot>> _fetchReports() async {
-    // Fetch all reports for this farmer (default index exists on 'farmerId')
-    final snapshot = await FirebaseFirestore.instance
-        .collection('reports')
-        .where('farmerId', isEqualTo: widget.uid)
-        .get();
+    try {
+      // Option 1: Fetch all and limit in memory (no index needed)
+      // This reads all reports for this farmer, but we can limit what we process
+      final snapshot = await FirebaseFirestore.instance
+          .collection('reports')
+          .where('farmerId', isEqualTo: widget.uid)
+          .get();
 
-    // Filter by cycleId and sort in memory (no extra index needed)
-    final filtered = snapshot.docs
-        .where((doc) => doc.get('cycleId') == widget.cycleId)
-        .toList();
+      // Filter by cycleId and sort in memory
+      final filtered = snapshot.docs
+          .where((doc) {
+            try {
+              return doc.get('cycleId') == widget.cycleId;
+            } catch (e) {
+              return false;
+            }
+          })
+          .toList();
 
-    // Sort by timestamp descending (most recent first)
-    filtered.sort((a, b) {
-      final aTime = (a.data()['timestamp'] as Timestamp?)?.toDate() ?? DateTime(0);
-      final bTime = (b.data()['timestamp'] as Timestamp?)?.toDate() ?? DateTime(0);
-      return bTime.compareTo(aTime);
-    });
+      // Sort by timestamp descending
+      filtered.sort((a, b) {
+        final aTime = (a.data()['timestamp'] as Timestamp?)?.toDate() ?? DateTime(0);
+        final bTime = (b.data()['timestamp'] as Timestamp?)?.toDate() ?? DateTime(0);
+        return bTime.compareTo(aTime);
+      });
 
-    return filtered;
+      // Only return the 5 most recent recommendations
+      // This limits what we process and display
+      return filtered.take(5).toList();
+    } catch (e) {
+      debugPrint('Error fetching reports: $e');
+      return [];
+    }
   }
   
   List<String> _extractRecommendations(List<QueryDocumentSnapshot> reports) {
     final List<String> recs = [];
     for (final doc in reports) {
-      final data = doc.data() as Map<String, dynamic>;
-      final analysis = data['analysis'] as String?;
-      final treatment = data['treatment'] as String?;
-      final detection = data['detection'] as String?;
-      final risk = data['risk'] as String?;
+      try {
+        final data = doc.data() as Map<String, dynamic>;
+        final analysis = data['analysis'] as String?;
+        final treatment = data['treatment'] as String?;
+        final detection = data['detection'] as String?;
+        final risk = data['risk'] as String?;
 
-      if (analysis != null && analysis.isNotEmpty) {
-        recs.add(analysis);
-      } else if (treatment != null && treatment.isNotEmpty) {
-        recs.add(treatment);
-      } else {
-        recs.add('${detection ?? 'Pest'} detected. Risk: ${risk ?? 'unknown'}.');
+        // Skip if all fields are empty or null
+        if ((analysis == null || analysis.isEmpty) && 
+            (treatment == null || treatment.isEmpty) && 
+            (detection == null || detection.isEmpty)) {
+          continue;
+        }
+
+        if (analysis != null && analysis.isNotEmpty) {
+          recs.add(analysis);
+        } else if (treatment != null && treatment.isNotEmpty) {
+          recs.add(treatment);
+        } else {
+          recs.add('${detection ?? 'Pest'} detected. Risk: ${risk ?? 'unknown'}.');
+        }
+      } catch (e) {
+        debugPrint('Error extracting recommendation: $e');
+        continue;
       }
     }
-    return recs;
+
+    // Remove duplicates and return only unique recommendations
+    // This consolidates multiple identical recommendations into one
+    final uniqueRecs = recs.toSet().toList();
+    
+    // If there are multiple recommendations, combine them into a single one
+    if (uniqueRecs.length > 1) {
+      // You can either keep the most recent one or combine them
+      // Option 1: Keep only the first/most recent
+      return uniqueRecs.take(1).toList();
+      
+      // Option 2: Combine them into a single recommendation
+      // return ['Based on your reports:\n• ${uniqueRecs.join('\n• ')}'];
+    }
+    
+    return uniqueRecs;
   }
 
   Widget _buildRecommendationsSection() {
@@ -332,59 +373,59 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
     return const Color(0xFF1B5E37);
   }
 
-  Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
-    final plantingTimestamp = _cycleData?['plantingDate'] as Timestamp?;
-    if (plantingTimestamp == null) return [];
+Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
+  final plantingTimestamp = _cycleData?['plantingDate'] as Timestamp?;
+  if (plantingTimestamp == null) return [];
 
-    final plantingDate = plantingTimestamp.toDate();
-    final now = DateTime.now();
-    final daysSincePlanting = now.difference(plantingDate).inDays;
-    if (daysSincePlanting < 0) return [];
+  final plantingDate = plantingTimestamp.toDate();
+  final now = DateTime.now();
+  final daysSincePlanting = now.difference(plantingDate).inDays;
+  if (daysSincePlanting < 0) return [];
 
-    final List<Map<String, dynamic>> allActivities = [];
+  final List<Map<String, dynamic>> allActivities = [];
 
-    for (int offset = 0; offset < 5; offset++) {
-      int dayNumber = daysSincePlanting - offset;
-      if (dayNumber < 0) continue;
+  for (int offset = 0; offset < 5; offset++) {
+    int dayNumber = daysSincePlanting - offset;
+    if (dayNumber < 0) continue;
 
-      final dayIndex = dayNumber + 1;
-      final dayId = 'day_${dayIndex.toString().padLeft(2, '0')}';
+    final dayIndex = dayNumber + 1;
+    final dayId = 'day_${dayIndex.toString().padLeft(2, '0')}';
 
-      try {
-        final activitiesSnapshot = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(widget.uid)
-            .collection('cycles')
-            .doc(widget.cycleId)
-            .collection('dailyLogs')
-            .doc(dayId)
-            .collection('activities')
-            .orderBy('timestamp', descending: true)
-            .limit(3)
-            .get();
+    try {
+      // Remove orderBy to avoid needing a composite index
+      final activitiesSnapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.uid)
+          .collection('cycles')
+          .doc(widget.cycleId)
+          .collection('dailyLogs')
+          .doc(dayId)
+          .collection('activities')
+          .get(); // No orderBy here
 
-        for (var doc in activitiesSnapshot.docs) {
-          final data = doc.data();
-          allActivities.add({
-            'id': doc.id,
-            'title': data['type'] ?? 'Activity',
-            'subtitle': data['notes'] ?? '',
-            'timestamp':
-                data['timestamp'] as Timestamp? ?? Timestamp.now(),
-            'completed': data['completed'] ?? false,
-          });
-        }
-      } catch (e) {
-        debugPrint('No activities for $dayId');
+      for (var doc in activitiesSnapshot.docs) {
+        final data = doc.data();
+        allActivities.add({
+          'id': doc.id,
+          'title': data['type'] ?? 'Activity',
+          'subtitle': data['notes'] ?? '',
+          'timestamp':
+              data['timestamp'] as Timestamp? ?? Timestamp.now(),
+          'completed': data['completed'] ?? false,
+        });
       }
+    } catch (e) {
+      debugPrint('No activities for $dayId');
     }
-
-    allActivities.sort((a, b) => (b['timestamp'] as Timestamp)
-        .toDate()
-        .compareTo((a['timestamp'] as Timestamp).toDate()));
-
-    return allActivities.take(5).toList();
   }
+
+  // Sort in memory instead of using orderBy
+  allActivities.sort((a, b) => (b['timestamp'] as Timestamp)
+      .toDate()
+      .compareTo((a['timestamp'] as Timestamp).toDate()));
+
+  return allActivities.take(5).toList();
+}
 
   @override
   Widget build(BuildContext context) {
@@ -987,67 +1028,6 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
             color: Colors.black.withValues(alpha: 0.03),
             blurRadius: 4,
             offset: const Offset(0, 1),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 4,
-            height: 56,
-            decoration: const BoxDecoration(
-              color: Color(0xFFDC2626),
-              borderRadius: BorderRadius.horizontal(
-                  left: Radius.circular(16)),
-            ),
-          ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 14, vertical: 12),
-              child: Row(
-                children: [
-                  Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFEF2F2),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(Icons.warning_amber_rounded,
-                        color: Color(0xFFDC2626), size: 20),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'High Risk Detected',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF991B1B),
-                          ),
-                        ),
-                        Text(
-                          'Immediate attention required for Plot 4B',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: const Color(0xFF991B1B)
-                                .withValues(alpha: 0.7),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Icon(Icons.arrow_forward_ios_rounded,
-                      size: 14,
-                      color: const Color(0xFF991B1B)
-                          .withValues(alpha: 0.4)),
-                ],
-              ),
-            ),
           ),
         ],
       ),

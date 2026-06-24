@@ -192,13 +192,15 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
             stageKey = widget.detectedStage;
         }
         
-        if (stations[stationIndex].containsKey(stageKey)) {
-          stations[stationIndex][stageKey] = (stations[stationIndex][stageKey] as int) + 1;
-          if (widget.pestName.toLowerCase().contains('armyworm')) {
-            stations[stationIndex]['fawObserved'] = true;
-          }
-        } else {
-          throw Exception('Stage key "$stageKey" not found in station');
+        if (!stations[stationIndex].containsKey(stageKey)) {
+          stations[stationIndex][stageKey] = 0;
+        }
+
+        stations[stationIndex][stageKey] =
+            (stations[stationIndex][stageKey] as int) + 1;
+
+        if (widget.pestName.toLowerCase().contains('armyworm')) {
+          stations[stationIndex]['fawObserved'] = true;
         }
       }
 

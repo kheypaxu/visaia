@@ -175,21 +175,21 @@ class HelpCenterScreen extends StatelessWidget {
             _buildContactTile(
               icon: Icons.email_outlined,
               title: 'Email Us',
-              subtitle: 'support@visaia.com',
+              subtitle: 'visaia-support@gmail.com',
               iconBg: iconGreenLight,
               iconSize: 20, // Specific Email Icon Size
             ),
             _buildContactTile(
               icon: Icons.phone_outlined,
               title: 'Call Us',
-              subtitle: '+1 234 567 890',
+              subtitle: '+63 912 3456 789',
               iconBg: iconGreenDark,
               iconSize: 18, // Specific Call Icon Size
             ),
             _buildContactTile(
               icon: Icons.facebook,
               title: 'Facebook',
-              subtitle: 'Follow us for updates',
+              subtitle: 'Visaia Official Page',
               iconBg: iconFacebook,
               iconSize: 24, // Specific Facebook Icon Size
             ),
@@ -295,7 +295,6 @@ class HelpCenterScreen extends StatelessWidget {
               ],
             ),
           ),
-          const Icon(Icons.chevron_right, color: Colors.black54, size: 24),
         ],
       ),
     );

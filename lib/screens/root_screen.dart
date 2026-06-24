@@ -1,3 +1,4 @@
+import 'dart:convert';  // Add this import at the top
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -10,7 +11,7 @@ import 'package:visaia/screens/onboarding/farm_area_setup.dart';
 import 'package:visaia/screens/profile_screens/profile_screen.dart';
 import 'package:visaia/screens/dashboard_screens/notifications.dart';
 import 'package:visaia/screens/dashboard_screens/full_analysis.dart';
-import 'package:visaia/screens/mitigation_screens/mitigation_screen.dart';
+import 'package:visaia/screens/report_history/report_history.dart';
 import 'package:visaia/screens/logging_screens/daily_log_screen.dart';
 import 'package:visaia/screens/logging_screens/field_scouting_screen.dart';
 import 'package:visaia/screens/logging_screens/upload_pest.dart';
@@ -18,7 +19,7 @@ import 'package:visaia/screens/logging_screens/inspect_trap_screen.dart';
 import 'package:visaia/screens/cycle_screens/start_cycle.dart';
 import 'package:visaia/screens/dashboard_screens/cycles_screen.dart';
 
-enum NavItem { mitigation, home, cycle, map, profile }
+enum NavItem { reports, home, cycle, map, profile }
 
 void showAddLogModal(BuildContext context) {
   showModalBottomSheet(
@@ -278,19 +279,23 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
   bool _isMenuOpen = false;
 
   final userId = FirebaseAuth.instance.currentUser?.uid ?? '';
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  
+  // Store profile image data
+  String? _profileImageBase64;
 
   static const _navItems = [
     NavItem.home,
     NavItem.cycle,
     NavItem.map,
-    NavItem.mitigation,
+    NavItem.reports,
   ];
 
   static const _itemMeta = [
     (Icons.eco_outlined, Icons.eco, 'HOME'),
     (Icons.recycling_rounded, Icons.recycling_rounded, 'CYCLE'),
     (Icons.map_outlined, Icons.map, 'MAP'),
-    (Icons.shield_outlined, Icons.shield, 'MITIGATION'),
+    (Icons.shield_outlined, Icons.shield, 'REPORTS'),
   ];
 
   @override
@@ -309,7 +314,31 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
     // Initialize farm provider on first load
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<FarmProvider>().init();
+      _loadProfileImage();
     });
+  }
+
+  // Load profile image from Firestore
+  Future<void> _loadProfileImage() async {
+    if (userId.isEmpty) return;
+    
+    try {
+      final doc = await _firestore
+          .collection('farmers')
+          .doc(userId)
+          .get();
+      
+      if (doc.exists && mounted) {
+        final data = doc.data();
+        if (data != null && data.containsKey('profileImage')) {
+          setState(() {
+            _profileImageBase64 = data['profileImage'];
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading profile image: $e');
+    }
   }
 
   @override
@@ -344,122 +373,139 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
         return 1;
       case NavItem.map:
         return 2;
-      case NavItem.mitigation:
+      case NavItem.reports:
         return 3;
       case NavItem.profile:
         return 4;
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    // Watch the provider — when farmId changes, this rebuilds
-    final farmProvider = context.watch<FarmProvider>();
-    final activeFarmId = farmProvider.activeFarmId;
+@override
+Widget build(BuildContext context) {
+  // Watch the provider — when farmId changes, this rebuilds
+  final farmProvider = context.watch<FarmProvider>();
+  final activeFarmId = farmProvider.activeFarmId;
 
-    final bottomPadding = MediaQuery.of(context).padding.bottom;
-    final bool isMapScreen = _selectedItem == NavItem.map;
+  final bottomPadding = MediaQuery.of(context).padding.bottom;
+  final bool isMapScreen = _selectedItem == NavItem.map;
+  
+  // Get user initials for fallback avatar
+  final user = FirebaseAuth.instance.currentUser;
+  String initials = '?';
+  if (user?.displayName != null && user!.displayName!.isNotEmpty) {
+    final parts = user.displayName!.split(' ');
+    if (parts.length >= 2) {
+      initials = '${parts[0][0]}${parts[1][0]}';
+    } else {
+      initials = parts[0][0].toUpperCase();
+    }
+  } else if (user?.email != null && user!.email!.isNotEmpty) {
+    initials = user.email![0].toUpperCase();
+  }
 
-    return Scaffold(
-      backgroundColor: const Color(0xFF102216),
-      appBar: isMapScreen
-          ? null
-          : AppBar(
-              backgroundColor: Colors.white,
-              elevation: 0,
-              scrolledUnderElevation: 0,
-              centerTitle: false,
-              leading: IconButton(
-                icon: const Icon(Icons.menu_rounded,
-                    color: Color(0xFF0C503C), size: 28),
-                onPressed: () {},
-              ),
-              title: Text('VISAIA',
-                  style: GoogleFonts.epilogue(
-                      color: const Color(0xFF0C503C),
-                      fontWeight: FontWeight.w800,
-                      fontSize: 22)),
-              actions: [
-                GestureDetector(
-                  onTap: () {
-                    Navigator.push(context,
-                        MaterialPageRoute(builder: (context) => AlertsPage()));
-                  },
-                  child: Stack(
-                    alignment: Alignment.topRight,
-                    children: [
-                      const Padding(
-                        padding: EdgeInsets.only(top: 8, right: 8),
-                        child: Icon(Icons.notifications_none_rounded,
-                            color: Color(0xFF0C503C), size: 28),
-                      ),
-                      Positioned(
-                        right: 8,
-                        top: 10,
-                        child: Container(
-                          height: 10,
-                          width: 10,
-                          decoration: BoxDecoration(
-                            color: Colors.red,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 2),
-                          ),
+  return Scaffold(
+    backgroundColor: const Color(0xFF102216),
+    appBar: isMapScreen
+        ? null
+        : AppBar(
+            backgroundColor: Colors.white,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            centerTitle: false,
+            automaticallyImplyLeading: false, // ← This removes the back button
+            title: Text('VISAIA',
+                style: GoogleFonts.epilogue(
+                    color: const Color(0xFF0C503C),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 22)),
+            actions: [
+              GestureDetector(
+                onTap: () {
+                  Navigator.push(context,
+                      MaterialPageRoute(builder: (context) => AlertsPage()));
+                },
+                child: Stack(
+                  alignment: Alignment.topRight,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.only(top: 8, right: 8),
+                      child: Icon(Icons.notifications_none_rounded,
+                          color: Color(0xFF0C503C), size: 28),
+                    ),
+                    Positioned(
+                      right: 8,
+                      top: 10,
+                      child: Container(
+                        height: 10,
+                        width: 10,
+                        decoration: BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 2),
                         ),
                       ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                GestureDetector(
-                  onTap: () => _onNavTapped(NavItem.profile),
-                  child: const CircleAvatar(
-                    radius: 20,
-                    backgroundColor: Color(0xFFE0E0E0),
-                    backgroundImage: NetworkImage(
-                      'https://ui-avatars.com/api/?background=0D4D33&color=fff&name=AJ',
                     ),
-                  ),
+                  ],
                 ),
-                const SizedBox(width: 16),
-              ],
-            ),
-      body: Stack(
-        children: [
-          IndexedStack(
-            index: _getCurrentStackIndex(),
-            children: [
-              // ValueKey forces full rebuild when farm switches
-              HomeDashboard(
-                key: ValueKey('home_$activeFarmId'),
-                userId: userId,
               ),
-              CroppingCyclesScreen(
-                key: ValueKey('cycles_$activeFarmId'),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () => _onNavTapped(NavItem.profile),
+                child: CircleAvatar(
+                  radius: 20,
+                  backgroundColor: const Color(0xFFE0E0E0),
+                  backgroundImage: _profileImageBase64 != null
+                      ? MemoryImage(base64Decode(_profileImageBase64!))
+                      : null,
+                  child: _profileImageBase64 == null
+                      ? Text(
+                          initials,
+                          style: GoogleFonts.inter(
+                            color: const Color(0xFF0D4D33),
+                            fontWeight: FontWeight.w700,
+                            fontSize: 16,
+                          ),
+                        )
+                      : null,
+                ),
               ),
-              MapViewScreen(
-                key: ValueKey('map_$activeFarmId'),
-              ),
-              MitigationScreen(),
-              ProfileScreen(),
+              const SizedBox(width: 16),
             ],
           ),
-
-          if (_isMenuOpen || _menuController.isAnimating)
-            IgnorePointer(
-              ignoring: !_isMenuOpen,
-              child: _buildCircularMenu(bottomPadding, activeFarmId),
+    body: Stack(
+      children: [
+        IndexedStack(
+          index: _getCurrentStackIndex(),
+          children: [
+            HomeDashboard(
+              key: ValueKey('home_$activeFarmId'),
+              userId: userId,
             ),
-
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: bottomPadding,
-            child: _buildNavBar(),
+            CroppingCyclesScreen(
+              key: ValueKey('cycles_$activeFarmId'),
+            ),
+            MapViewScreen(
+              key: ValueKey('map_$activeFarmId'),
+            ),
+            ReportHistoryScreen(),
+            ProfileScreen(),
+          ],
+        ),
+        if (_isMenuOpen || _menuController.isAnimating)
+          IgnorePointer(
+            ignoring: !_isMenuOpen,
+            child: _buildCircularMenu(bottomPadding, activeFarmId),
           ),
-        ],
-      ),
-    );
-  }
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: bottomPadding,
+          child: _buildNavBar(),
+        ),
+      ],
+    ),
+  );
+}
 
   Widget _buildCircularMenu(double bottomPadding, String? activeFarmId) {
     return AnimatedBuilder(
@@ -526,8 +572,7 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
             GestureDetector(
               onTap: _toggleMenu,
               child: Container(
-                  color:
-                      Colors.black.withOpacity(0.3 * _menuController.value)),
+                  color: Colors.black.withOpacity(0.3 * _menuController.value)),
             ),
             ...List.generate(actions.length, (index) {
               final action = actions[index];

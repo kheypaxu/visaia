@@ -940,7 +940,7 @@ class _CycleParametersCard extends StatelessWidget {
                   ),
                   child: const Center(
                     child: Text(
-                      'KG',
+                      'kg',
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,

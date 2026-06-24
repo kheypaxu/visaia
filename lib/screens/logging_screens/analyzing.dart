@@ -246,18 +246,17 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
           position.longitude,
         );
         
+        // Replace the areaName fallback in _getCurrentLocation()
         if (placemarks.isNotEmpty) {
           final place = placemarks.first;
           List<String> locationParts = [];
           
-          if (place.subLocality != null && place.subLocality!.isNotEmpty) 
-            locationParts.add(place.subLocality!);
-          if (place.locality != null && place.locality!.isNotEmpty) 
-            locationParts.add(place.locality!);
-          if (place.administrativeArea != null && place.administrativeArea!.isNotEmpty) 
-            locationParts.add(place.administrativeArea!);
+          if (place.subLocality?.isNotEmpty == true) locationParts.add(place.subLocality!);
+          if (place.locality?.isNotEmpty == true) locationParts.add(place.locality!);
+          if (place.administrativeArea?.isNotEmpty == true) locationParts.add(place.administrativeArea!);
+          if (place.country?.isNotEmpty == true) locationParts.add(place.country!); // add country as last resort
           
-          areaName = locationParts.isNotEmpty ? locationParts.join(', ') : 'Unknown Area';
+          areaName = locationParts.isNotEmpty ? locationParts.join(', ') : 'Location ${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
         }
       } catch (e) {
         debugPrint('Reverse geocoding error: $e');

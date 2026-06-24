@@ -431,7 +431,7 @@ class HomeDashboard extends StatelessWidget {
                       return _buildMetricCard(
                         title: "TOTAL YIELD",
                         value: totalYield.toStringAsFixed(1),
-                        unit: "tons",
+                        unit: "kilo",
                         icon: Icons.agriculture_rounded,
                         bgColor: const Color(0xFFC5E1A5),
                         textColor: darkGreen,

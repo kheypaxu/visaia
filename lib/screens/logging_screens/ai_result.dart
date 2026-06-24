@@ -852,35 +852,25 @@ class _AIResultScreenState extends State<AIResultScreen> {
                         ),
                       );
 
-                      if (returnedId != null && returnedId.isNotEmpty) {
-                        setState(() {
-                          _assignedCycleId = returnedId;
-                        });
-                        
-                        // ✅ Automatically save the report now
-                        await _saveToReports(context);
-
+                      // FIXED — only update state, don't auto-save
+                  if (returnedId != null && returnedId.isNotEmpty) {
+                    setState(() { _assignedCycleId = returnedId; });
+                    
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Row(
-                            children: [
-                              const Icon(Icons.check_circle,
-                                  color: Colors.white, size: 20),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Text(
-                                  'Farming cycle assigned successfully!',
-                                  style: const TextStyle(fontSize: 13),
-                                ),
-                              ),
-                            ],
-                          ),
+                          content: Row(children: [
+                            const Icon(Icons.check_circle, color: Colors.white, size: 20),
+                            const SizedBox(width: 10),
+                            const Expanded(child: Text(
+                              'Cycle assigned! Tap "Monitor Report" to save.',
+                              style: TextStyle(fontSize: 13),
+                            )),
+                          ]),
                           backgroundColor: _green,
                           behavior: SnackBarBehavior.floating,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                          duration: const Duration(seconds: 2),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          duration: const Duration(seconds: 3),
                         ),
                       );
                     }

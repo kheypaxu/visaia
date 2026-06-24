@@ -28,6 +28,80 @@ class FieldAreaSetupScreen extends StatefulWidget {
 class _FieldAreaSetupState extends State<FieldAreaSetupScreen> {
   final List<Map<String, dynamic>> _fields = [];
   final FarmService _farmService = FarmService();
+  String _userFirstName = '';
+  bool _isLoadingUser = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserData();
+  }
+
+  /// Extracts the first name from a full name string
+  String _extractFirstName(String fullName) {
+    if (fullName.isEmpty) return 'User';
+    
+    // Split by spaces and get the first part
+    final parts = fullName.trim().split(' ');
+    return parts.isNotEmpty ? parts.first : 'User';
+  }
+
+  Future<void> _loadUserData() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final doc = await FirebaseFirestore.instance
+            .collection('farmers')
+            .doc(user.uid)
+            .get();
+        
+        if (doc.exists && mounted) {
+          final data = doc.data();
+          if (data != null) {
+            // Get the fullName from the document
+            final fullName = data['fullName'] as String? ?? '';
+            
+            // Extract first name from fullName
+            final firstName = _extractFirstName(fullName);
+            
+            setState(() {
+              _userFirstName = firstName;
+              _isLoadingUser = false;
+            });
+          } else {
+            // Fallback to display name or email
+            final firstName = user.displayName?.split(' ').first ?? 
+                             user.email?.split('@').first ?? 
+                             'User';
+            setState(() {
+              _userFirstName = firstName;
+              _isLoadingUser = false;
+            });
+          }
+        } else {
+          // If farmer document doesn't exist, use auth data
+          final firstName = user.displayName?.split(' ').first ?? 
+                           user.email?.split('@').first ?? 
+                           'User';
+          setState(() {
+            _userFirstName = firstName;
+            _isLoadingUser = false;
+          });
+        }
+      } else {
+        setState(() {
+          _userFirstName = 'User';
+          _isLoadingUser = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading user data: $e');
+      setState(() {
+        _userFirstName = 'User';
+        _isLoadingUser = false;
+      });
+    }
+  }
 
   void _addField() async {
     final result = await Navigator.of(context).push(
@@ -230,11 +304,14 @@ class _FieldAreaSetupState extends State<FieldAreaSetupScreen> {
                 width: double.infinity,
                 height: 50,
                 child: ElevatedButton(
-                  onPressed: _fields.isNotEmpty
+                  onPressed: _fields.isNotEmpty && !_isLoadingUser
                     ? () async {
                         try {
                           // 1. Save fields to Firestore
-                          await _farmService.saveFields(fields: _fields, farmId: widget.farmId,);
+                          await _farmService.saveFields(
+                            fields: _fields, 
+                            farmId: widget.farmId,
+                          );
 
                           // 2. Update user document
                           final user = FirebaseAuth.instance.currentUser;
@@ -252,10 +329,11 @@ class _FieldAreaSetupState extends State<FieldAreaSetupScreen> {
 
                           if (!context.mounted) return;
 
+                          // Navigate to InitializationScreen with real first name
                           Navigator.of(context, rootNavigator: true).pushReplacement(
                             MaterialPageRoute(
                               builder: (_) => InitializationScreen(
-                                firstName: 'Sample',
+                                firstName: _userFirstName, // Now correctly extracts "Cherry" from "Cherry Jean Dagohoy"
                                 onFinished: () {
                                   Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
                                     MaterialPageRoute(builder: (_) => const RootLayout()),
@@ -280,10 +358,19 @@ class _FieldAreaSetupState extends State<FieldAreaSetupScreen> {
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12)),
                   ),
-                  child: const Text(
-                    'SAVE FIELD SETUP',
-                    style: TextStyle(fontWeight: FontWeight.w600),
-                  ),
+                  child: _isLoadingUser
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text(
+                          'SAVE FIELD SETUP',
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
                 ),
               ),
             ),
