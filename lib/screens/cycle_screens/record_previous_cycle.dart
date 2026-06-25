@@ -39,7 +39,7 @@ class RecordCycleScreen extends StatefulWidget {
     super.key,
     required this.userId,
   });
-
+ 
   @override
   State<RecordCycleScreen> createState() => _RecordCycleScreenState();
 }

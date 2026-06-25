@@ -526,36 +526,6 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
               ),
             ),
             const SizedBox(width: 10),
-            Container(
-              height: 44,
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.04),
-                    blurRadius: 4,
-                    offset: const Offset(0, 1),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.tune,
-                      size: 18, color: headingBlack.withValues(alpha: 0.7)),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Filters',
-                    style: GoogleFonts.manrope(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13,
-                      color: headingBlack,
-                    ),
-                  ),
-                ],
-              ),
-            ),
           ],
         );
       },
