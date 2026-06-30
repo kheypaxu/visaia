@@ -1873,9 +1873,12 @@ void _addChemicalRecommendationsToTasks() {
                     shape: BoxShape.circle,
                   ),
                   child: Stack(
+                    alignment: Alignment.center, // Center the stack content
                     children: [
+                      // Center the Column
                       Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisAlignment: MainAxisAlignment.center, // Center vertically
+                        crossAxisAlignment: CrossAxisAlignment.center, // Center horizontally
                         children: [
                           Text('Week',
                               style: GoogleFonts.inter(
