@@ -292,8 +292,8 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
   ];
 
   static const _itemMeta = [
-    (Icons.eco_outlined, Icons.eco, 'HOME'),
-    (Icons.recycling_rounded, Icons.recycling_rounded, 'CYCLE'),
+    (Icons.home_outlined, Icons.home, 'HOME'),
+    (Icons.eco_outlined, Icons.eco, 'CYCLE'),
     (Icons.map_outlined, Icons.map, 'MAP'),
     (Icons.shield_outlined, Icons.shield, 'REPORTS'),
   ];

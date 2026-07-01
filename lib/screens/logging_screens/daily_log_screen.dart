@@ -70,19 +70,22 @@ extension ActivityTypeExt on ActivityType {
   }
 }
 
-
 // ─── Daily Log Form Screen ────────────────────────────────────────────────────
 
 class DailyLogFormScreen extends StatefulWidget {
   final String userId;
   final String cycleId;
   final bool shouldAssignCycle;
+  final int? currentDayIndex;
+  final DateTime? plantingDate;
 
   const DailyLogFormScreen({
     super.key,
     required this.userId,
     required this.cycleId,
     required this.shouldAssignCycle,
+    this.currentDayIndex,
+    this.plantingDate,
   });
 
   @override
@@ -98,6 +101,11 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
   List<XFile> _pickedImages = [];
   bool _isCompleted = false;
   bool _isSaving = false;
+  
+  // Schedule state
+  bool _isScheduled = false;
+  TimeOfDay? _scheduledTime;
+  DateTime? _scheduledDate;
 
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
@@ -114,6 +122,12 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
   @override
   void initState() {
     super.initState();
+    
+    // If planting date and current day index are provided, set the selected date
+    if (widget.plantingDate != null && widget.currentDayIndex != null) {
+      _selectedDate = widget.plantingDate!.add(Duration(days: widget.currentDayIndex!));
+    }
+    
     _fadeController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 520),
@@ -123,6 +137,9 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
       curve: Curves.easeOut,
     );
     _fadeController.forward();
+    
+    // Set default scheduled date to tomorrow
+    _scheduledDate = DateTime.now().add(const Duration(days: 1));
   }
 
   @override
@@ -158,6 +175,60 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
     if (picked != null) setState(() => _selectedDate = picked);
   }
 
+  Future<void> _pickScheduleDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _scheduledDate ?? DateTime.now().add(const Duration(days: 1)),
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: _green,
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: _darkGreen,
+            ),
+            textButtonTheme: TextButtonThemeData(
+              style: TextButton.styleFrom(foregroundColor: _green),
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() => _scheduledDate = picked);
+    }
+  }
+
+  Future<void> _pickScheduleTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _scheduledTime ?? TimeOfDay.now(),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: _green,
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: _darkGreen,
+            ),
+            textButtonTheme: TextButtonThemeData(
+              style: TextButton.styleFrom(foregroundColor: _green),
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() => _scheduledTime = picked);
+    }
+  }
+
   Future<void> _pickImages() async {
     final List<XFile> images = await _picker.pickMultiImage(imageQuality: 80);
     if (images.isNotEmpty) {
@@ -181,6 +252,36 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
     }
   }
 
+  Future<void> _createScheduledActivityNotification(String cycleId, String activityId) async {
+    if (_scheduledDate == null || _scheduledTime == null) return;
+    
+    final scheduledDateTime = DateTime(
+      _scheduledDate!.year,
+      _scheduledDate!.month,
+      _scheduledDate!.day,
+      _scheduledTime!.hour,
+      _scheduledTime!.minute,
+    );
+    
+    await FirebaseFirestore.instance
+        .collection('alerts')
+        .add({
+      'alertType': 'scheduled_activity',
+      'title': 'Upcoming Activity: ${_selectedActivity!.label}',
+      'message': 'You have a scheduled ${_selectedActivity!.label} activity for ${DateFormat('MMM d, yyyy').format(scheduledDateTime)} at ${_scheduledTime!.format(context)}.\n\nActivity: ${_notesController.text.isNotEmpty ? _notesController.text : 'No additional notes'}',
+      'farmerId': widget.userId,
+      'createdAt': FieldValue.serverTimestamp(),
+      'status': 'unread',
+      'source': 'daily_log',
+      'risk': 'Low',
+      'activityId': activityId,
+      'cycleId': cycleId,
+      'scheduledFor': Timestamp.fromDate(scheduledDateTime),
+      'activityType': _selectedActivity!.label,
+      'severity': 'Scheduled',
+    });
+  }
+
   Future<void> _saveActivityToFirestore() async {
     if (_selectedActivity == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -189,16 +290,29 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
       return;
     }
 
-    // If we have a cycleId already (from monitoring screen), save directly
+    if (!_isCompleted && (_scheduledDate == null || _scheduledTime == null)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please set a schedule time for this activity')),
+      );
+      return;
+    }
+
     if (widget.cycleId.isNotEmpty && !widget.shouldAssignCycle) {
       setState(() => _isSaving = true);
       try {
-        await _saveToCycle(widget.cycleId);
+        final activityId = await _saveToCycle(widget.cycleId);
+        if (_isScheduled && activityId != null) {
+          await _createScheduledActivityNotification(widget.cycleId, activityId);
+        }
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Activity saved successfully!'),
-              backgroundColor: Color(0xFF1A5C30),
+            SnackBar(
+              content: Text(
+                _isCompleted 
+                  ? 'Activity saved successfully!' 
+                  : 'Activity scheduled! You\'ll be notified when it\'s time.',
+              ),
+              backgroundColor: const Color(0xFF1A5C30),
             ),
           );
           Navigator.pop(context);
@@ -213,12 +327,11 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
         if (mounted) setState(() => _isSaving = false);
       }
     } else {
-      // No cycle assigned yet - show assign modal
       _openAssignModal();
     }
   }
 
-  Future<void> _saveToCycle(String cycleId) async {
+  Future<String?> _saveToCycle(String cycleId) async {
     final imageUrls = <String>[];
 
     for (final image in _pickedImages) {
@@ -226,7 +339,6 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
       if (url != null) imageUrls.add(url);
     }
 
-    // Get the cycle document to find planting date
     final cycleDoc = await FirebaseFirestore.instance
         .collection('users')
         .doc(widget.userId)
@@ -245,20 +357,17 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
       throw Exception('Planting or harvest date not found');
     }
     
-    // Check if selected date is within cycle range
     if (_selectedDate.isBefore(plantingDate) || _selectedDate.isAfter(harvestDate)) {
       throw Exception('Activity date must be between ${DateFormat('MMM d').format(plantingDate)} and ${DateFormat('MMM d').format(harvestDate)}');
     }
     
-    // Calculate days since planting (0-based)
     final daysSincePlanting = _selectedDate.difference(plantingDate).inDays;
-    
-    // Day number is daysSincePlanting + 1 (1-based for display)
     final dayNumber = daysSincePlanting + 1;
     final dayId = 'day_${dayNumber.toString().padLeft(2, '0')}';
 
+    final activityId = DateTime.now().millisecondsSinceEpoch.toString();
     final activityData = {
-      'id': DateTime.now().millisecondsSinceEpoch.toString(),
+      'id': activityId,
       'type': _selectedActivity!.label,
       'icon': _selectedActivity!.icon.codePoint,
       'notes': _notesController.text,
@@ -268,6 +377,17 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
       'date': Timestamp.fromDate(_selectedDate),
       'dayNumber': dayNumber,
       'cycleId': cycleId,
+      'userId': widget.userId,
+      'isScheduled': _isScheduled,
+      'scheduledFor': _isScheduled && _scheduledDate != null && _scheduledTime != null
+          ? Timestamp.fromDate(DateTime(
+              _scheduledDate!.year,
+              _scheduledDate!.month,
+              _scheduledDate!.day,
+              _scheduledTime!.hour,
+              _scheduledTime!.minute,
+            ))
+          : null,
     };
 
     await FirebaseFirestore.instance
@@ -279,6 +399,8 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
         .doc(dayId)
         .collection('activities')
         .add(activityData);
+        
+    return activityId;
   }
 
   Future<void> _openAssignModal() async {
@@ -296,12 +418,19 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
         
         setState(() => _isSaving = true);
         try {
-          await _saveToCycle(cycleId);
+          final activityId = await _saveToCycle(cycleId);
+          if (_isScheduled && activityId != null) {
+            await _createScheduledActivityNotification(cycleId, activityId);
+          }
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Activity saved successfully!'),
-                backgroundColor: Color(0xFF1A5C30),
+              SnackBar(
+                content: Text(
+                  _isCompleted 
+                    ? 'Activity saved successfully!' 
+                    : 'Activity scheduled! You\'ll be notified when it\'s time.',
+                ),
+                backgroundColor: const Color(0xFF1A5C30),
               ),
             );
             Navigator.pop(context);
@@ -345,12 +474,10 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
                   background: Stack(
                     fit: StackFit.expand,
                     children: [
-                      // Background image
                       Image.asset(
                         'assets/images/bg.png',
                         fit: BoxFit.cover,
                       ),
-                      // Dark overlay for text readability
                       Container(
                         decoration: BoxDecoration(
                           gradient: LinearGradient(
@@ -363,7 +490,6 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
                           ),
                         ),
                       ),
-                      // Content
                       SafeArea(
                         child: Padding(
                           padding: const EdgeInsets.fromLTRB(20, 48, 20, 16),
@@ -387,7 +513,7 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
                               Text(
                                 'Track what happens on your farm every day — from watering to harvest. One entry at a time builds a complete picture of your season.',
                                 style: GoogleFonts.inter(
-                                  color: Colors.white.withValues(alpha: 0.88),
+                                  color: Colors.white.withOpacity(0.88),
                                   fontSize: 12,
                                   height: 1.5,
                                   fontWeight: FontWeight.w400,
@@ -457,6 +583,76 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
                       ),
                     ),
 
+                    const SizedBox(height: 12),
+
+                    // ── Status (Progress) ──────────────────────────────────
+                    _SectionLabel(label: 'Status'),
+                    const SizedBox(height: 8),
+                    _FormCard(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      child: Row(
+                        children: [
+                          GestureDetector(
+                            onTap: () => setState(() => _isCompleted = !_isCompleted),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  _isCompleted
+                                      ? Icons.check_circle_rounded
+                                      : Icons.radio_button_unchecked_rounded,
+                                  color: _isCompleted ? _green : _mutedText,
+                                  size: 22,
+                                ),
+                                const SizedBox(width: 10),
+                                Text(
+                                  _isCompleted ? 'Completed' : 'In Progress',
+                                  style: GoogleFonts.inter(
+                                    color: _isCompleted ? _green : _mutedText,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (!_isCompleted) ...[
+                            const SizedBox(width: 16),
+                            const VerticalDivider(color: _borderColor, thickness: 1, width: 1),
+                            const SizedBox(width: 16),
+                            GestureDetector(
+                              onTap: () => setState(() => _isScheduled = !_isScheduled),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    _isScheduled 
+                                        ? Icons.check_box_rounded 
+                                        : Icons.check_box_outline_blank_rounded,
+                                    color: _isScheduled ? _green : _mutedText,
+                                    size: 20,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Schedule',
+                                    style: GoogleFonts.inter(
+                                      color: _isScheduled ? _green : _mutedText,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+
+                    // ── Schedule Section (only when in progress and scheduled) ──
+                    if (!_isCompleted && _isScheduled) ...[
+                      const SizedBox(height: 12),
+                      _buildScheduleSection(),
+                    ],
+
                     const SizedBox(height: 20),
 
                     // ── Activity Type ──────────────────────────────────────
@@ -514,93 +710,6 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
                       onAdd: _pickImages,
                       onRemove: _removeImage,
                     ),
-
-                    const SizedBox(height: 20),
-
-                    // ── Completion Toggle ──────────────────────────────────
-                    _SectionLabel(label: 'Completion Status'),
-                    const SizedBox(height: 8),
-                    _FormCard(
-                      child: Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(9),
-                            decoration: BoxDecoration(
-                              color: (_isCompleted ? _green : _mutedText)
-                                  .withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Icon(
-                              _isCompleted
-                                  ? Icons.check_circle_rounded
-                                  : Icons.radio_button_unchecked_rounded,
-                              color: _isCompleted ? _green : _mutedText,
-                              size: 20,
-                            ),
-                          ),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  _isCompleted ? 'Completed' : 'In Progress',
-                                  style: GoogleFonts.inter(
-                                    color: _isCompleted ? _green : _mutedText,
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 14,
-                                  ),
-                                ),
-                                Text(
-                                  _isCompleted
-                                      ? 'This activity has been finished'
-                                      : 'Mark when the activity is done',
-                                  style: GoogleFonts.inter(
-                                    color: _mutedText,
-                                    fontSize: 11,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          GestureDetector(
-                            onTap: () =>
-                                setState(() => _isCompleted = !_isCompleted),
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 250),
-                              width: 50,
-                              height: 28,
-                              decoration: BoxDecoration(
-                                color: _isCompleted ? _green : _borderColor,
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              child: AnimatedAlign(
-                                duration: const Duration(milliseconds: 250),
-                                curve: Curves.easeInOut,
-                                alignment: _isCompleted
-                                    ? Alignment.centerRight
-                                    : Alignment.centerLeft,
-                                child: Container(
-                                  margin: const EdgeInsets.all(3),
-                                  width: 22,
-                                  height: 22,
-                                  decoration: const BoxDecoration(
-                                    color: Colors.white,
-                                    shape: BoxShape.circle,
-                                    boxShadow: [
-                                      BoxShadow(
-                                          color: Colors.black12,
-                                          blurRadius: 4,
-                                          offset: Offset(0, 1))
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
                   ]),
                 ),
               ),
@@ -621,8 +730,8 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
                 gradient: _isSaving
                     ? LinearGradient(
                         colors: [
-                          _green.withValues(alpha: 0.5),
-                          _darkGreen.withValues(alpha: 0.5),
+                          _green.withOpacity(0.5),
+                          _darkGreen.withOpacity(0.5),
                         ],
                       )
                     : const LinearGradient(
@@ -631,7 +740,7 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: [
                   BoxShadow(
-                    color: _green.withValues(alpha: 0.35),
+                    color: _green.withOpacity(0.35),
                     blurRadius: 12,
                     offset: const Offset(0, 4),
                   ),
@@ -652,7 +761,7 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
                               color: Colors.white, size: 18),
                           const SizedBox(width: 8),
                           Text(
-                            'Save Activity',
+                            _isCompleted ? 'Save Activity' : 'Schedule Activity',
                             style: GoogleFonts.inter(
                               color: Colors.white,
                               fontWeight: FontWeight.w700,
@@ -670,6 +779,124 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildScheduleSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionLabel(label: 'Schedule Details'),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: GestureDetector(
+                onTap: _pickScheduleDate,
+                child: _FormCard(
+                  child: Row(
+                    children: [
+                      Icon(Icons.calendar_today_rounded, color: _green, size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Date',
+                              style: GoogleFonts.inter(
+                                color: _mutedText,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            Text(
+                              _scheduledDate != null
+                                  ? DateFormat('MMM d, yyyy').format(_scheduledDate!)
+                                  : 'Select date',
+                              style: GoogleFonts.inter(
+                                color: _darkGreen,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(Icons.chevron_right_rounded, color: _mutedText, size: 16),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: GestureDetector(
+                onTap: _pickScheduleTime,
+                child: _FormCard(
+                  child: Row(
+                    children: [
+                      Icon(Icons.access_time_rounded, color: _green, size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Time',
+                              style: GoogleFonts.inter(
+                                color: _mutedText,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            Text(
+                              _scheduledTime != null
+                                  ? _scheduledTime!.format(context)
+                                  : 'Select time',
+                              style: GoogleFonts.inter(
+                                color: _darkGreen,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(Icons.chevron_right_rounded, color: _mutedText, size: 16),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFF8E1),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: const Color(0xFFFFE082)),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.notifications_active_rounded, color: const Color(0xFFF57C00), size: 18),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'You will receive a notification when it\'s time to do this activity.',
+                  style: GoogleFonts.inter(
+                    fontSize: 11,
+                    color: const Color(0xFFE65100),
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

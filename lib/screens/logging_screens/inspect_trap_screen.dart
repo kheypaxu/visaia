@@ -5,6 +5,10 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:provider/provider.dart';
+import 'package:visaia/core/providers/farm_provider.dart';
 
 // ─── Trap Condition Model ─────────────────────────────────────────────────────
 
@@ -50,14 +54,21 @@ class InspectTrapScreen extends StatefulWidget {
 class _InspectTrapScreenState extends State<InspectTrapScreen>
     with SingleTickerProviderStateMixin {
   // Form state
-  DateTime _selectedDate = DateTime(2023, 10, 24);
+  DateTime _selectedDate = DateTime.now();
   String _selectedTrap = 'Trap 1';
-  int _mothCount = 12;
+  int _mothCount = 0;
   TrapCondition? _selectedCondition;
   final TextEditingController _notesController = TextEditingController();
   
   List<XFile> _pickedImages = [];
   bool _isSaving = false;
+  bool _isLoading = true;
+  bool _canInspectTraps = false;
+  String? _errorMessage;
+  
+  // Cycle selection
+  String? _selectedCycleId;
+  List<Map<String, dynamic>> _availableCycles = [];
 
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
@@ -71,13 +82,6 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
   static const _mutedText = Color(0xFF9E9E9E);
   static const _borderColor = Color(0xFFDDEEE4);
 
-  final List<String> _trapOptions = [
-    'Trap 1',
-    'Trap 2',
-    'Trap 3',
-    'Trap 4',
-  ];
-
   @override
   void initState() {
     super.initState();
@@ -90,6 +94,7 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
       curve: Curves.easeOut,
     );
     _fadeController.forward();
+    _loadData();
   }
 
   @override
@@ -97,6 +102,84 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
     _fadeController.dispose();
     _notesController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadData() async {
+    setState(() => _isLoading = true);
+    
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        setState(() {
+          _errorMessage = 'User not authenticated';
+          _isLoading = false;
+        });
+        return;
+      }
+
+      // Get the active farm ID from the provider
+      final farmProvider = context.read<FarmProvider>();
+      final activeFarmId = farmProvider.activeFarmId;
+
+      if (activeFarmId == null) {
+        setState(() {
+          _errorMessage = 'No active farm selected. Please select a farm first.';
+          _isLoading = false;
+        });
+        return;
+      }
+
+      // Fetch cycles for this user that belong to the active farm
+      final cyclesSnapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('cycles')
+          .where('farmId', isEqualTo: activeFarmId)
+          .where('isCompleted', isEqualTo: false)
+          .get();
+
+      final cycles = <Map<String, dynamic>>[];
+      
+      for (final doc in cyclesSnapshot.docs) {
+        final data = doc.data();
+        final controlMethod = data['controlMethod'] as String?;
+        final trapsInstalled = data['trapsInstalled'] == true;
+        
+        // Only include cycles with biological control AND traps installed
+        if (controlMethod == 'biological' && trapsInstalled) {
+          // Get trap names from the cycle
+          final traps = data['traps'] as List? ?? [];
+          final trapNames = traps.map((t) => t['name'] as String? ?? 'Trap ${traps.indexOf(t) + 1}').toList();
+          
+          cycles.add({
+            'id': doc.id,
+            'name': data['cycleName'] ?? 'Unknown Cycle',
+            'fieldName': data['fieldName'] ?? '',
+            'trapsInstalled': trapsInstalled,
+            'trapNames': trapNames.isEmpty ? ['Trap 1'] : trapNames,
+          });
+        }
+      }
+
+      setState(() {
+        _availableCycles = cycles;
+        _isLoading = false;
+        _canInspectTraps = cycles.isNotEmpty;
+        if (cycles.isNotEmpty) {
+          _selectedCycleId = cycles.first['id'];
+          final firstCycle = cycles.first;
+          final trapNames = firstCycle['trapNames'] as List? ?? ['Trap 1'];
+          if (trapNames.isNotEmpty) {
+            _selectedTrap = trapNames.first;
+          }
+        }
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Error loading data: $e';
+        _isLoading = false;
+      });
+    }
   }
 
   Future<void> _pickDate() async {
@@ -138,26 +221,16 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
     setState(() => _pickedImages.removeAt(index));
   }
 
-  Future<void> _goNext() async {
-    setState(() => _isSaving = true);
-    await Future.delayed(const Duration(milliseconds: 1200));
-    setState(() => _isSaving = false);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Moving to next step...',
-              style: GoogleFonts.inter(color: Colors.white, fontSize: 13)),
-          backgroundColor: _green,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          margin: const EdgeInsets.all(16),
-          duration: const Duration(seconds: 2),
-        ),
-      );
-    }
-  }
-
   void _showTrapModal(BuildContext context) {
+    if (_availableCycles.isEmpty) return;
+    
+    final cycle = _availableCycles.firstWhere(
+      (c) => c['id'] == _selectedCycleId,
+      orElse: () => {},
+    );
+    
+    final trapNames = (cycle['trapNames'] as List?) ?? ['Trap 1'];
+    
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -202,7 +275,7 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
                 ),
               ),
               const Divider(height: 1, color: _borderColor),
-              ..._trapOptions.map((trap) {
+              ...trapNames.map((trap) {
                 final isSelected = trap == _selectedTrap;
                 return GestureDetector(
                   onTap: () {
@@ -238,462 +311,694 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
     );
   }
 
+  Future<void> _saveInspection() async {
+    if (_selectedCycleId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a cycle first')),
+      );
+      return;
+    }
+
+    if (_selectedCondition == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select trap condition')),
+      );
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw Exception('User not authenticated');
+
+      // Save inspection to Firestore
+      final inspectionData = {
+        'trapName': _selectedTrap,
+        'mothCount': _mothCount,
+        'condition': _selectedCondition!.label,
+        'conditionIcon': _selectedCondition!.icon.codePoint,
+        'notes': _notesController.text,
+        'date': Timestamp.fromDate(_selectedDate),
+        'timestamp': FieldValue.serverTimestamp(),
+        'images': _pickedImages.map((img) => img.path).toList(),
+        'cycleId': _selectedCycleId,
+      };
+
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('cycles')
+          .doc(_selectedCycleId)
+          .collection('trapInspections')
+          .add(inspectionData);
+
+      // Also add to daily log
+      final cycleDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('cycles')
+          .doc(_selectedCycleId)
+          .get();
+      
+      final plantingDate = (cycleDoc.data()?['plantingDate'] as Timestamp?)?.toDate();
+      if (plantingDate != null) {
+        final dayIndex = _selectedDate.difference(plantingDate).inDays;
+        if (dayIndex >= 0) {
+          final dayId = 'day_${(dayIndex + 1).toString().padLeft(2, '0')}';
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .collection('cycles')
+              .doc(_selectedCycleId)
+              .collection('dailyLogs')
+              .doc(dayId)
+              .collection('activities')
+              .add({
+            'type': 'Trap Inspection: $_selectedTrap',
+            'notes': 'Inspected $_selectedTrap. Found $_mothCount moths. Condition: ${_selectedCondition!.label}',
+            'images': _pickedImages.map((img) => img.path).toList(),
+            'completed': true,
+            'timestamp': FieldValue.serverTimestamp(),
+            'date': Timestamp.fromDate(_selectedDate),
+          });
+        }
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Trap inspection saved successfully!'),
+            backgroundColor: _green,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            margin: const EdgeInsets.all(16),
+          ),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error saving: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
 
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle.dark,
-      child: Scaffold(
-        backgroundColor: _bgColor,
-        body: FadeTransition(
-          opacity: _fadeAnimation,
-          child: CustomScrollView(
-            slivers: [
-              // ── Custom App Bar ───────────────────────────────────────────
-              SliverAppBar(
-                expandedHeight: 160,
-                pinned: true,
-                backgroundColor: _darkGreen,
-                leading: IconButton(
-                  icon: const Icon(Icons.arrow_back_ios_new_rounded,
-                      color: Colors.white, size: 20),
-                  onPressed: () => Navigator.pop(context),
-                ),
-                flexibleSpace: FlexibleSpaceBar(
-                  background: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      Image.asset(
-                        'assets/images/bg.png',
-                        fit: BoxFit.cover,
+    return Scaffold(
+      backgroundColor: _bgColor,
+      appBar: AppBar(
+        backgroundColor: _darkGreen,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded,
+              color: Colors.white, size: 20),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(
+          'Inspect Trap',
+          style: GoogleFonts.inter(
+            color: Colors.white,
+            fontWeight: FontWeight.w700,
+            fontSize: 18,
+          ),
+        ),
+        centerTitle: true,
+        actions: [
+          // Show active farm name in app bar
+          Consumer<FarmProvider>(
+            builder: (context, farmProvider, child) {
+              final farmName = farmProvider.activeFarmName;
+              if (farmName != null) {
+                return Padding(
+                  padding: const EdgeInsets.only(right: 16),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      farmName,
+                      style: GoogleFonts.inter(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
                       ),
-                      Container(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              const Color(0xFF0C503C).withValues(alpha: 0.78),
-                              const Color(0xFF1A5C30).withValues(alpha: 0.72),
-                            ],
-                          ),
-                        ),
-                      ),
-                      SafeArea(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 48, 20, 16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
+                    ),
+                  ),
+                );
+              }
+              return const SizedBox.shrink();
+            },
+          ),
+        ],
+      ),
+      body: FadeTransition(
+        opacity: _fadeAnimation,
+        child: _isLoading
+            ? const Center(
+                child: CircularProgressIndicator(color: Color(0xFF1A5C30)),
+              )
+            : _errorMessage != null
+                ? _buildErrorState()
+                : !_canInspectTraps
+                    ? _buildLockedState()
+                    : SingleChildScrollView(
+                        padding: EdgeInsets.fromLTRB(16, 20, 16, bottomPadding + 20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // ── Cycle Selector ──────────────────────────
+                            _SectionLabel(label: 'Select Cycle'),
+                            const SizedBox(height: 8),
+                            _buildCycleSelector(),
+                            const SizedBox(height: 20),
+
+                            // ── Inspection Details Row ────────────────
+                            Row(
+                              children: [
+                                // Inspection Date
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      _SectionLabel(label: 'Inspection Date'),
+                                      const SizedBox(height: 8),
+                                      _FormCard(
+                                        child: GestureDetector(
+                                          onTap: _pickDate,
+                                          child: Row(
+                                            children: [
+                                              Container(
+                                                padding: const EdgeInsets.all(9),
+                                                decoration: BoxDecoration(
+                                                  color: _green.withValues(alpha: 0.09),
+                                                  borderRadius: BorderRadius.circular(10),
+                                                ),
+                                                child: const Icon(Icons.calendar_today_rounded, color: _green, size: 18),
+                                              ),
+                                              const SizedBox(width: 12),
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(
+                                                      DateFormat('EEEE').format(_selectedDate),
+                                                      style: GoogleFonts.inter(color: _mutedText, fontSize: 10, fontWeight: FontWeight.w500),
+                                                    ),
+                                                    Text(
+                                                      DateFormat('MMM d, yyyy').format(_selectedDate),
+                                                      style: GoogleFonts.inter(color: _darkGreen, fontSize: 14, fontWeight: FontWeight.w700),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                // Trap Name
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      _SectionLabel(label: 'Trap Name'),
+                                      const SizedBox(height: 8),
+                                      _FormCard(
+                                        child: GestureDetector(
+                                          onTap: () => _showTrapModal(context),
+                                          child: Row(
+                                            children: [
+                                              Container(
+                                                padding: const EdgeInsets.all(9),
+                                                decoration: BoxDecoration(
+                                                  color: _green.withValues(alpha: 0.09),
+                                                  borderRadius: BorderRadius.circular(10),
+                                                ),
+                                                child: const Icon(Icons.location_on_outlined, color: _green, size: 18),
+                                              ),
+                                              const SizedBox(width: 12),
+                                              Expanded(
+                                                child: Text(
+                                                  _selectedTrap,
+                                                  style: GoogleFonts.inter(color: _darkGreen, fontSize: 14, fontWeight: FontWeight.w700),
+                                                  overflow: TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                              const Icon(Icons.expand_more_rounded, color: _mutedText, size: 20),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            const SizedBox(height: 24),
+
+                            // ── Moth Population Counter ──────────────
+                            _SectionLabel(label: 'Moth Population Data'),
+                            const SizedBox(height: 8),
+                            _FormCard(
+                              padding: const EdgeInsets.symmetric(vertical: 24),
+                              child: Stack(
+                                alignment: Alignment.center,
                                 children: [
-                                  Text(
-                                    'Inspect Trap',
-                                    style: GoogleFonts.inter(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 22,
-                                      letterSpacing: -0.3,
+                                  Positioned(
+                                    right: -10,
+                                    top: -10,
+                                    child: Opacity(
+                                      opacity: 0.04,
+                                      child: Icon(
+                                        Icons.pest_control_outlined,
+                                        color: _green,
+                                        size: 140,
+                                      ),
                                     ),
+                                  ),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      _CounterButton(
+                                        icon: Icons.remove_rounded,
+                                        onTap: () {
+                                          if (_mothCount > 0) {
+                                            setState(() => _mothCount--);
+                                          }
+                                        },
+                                      ),
+                                      const SizedBox(width: 40),
+                                      Text(
+                                        '$_mothCount',
+                                        style: GoogleFonts.inter(
+                                          color: _darkGreen,
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 42,
+                                          letterSpacing: -1,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 40),
+                                      _CounterButton(
+                                        icon: Icons.add_rounded,
+                                        onTap: () => setState(() => _mothCount++),
+                                      ),
+                                    ],
                                   ),
                                 ],
                               ),
-                              const SizedBox(height: 10),
-                              Text(
-                                'Record your field observations and track moth populations to maintain crop health.',
-                                style: GoogleFonts.inter(
-                                  color: Colors.white.withValues(alpha: 0.88),
-                                  fontSize: 12,
-                                  height: 1.5,
-                                  fontWeight: FontWeight.w400,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+                            ),
 
-              // ── Form Body ─────────────────────────────────────────────────
-              SliverPadding(
-                padding: EdgeInsets.fromLTRB(16, 20, 16, bottomPadding + 100),
-                sliver: SliverList(
-                  delegate: SliverChildListDelegate([
-                    // ── Inspection Details Row ─────────────────────────────
-                    Row(
-                      children: [
-                        // Inspection Date
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _SectionLabel(label: 'Inspection Date'),
-                              const SizedBox(height: 8),
-                              _FormCard(
-                                child: GestureDetector(
-                                  onTap: _pickDate,
-                                  child: Row(
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.all(9),
+                            const SizedBox(height: 24),
+
+                            // ── Trap Condition ────────────────────────
+                            _SectionLabel(label: 'Trap Condition'),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: TrapCondition.values.map((condition) {
+                                final isSelected = _selectedCondition == condition;
+                                return Expanded(
+                                  child: Padding(
+                                    padding: EdgeInsets.only(
+                                      left: condition != TrapCondition.good ? 6.0 : 0,
+                                      right: condition != TrapCondition.damaged ? 6.0 : 0,
+                                    ),
+                                    child: GestureDetector(
+                                      onTap: () => setState(() => _selectedCondition = condition),
+                                      child: AnimatedContainer(
+                                        duration: const Duration(milliseconds: 200),
+                                        padding: const EdgeInsets.symmetric(vertical: 16),
                                         decoration: BoxDecoration(
-                                          color: _green.withValues(alpha: 0.09),
-                                          borderRadius: BorderRadius.circular(10),
+                                          color: isSelected ? _darkGreen : Colors.white,
+                                          borderRadius: BorderRadius.circular(14),
+                                          border: Border.all(
+                                            color: isSelected ? _darkGreen : _borderColor,
+                                            width: 1.5,
+                                          ),
+                                          boxShadow: isSelected
+                                              ? [
+                                                  BoxShadow(
+                                                    color: _darkGreen.withValues(alpha: 0.2),
+                                                    blurRadius: 8,
+                                                    offset: const Offset(0, 3),
+                                                  )
+                                                ]
+                                              : null,
                                         ),
-                                        child: const Icon(Icons.calendar_today_rounded, color: _green, size: 18),
-                                      ),
-                                      const SizedBox(width: 12),
-                                      Expanded(
                                         child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
                                           children: [
-                                            Text(
-                                              DateFormat('EEEE').format(_selectedDate),
-                                              style: GoogleFonts.inter(color: _mutedText, fontSize: 10, fontWeight: FontWeight.w500),
+                                            Icon(
+                                              condition.icon,
+                                              color: isSelected ? Colors.white : _darkGreen,
+                                              size: 24,
                                             ),
+                                            const SizedBox(height: 8),
                                             Text(
-                                              DateFormat('MMM d, yyyy').format(_selectedDate),
-                                              style: GoogleFonts.inter(color: _darkGreen, fontSize: 14, fontWeight: FontWeight.w700),
+                                              condition.label,
+                                              textAlign: TextAlign.center,
+                                              style: GoogleFonts.inter(
+                                                color: isSelected ? Colors.white : _darkGreen,
+                                                fontSize: 10.5,
+                                                fontWeight: FontWeight.w700,
+                                                height: 1.3,
+                                              ),
                                             ),
                                           ],
                                         ),
                                       ),
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+
+                            const SizedBox(height: 24),
+
+                            // ── Upload Photo ──────────────────────────
+                            _SectionLabel(label: 'Upload Photo'),
+                            const SizedBox(height: 8),
+                            GestureDetector(
+                              onTap: _pickImages,
+                              child: CustomPaint(
+                                painter: _DashedBorderPainter(color: _borderColor),
+                                child: Container(
+                                  width: double.infinity,
+                                  height: 140,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(Icons.camera_alt_outlined, color: _mutedText.withValues(alpha: 0.6), size: 36),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Tap to upload trap photos',
+                                        style: GoogleFonts.inter(
+                                          color: _mutedText,
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
                                     ],
                                   ),
                                 ),
                               ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        // Trap Name
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _SectionLabel(label: 'Trap Name'),
-                              const SizedBox(height: 8),
-                              _FormCard(
-                                child: GestureDetector(
-                                  onTap: () => _showTrapModal(context),
-                                  child: Row(
+                            ),
+                            
+                            // Uploaded Images Grid
+                            if (_pickedImages.isNotEmpty) ...[
+                              const SizedBox(height: 12),
+                              Wrap(
+                                spacing: 10,
+                                runSpacing: 10,
+                                children: _pickedImages.asMap().entries.map((entry) {
+                                  final index = entry.key;
+                                  final file = entry.value;
+                                  return Stack(
                                     children: [
                                       Container(
-                                        padding: const EdgeInsets.all(9),
+                                        width: 90,
+                                        height: 90,
                                         decoration: BoxDecoration(
-                                          color: _green.withValues(alpha: 0.09),
-                                          borderRadius: BorderRadius.circular(10),
-                                        ),
-                                        child: const Icon(Icons.location_on_outlined, color: _green, size: 18),
-                                      ),
-                                      const SizedBox(width: 12),
-                                      Expanded(
-                                        child: Text(
-                                          _selectedTrap,
-                                          style: GoogleFonts.inter(color: _darkGreen, fontSize: 14, fontWeight: FontWeight.w700),
-                                          overflow: TextOverflow.ellipsis,
+                                          borderRadius: BorderRadius.circular(14),
+                                          border: Border.all(color: _borderColor, width: 1.2),
+                                          image: DecorationImage(
+                                            image: FileImage(File(file.path)),
+                                            fit: BoxFit.cover,
+                                          ),
                                         ),
                                       ),
-                                      const Icon(Icons.expand_more_rounded, color: _mutedText, size: 20),
+                                      Positioned(
+                                        top: 4,
+                                        right: 4,
+                                        child: GestureDetector(
+                                          onTap: () => _removeImage(index),
+                                          child: Container(
+                                            padding: const EdgeInsets.all(2),
+                                            decoration: const BoxDecoration(
+                                              color: Colors.white,
+                                              shape: BoxShape.circle,
+                                              boxShadow: [
+                                                BoxShadow(color: Colors.black12, blurRadius: 4)
+                                              ],
+                                            ),
+                                            child: const Icon(Icons.close_rounded, size: 14, color: Colors.red),
+                                          ),
+                                        ),
+                                      ),
                                     ],
-                                  ),
-                                ),
+                                  );
+                                }).toList(),
                               ),
                             ],
-                          ),
-                        ),
-                      ],
-                    ),
 
-                    const SizedBox(height: 24),
+                            const SizedBox(height: 24),
 
-                    // ── Moth Population Counter ────────────────────────────
-                    _SectionLabel(label: 'Moth Population Data'),
-                    const SizedBox(height: 8),
-                    _FormCard(
-                      padding: const EdgeInsets.symmetric(vertical: 24),
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          // Subtle background bug icon
-                          Positioned(
-                            right: -10,
-                            top: -10,
-                            child: Opacity(
-                              opacity: 0.04,
-                              child: Icon(
-                                Icons.pest_control_outlined,
-                                color: _green,
-                                size: 140,
-                              ),
-                            ),
-                          ),
-                          // Counter Row
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              _CounterButton(
-                                icon: Icons.remove_rounded,
-                                onTap: () {
-                                  if (_mothCount > 0) {
-                                    setState(() => _mothCount--);
-                                  }
-                                },
-                              ),
-                              const SizedBox(width: 40),
-                              Text(
-                                '$_mothCount',
+                            // ── Field Notes ───────────────────────────
+                            _SectionLabel(label: 'Field Notes'),
+                            const SizedBox(height: 8),
+                            _FormCard(
+                              padding: EdgeInsets.zero,
+                              child: TextField(
+                                controller: _notesController,
+                                maxLines: 5,
                                 style: GoogleFonts.inter(
                                   color: _darkGreen,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 42,
-                                  letterSpacing: -1,
+                                  fontSize: 14,
+                                  height: 1.5,
                                 ),
-                              ),
-                              const SizedBox(width: 40),
-                              _CounterButton(
-                                icon: Icons.add_rounded,
-                                onTap: () => setState(() => _mothCount++),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    // ── Trap Condition ──────────────────────────────────────
-                    _SectionLabel(label: 'Trap Condition'),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: TrapCondition.values.map((condition) {
-                        final isSelected = _selectedCondition == condition;
-                        return Expanded(
-                          child: Padding(
-                            padding: EdgeInsets.only(
-                              left: condition != TrapCondition.good ? 6.0 : 0,
-                              right: condition != TrapCondition.damaged ? 6.0 : 0,
-                            ),
-                            child: GestureDetector(
-                              onTap: () => setState(() => _selectedCondition = condition),
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 200),
-                                padding: const EdgeInsets.symmetric(vertical: 16),
-                                decoration: BoxDecoration(
-                                  color: isSelected ? _darkGreen : Colors.white,
-                                  borderRadius: BorderRadius.circular(14),
-                                  border: Border.all(
-                                    color: isSelected ? _darkGreen : _borderColor,
-                                    width: 1.5,
+                                decoration: InputDecoration(
+                                  hintText:
+                                      'Any additional observations about the trap location or surrounding area…',
+                                  hintStyle: GoogleFonts.inter(
+                                    color: _mutedText,
+                                    fontSize: 13,
                                   ),
-                                  boxShadow: isSelected
-                                      ? [
-                                          BoxShadow(
-                                            color: _darkGreen.withValues(alpha: 0.2),
-                                            blurRadius: 8,
-                                            offset: const Offset(0, 3),
-                                          )
-                                        ]
-                                      : null,
-                                ),
-                                child: Column(
-                                  children: [
-                                    Icon(
-                                      condition.icon,
-                                      color: isSelected ? Colors.white : _darkGreen,
-                                      size: 24,
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      condition.label,
-                                      textAlign: TextAlign.center,
-                                      style: GoogleFonts.inter(
-                                        color: isSelected ? Colors.white : _darkGreen,
-                                        fontSize: 10.5,
-                                        fontWeight: FontWeight.w700,
-                                        height: 1.3,
-                                      ),
-                                    ),
-                                  ],
+                                  contentPadding: const EdgeInsets.all(16),
+                                  border: InputBorder.none,
                                 ),
                               ),
                             ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
 
-                    const SizedBox(height: 24),
+                            const SizedBox(height: 32),
 
-                    // ── Upload Photo (Dashed Border) ────────────────────────
-                    _SectionLabel(label: 'Upload Photo'),
-                    const SizedBox(height: 8),
-                    GestureDetector(
-                      onTap: _pickImages,
-                      child: CustomPaint(
-                        painter: _DashedBorderPainter(color: _borderColor),
-                        child: Container(
-                          width: double.infinity,
-                          height: 140,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.camera_alt_outlined, color: _mutedText.withValues(alpha: 0.6), size: 36),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Tap to upload trap photos',
-                                style: GoogleFonts.inter(
-                                  color: _mutedText,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    
-                    // Uploaded Images Grid
-                    if (_pickedImages.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
-                        children: _pickedImages.asMap().entries.map((entry) {
-                          final index = entry.key;
-                          final file = entry.value;
-                          return Stack(
-                            children: [
-                              Container(
-                                width: 90,
-                                height: 90,
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(14),
-                                  border: Border.all(color: _borderColor, width: 1.2),
-                                  image: DecorationImage(
-                                    image: FileImage(File(file.path)),
-                                    fit: BoxFit.cover,
-                                  ),
-                                ),
-                              ),
-                              Positioned(
-                                top: 4,
-                                right: 4,
-                                child: GestureDetector(
-                                  onTap: () => _removeImage(index),
-                                  child: Container(
-                                    padding: const EdgeInsets.all(2),
-                                    decoration: const BoxDecoration(
-                                      color: Colors.white,
-                                      shape: BoxShape.circle,
-                                      boxShadow: [
-                                        BoxShadow(color: Colors.black12, blurRadius: 4)
-                                      ],
+                            // ── Save Button ───────────────────────────────────
+                            if (_canInspectTraps)
+                              SizedBox(
+                                width: double.infinity,
+                                height: 54,
+                                child: ElevatedButton(
+                                  onPressed: _isSaving ? null : _saveInspection,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: _green,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(16),
                                     ),
-                                    child: const Icon(Icons.close_rounded, size: 14, color: Colors.red),
+                                    elevation: 0,
                                   ),
+                                  child: _isSaving
+                                      ? const SizedBox(
+                                          width: 22,
+                                          height: 22,
+                                          child: CircularProgressIndicator(
+                                              color: Colors.white, strokeWidth: 2.5),
+                                        )
+                                      : Row(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            const Icon(Icons.save_rounded,
+                                                color: Colors.white, size: 18),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              'Save Inspection',
+                                              style: GoogleFonts.inter(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.w700,
+                                                fontSize: 15,
+                                                letterSpacing: 0.2,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                 ),
                               ),
-                            ],
-                          );
-                        }).toList(),
-                      ),
-                    ],
 
-                    const SizedBox(height: 24),
-
-                    // ── Field Notes ────────────────────────────────────────
-                    _SectionLabel(label: 'Field Notes'),
-                    const SizedBox(height: 8),
-                    _FormCard(
-                      padding: EdgeInsets.zero,
-                      child: TextField(
-                        controller: _notesController,
-                        maxLines: 5,
-                        style: GoogleFonts.inter(
-                          color: _darkGreen,
-                          fontSize: 14,
-                          height: 1.5,
-                        ),
-                        decoration: InputDecoration(
-                          hintText:
-                              'Any additional observations about the trap location or surrounding area…',
-                          hintStyle: GoogleFonts.inter(
-                            color: _mutedText,
-                            fontSize: 13,
-                          ),
-                          contentPadding: const EdgeInsets.all(16),
-                          border: InputBorder.none,
+                            const SizedBox(height: 20),
+                          ],
                         ),
                       ),
-                    ),
-                  ]),
+      ),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.error_outline, size: 48, color: Colors.red.shade400),
+          const SizedBox(height: 16),
+          Text(
+            _errorMessage ?? 'Something went wrong',
+            style: GoogleFonts.inter(fontSize: 16, color: Colors.red.shade400),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton(
+            onPressed: _loadData,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _green,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLockedState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.lock_outline, size: 64, color: Colors.grey.shade400),
+            const SizedBox(height: 24),
+            Text(
+              'Traps Not Available',
+              style: GoogleFonts.inter(
+                fontSize: 24,
+                fontWeight: FontWeight.w700,
+                color: _darkGreen,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'You need to have biological control selected and traps installed in a cycle to inspect traps.\n\n'
+              'Go to Monitoring → Select a cycle → Choose Biological Control → Install traps',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                color: _mutedText,
+                height: 1.6,
+              ),
+            ),
+            const SizedBox(height: 32),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.arrow_back, color: Colors.white),
+              label: const Text('Go Back', style: TextStyle(
+                color: Colors.white,
+              ),),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _green,
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
+      ),
+    );
+  }
 
-        // ── Next Button ───────────────────────────────────────────────────
-        bottomNavigationBar: Container(
-          color: _bgColor,
-          padding: EdgeInsets.fromLTRB(16, 12, 16, bottomPadding + 16),
-          child: GestureDetector(
-            onTap: _isSaving ? null : _goNext,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              height: 54,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF0C503C), Color(0xFF1A5C30)],
+  Widget _buildCycleSelector() {
+    if (_availableCycles.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _borderColor),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.info_outline, color: Colors.orange.shade700),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'No cycles with traps installed in your current farm. Please set up traps first.',
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                  color: Colors.orange.shade700,
                 ),
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: _green.withValues(alpha: 0.35),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _borderColor),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: _selectedCycleId,
+          isExpanded: true,
+          hint: const Text('Select a cycle'),
+          icon: const Icon(Icons.expand_more, color: Color(0xFF0C503C)),
+          items: _availableCycles.map((cycle) {
+            return DropdownMenuItem<String>(
+              value: cycle['id'],
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    cycle['name'],
+                    style: GoogleFonts.inter(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                      color: _darkGreen,
+                    ),
+                  ),
+                  Text(
+                    cycle['fieldName'] ?? '',
+                    style: GoogleFonts.inter(
+                      fontSize: 12,
+                      color: _mutedText,
+                    ),
                   ),
                 ],
               ),
-              child: Center(
-                child: _isSaving
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                            color: Colors.white, strokeWidth: 2.5),
-                      )
-                    : Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            'Next',
-                            style: GoogleFonts.inter(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 15,
-                              letterSpacing: 0.2,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          const Icon(Icons.arrow_forward_rounded,
-                              color: Colors.white, size: 18),
-                        ],
-                      ),
-              ),
-            ),
-          ),
+            );
+          }).toList(),
+          onChanged: (value) {
+            setState(() {
+              _selectedCycleId = value;
+              final cycle = _availableCycles.firstWhere((c) => c['id'] == value);
+              final trapNames = cycle['trapNames'] as List? ?? ['Trap 1'];
+              _selectedTrap = trapNames.isNotEmpty ? trapNames.first : 'Trap 1';
+            });
+          },
         ),
       ),
     );

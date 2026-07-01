@@ -7,6 +7,7 @@ class FieldCreation extends StatefulWidget {
   final String farmName;
   final List<Map<String, dynamic>> existingFields;
   final VoidCallback onFinished;
+  final String? suggestedName; // Add this parameter
 
   const FieldCreation({
     super.key,
@@ -14,6 +15,7 @@ class FieldCreation extends StatefulWidget {
     required this.farmName,
     required this.existingFields,
     required this.onFinished,
+    this.suggestedName, // Add this
   });
 
   @override
@@ -30,6 +32,15 @@ class _FieldCreationState extends State<FieldCreation> {
 
   MapMode _mode = MapMode.idle;
   int? _draggingIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    // Auto-populate the field name with the suggested name
+    if (widget.suggestedName != null && widget.suggestedName!.isNotEmpty) {
+      _fieldNameController.text = widget.suggestedName!;
+    }
+  }
 
   // ================= HISTORY =================
   void _save() {
@@ -66,7 +77,6 @@ class _FieldCreationState extends State<FieldCreation> {
     final bounds = camera.visibleBounds;
     final size = _mapKey.currentContext!.size!;
 
-    // Map screen position to lat/lng using visible bounds
     final northLat = bounds.north;
     final southLat = bounds.south;
     final eastLng = bounds.east;
@@ -84,7 +94,6 @@ class _FieldCreationState extends State<FieldCreation> {
   Widget build(BuildContext context) {
     final isDragging = _mode == MapMode.drag;
 
-    // Calculate farm center
     final farmCenter = widget.farmBoundary.isNotEmpty
         ? LatLng(
             widget.farmBoundary.map((p) => p.latitude).reduce((a, b) => a + b) /
@@ -120,13 +129,11 @@ class _FieldCreationState extends State<FieldCreation> {
               options: MapOptions(
                 initialCenter: farmCenter,
                 initialZoom: 16,
-
                 interactionOptions: InteractionOptions(
                   flags: (_mode == MapMode.add || (_mode == MapMode.drag && _draggingIndex != null))
                       ? InteractiveFlag.none
                       : InteractiveFlag.all,
                 ),
-
                 onTap: (_, latlng) {
                   if (_mode == MapMode.add) {
                     _addPoint(latlng);
@@ -135,12 +142,11 @@ class _FieldCreationState extends State<FieldCreation> {
               ),
               children: [
                 TileLayer(
-                  urlTemplate:
-                      'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+                  urlTemplate: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
                   userAgentPackageName: 'com.example.app',
                 ),
 
-                // ================= FARM BOUNDARY (Reference) =================
+                // ================= FARM BOUNDARY =================
                 PolygonLayer(
                   polygons: [
                     Polygon(
@@ -197,7 +203,6 @@ class _FieldCreationState extends State<FieldCreation> {
                             _deletePoint(i);
                             return;
                           }
-
                           if (_mode == MapMode.drag) {
                             setState(() {
                               _draggingIndex = i;
@@ -228,22 +233,16 @@ class _FieldCreationState extends State<FieldCreation> {
                 _btn(Icons.add_location, _mode == MapMode.add, () {
                   setState(() => _mode = MapMode.add);
                 }),
-
                 const SizedBox(height: 10),
-
                 _btn(Icons.open_with, _mode == MapMode.drag, () {
                   setState(() => _mode = MapMode.drag);
                   _draggingIndex = null;
                 }),
-
                 const SizedBox(height: 10),
-
                 _btn(Icons.delete, _mode == MapMode.delete, () {
                   setState(() => _mode = MapMode.delete);
                 }),
-
                 const SizedBox(height: 10),
-
                 _btn(Icons.undo, false, _undo),
               ],
             ),
@@ -256,8 +255,7 @@ class _FieldCreationState extends State<FieldCreation> {
               padding: const EdgeInsets.all(24),
               decoration: const BoxDecoration(
                 color: Colors.white,
-                borderRadius:
-                    BorderRadius.vertical(top: Radius.circular(32)),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -265,8 +263,7 @@ class _FieldCreationState extends State<FieldCreation> {
                 children: [
                   const Text(
                     'Define Field',
-                    style:
-                        TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
                   Text(
@@ -295,8 +292,29 @@ class _FieldCreationState extends State<FieldCreation> {
                         borderRadius: BorderRadius.circular(12),
                         borderSide: BorderSide.none,
                       ),
+                      // Add a suffix icon to indicate auto-generated
+                      suffixIcon: widget.suggestedName != null
+                          ? Icon(
+                              Icons.auto_awesome,
+                              color: Colors.green[400],
+                              size: 18,
+                            )
+                          : null,
                     ),
+                    // Show a hint below the field if auto-generated
                   ),
+                  if (widget.suggestedName != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        'Auto-generated name based on farm fields',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.green[600],
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ),
 
                   const SizedBox(height: 20),
 
@@ -310,7 +328,9 @@ class _FieldCreationState extends State<FieldCreation> {
                               Navigator.pop(context, {
                                 'name': _fieldNameController.text,
                                 'acres': 0,
-                                'crop': null,                                  'boundaries': _fieldPoints,                              });
+                                'crop': null,
+                                'boundaries': _fieldPoints,
+                              });
                             }
                           : null,
                       style: ElevatedButton.styleFrom(

@@ -30,6 +30,10 @@ class FarmProvider extends ChangeNotifier {
     if (snapshot.docs.isNotEmpty) {
       _activeFarmId = snapshot.docs.first.id;
       _activeFarmName = snapshot.docs.first.data()['name'] ?? 'My Farm';
+    } else {
+      // No farms found, clear the active farm
+      _activeFarmId = null;
+      _activeFarmName = null;
     }
 
     _isLoading = false;
@@ -40,5 +44,12 @@ class FarmProvider extends ChangeNotifier {
     _activeFarmId = farmId;
     _activeFarmName = farmName;
     notifyListeners(); // all screens listening will rebuild
+  }
+
+  // Add this method to clear the farm selection
+  void clearFarm() {
+    _activeFarmId = null;
+    _activeFarmName = null;
+    notifyListeners();
   }
 }

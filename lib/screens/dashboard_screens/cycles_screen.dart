@@ -533,96 +533,75 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
   }
 
   Widget _buildActionButtons(String? farmId) {
-    return FutureBuilder<bool>(
-      future: _hasPreviousCycle(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const SizedBox(
-            height: 80,
-            child: Center(
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: darkGreen)),
-          );
-        }
-
-        final hasPreviousCycle = snapshot.data ?? false;
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (!hasPreviousCycle)
-              Container(
-                margin: const EdgeInsets.only(bottom: 16),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFFBF0),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: const Color(0xFFFFE9B0)),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.only(top: 1),
-                      child: Icon(Icons.info_outline,
-                          color: Color(0xFFD48806), size: 18),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        'Record your previous cycle first to enable accurate predictions for new cycles.',
-                        style: GoogleFonts.manrope(
-                          fontSize: 12,
-                          color: const Color(0xFF9A6A00),
-                          height: 1.4,
-                        ),
-                      ),
-                    ),
-                  ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Keep the info banner as informational only (optional)
+        Container(
+          margin: const EdgeInsets.only(bottom: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFFBF0),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFFFE9B0)),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 1),
+                child: Icon(Icons.info_outline,
+                    color: Color(0xFFD48806), size: 18),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'You can start a new cycle or record a previous cycle. Both options are available.',
+                  style: GoogleFonts.manrope(
+                    fontSize: 12,
+                    color: const Color(0xFF9A6A00),
+                    height: 1.4,
+                  ),
                 ),
               ),
-            _actionItem(
-              icon: Icons.eco,
-              title: 'Start New Cycle',
-              subtitle: hasPreviousCycle
-                  ? 'Begin a new cropping cycle'
-                  : 'Previous cycle required first',
-              isPrimary: hasPreviousCycle,
-              isEnabled: hasPreviousCycle,
-              onTap: hasPreviousCycle
-                  ? () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) =>
-                              StartCroppingCycleScreen(farmId: farmId),
-                        ),
-                      );
-                    }
-                  : null,
-            ),
-            const SizedBox(height: 10),
-            _actionItem(
-              icon: Icons.history,
-              title: 'Record Previous Cycle',
-              subtitle: 'Add historical cycle data',
-              isPrimary: !hasPreviousCycle,
-              isEnabled: true,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) =>
-                        RecordCycleScreen(userId: user!.uid),
-                  ),
-                ).then((_) => setState(() {}));
-              },
-            ),
-            const SizedBox(height: 70),
-          ],
-        );
-      },
+            ],
+          ),
+        ),
+        _actionItem(
+          icon: Icons.eco,
+          title: 'Start New Cycle',
+          subtitle: 'Begin a new cropping cycle',
+          isPrimary: true,
+          isEnabled: true, // Always enabled
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) =>
+                    StartCroppingCycleScreen(farmId: farmId),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 10),
+        _actionItem(
+          icon: Icons.history,
+          title: 'Record Previous Cycle',
+          subtitle: 'Add historical cycle data',
+          isPrimary: false,
+          isEnabled: true,
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) =>
+                    RecordCycleScreen(userId: user!.uid),
+              ),
+            ).then((_) => setState(() {}));
+          },
+        ),
+        const SizedBox(height: 70),
+      ],
     );
   }
 
@@ -871,22 +850,6 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
           margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
         ));
       }
-    }
-  }
-
-  Future<bool> _hasPreviousCycle() async {
-    if (user == null) return false;
-    try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user!.uid)
-          .collection('cycles')
-          .where('isCompleted', isEqualTo: true)
-          .limit(1)
-          .get();
-      return snapshot.docs.isNotEmpty;
-    } catch (e) {
-      return false;
     }
   }
 

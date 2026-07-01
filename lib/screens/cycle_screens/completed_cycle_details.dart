@@ -174,8 +174,6 @@ class _CompletedCycleContent extends StatelessWidget {
                     _buildEfficiencyScore(),
                     const SizedBox(height: 24),
                     _buildFinancialResults(),
-                    const SizedBox(height: 24),
-                    _buildSuccessMetrics(),
                     const SizedBox(height: 32),
                     const Text(
                       'Closing Activities',
@@ -203,32 +201,28 @@ class _CompletedCycleContent extends StatelessWidget {
   Widget _buildAppBar(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Stack(
         children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back, color: kPrimaryGreen),
-            onPressed: () => Navigator.pop(context),
-          ),
-          const Text(
-            'Cycle Details',
-            style: TextStyle(
-              color: kPrimaryGreen,
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
+          // Back button - positioned left
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            child: IconButton(
+              icon: const Icon(Icons.arrow_back, color: kPrimaryGreen),
+              onPressed: () => Navigator.pop(context),
             ),
           ),
-          Row(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.share_outlined, color: kPrimaryGreen),
-                onPressed: () {},
+          // Centered title
+          const Center(
+            child: Text(
+              'Cycle Details',
+              style: TextStyle(
+                color: kPrimaryGreen,
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
               ),
-              IconButton(
-                icon: const Icon(Icons.more_vert, color: kPrimaryGreen),
-                onPressed: () {},
-              ),
-            ],
+            ),
           ),
         ],
       ),
@@ -446,35 +440,6 @@ class _CompletedCycleContent extends StatelessWidget {
         children: [
           Text(label, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500)),
           Text(value, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSuccessMetrics() {
-    return Row(
-      children: [
-        Expanded(child: _buildMetricCard('PEST CONTROL SUCCESS', '${pestControlSuccess.toStringAsFixed(1)}%', Icons.bug_report_outlined)),
-        const SizedBox(width: 16),
-        Expanded(child: _buildMetricCard('IRRIGATION ACCURACY', '${irrigationAccuracy.toStringAsFixed(1)}%', Icons.opacity)),
-      ],
-    );
-  }
-
-  Widget _buildMetricCard(String label, String value, IconData icon) {
-    return _buildCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          CircleAvatar(
-            backgroundColor: kBackground,
-            radius: 20,
-            child: Icon(icon, color: kPrimaryGreen, size: 20),
-          ),
-          const SizedBox(height: 16),
-          Text(label, style: const TextStyle(color: kTextGrey, fontSize: 9, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 4),
-          Text(value, style: const TextStyle(color: kPrimaryGreen, fontSize: 24, fontWeight: FontWeight.w900)),
         ],
       ),
     );

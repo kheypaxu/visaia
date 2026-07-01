@@ -2829,6 +2829,7 @@ Widget _buildRecommendedTaskCard({
         const SizedBox(height: 24),
 
         // Add Activity button
+
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: AbsorbPointer(
@@ -2847,6 +2848,9 @@ Widget _buildRecommendedTaskCard({
                           userId: _userId,
                           cycleId: widget.cycleId,
                           shouldAssignCycle: false,
+                          // Pass the current day index so the log saves to the correct day
+                          currentDayIndex: _dailySelectedDay,
+                          plantingDate: _plantingDate,
                         ),
                       ),
                     ).then((_) => _loadDailyLogData(_dailySelectedDay));
@@ -2858,8 +2862,7 @@ Widget _buildRecommendedTaskCard({
                       color: kLightGreenBg,
                       shape: BoxShape.circle,
                     ),
-                    child:
-                        const Icon(Icons.add, size: 18, color: kActionGreen),
+                    child: const Icon(Icons.add, size: 18, color: kActionGreen),
                   ),
                   label: Text('Add Activity',
                       style: GoogleFonts.inter(
@@ -3369,8 +3372,18 @@ Widget _buildRecommendedTaskCard({
                               if (isLocked) return;
                               await _verifyPestObservations(index, data);
                             },
-                            icon: const Icon(Icons.verified_outlined, size: 18),
-                            label: const Text('Verify'),
+                            icon: Icon(
+                              Icons.verified_outlined, 
+                              size: 18,
+                              color: needsVerification ? Colors.white : Colors.white,
+                            ),
+                            label: Text(
+                              needsVerification ? 'Verify Now' : 'Verify',
+                              style: TextStyle(
+                                color: needsVerification ? Colors.white : Colors.white,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: needsVerification ? Colors.orange : kActionGreen,
                               padding: const EdgeInsets.symmetric(vertical: 14),
