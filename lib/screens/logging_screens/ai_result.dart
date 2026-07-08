@@ -254,6 +254,8 @@ class _AIResultScreenState extends State<AIResultScreen> {
                 const SizedBox(height: 14),
                 _buildTreatmentCard(),
                 const SizedBox(height: 14),
+                _buildRiskAssessmentCard(),
+                const SizedBox(height: 14),
                 _buildHistoricalCard(),
                 const SizedBox(height: 28),
                 _buildActionButtons(context),
@@ -420,6 +422,400 @@ class _AIResultScreenState extends State<AIResultScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  // ── Risk Assessment Explanation ───────────────────────────────────────────
+
+  Widget _buildRiskAssessmentCard() {
+    final stage = widget.detectionStage.toLowerCase();
+    final riskLevel = _getRiskLevel();
+    final isLarva = stage.contains('larva');
+    final isMoth = stage.contains('moth');
+    final isEgg = stage.contains('egg');
+    final isPupa = stage.contains('pupa');
+    
+    // Determine life stage details
+    String lifeStageName;
+    IconData lifeStageIcon;
+    String lifeStageDescription;
+    String riskType;
+    Color riskColor;
+    IconData riskIcon;
+    
+    // Life Stage Information
+    if (isMoth) {
+      lifeStageName = 'Moth (Adult)';
+      lifeStageIcon = Icons.flight_takeoff_rounded;
+      lifeStageDescription = 'Adult moths are the reproductive and dispersal stage. They don\'t directly damage crops but lay eggs that become destructive larvae.';
+      riskType = 'Spread Risk';
+      riskIcon = Icons.flight_takeoff_rounded;
+      riskColor = const Color(0xFFD32F2F);
+    } else if (isLarva) {
+      lifeStageName = 'Larva (Caterpillar)';
+      lifeStageIcon = Icons.bug_report_rounded;
+      lifeStageDescription = 'Larvae cause DIRECT crop damage by feeding on leaves, stems, and reproductive structures. This is the most destructive stage.';
+      riskType = 'Infestation/Destruction Risk';
+      riskIcon = Icons.warning_amber_rounded;
+      riskColor = riskLevel == 'High' 
+          ? const Color(0xFFD32F2F) 
+          : riskLevel == 'Medium' 
+              ? const Color(0xFFF57C00) 
+              : const Color(0xFF2E7D32);
+    } else if (isEgg) {
+      lifeStageName = 'Egg Mass';
+      lifeStageIcon = Icons.circle_outlined;
+      lifeStageDescription = 'Egg masses indicate active reproduction. While eggs don\'t damage crops, they will hatch into larvae that will begin feeding within 2-5 days.';
+      riskType = 'Emerging Infestation Risk';
+      riskIcon = Icons.circle_outlined;
+      riskColor = const Color(0xFFF57C00);
+    } else if (isPupa) {
+      lifeStageName = 'Pupa';
+      lifeStageIcon = Icons.settings_overscan_rounded;
+      lifeStageDescription = 'Pupae are the transitional stage before adults emerge. They are usually found in soil or debris and indicate a new generation is developing.';
+      riskType = 'Future Generation Risk';
+      riskIcon = Icons.settings_overscan_rounded;
+      riskColor = const Color(0xFFF57C00);
+    } else {
+      lifeStageName = 'Unknown';
+      lifeStageIcon = Icons.help_outline_rounded;
+      lifeStageDescription = 'The detected stage could not be clearly identified.';
+      riskType = 'Unknown';
+      riskIcon = Icons.help_outline_rounded;
+      riskColor = Colors.grey;
+    }
+    
+    // Crop stage vulnerability explanation
+    String cropVulnerabilityText;
+    String cropStageAction;
+    
+    // Based on the severity (which reflects crop stage vulnerability)
+    if (riskLevel == 'High') {
+      cropVulnerabilityText = 'CRITICAL CROP STAGE: The crop is currently at its most vulnerable stage (Tasseling-Silking). This is when yield is most at risk. Even small pest populations can cause significant economic damage.';
+      cropStageAction = 'IMMEDIATE ACTION REQUIRED: Apply recommended control measures now. Delay of even 24-48 hours can result in significant yield loss.';
+    } else if (riskLevel == 'Medium') {
+      cropVulnerabilityText = 'MODERATE VULNERABILITY: The crop is in a vegetative growth stage where it can recover from some damage. However, pest populations can quickly increase if not addressed.';
+      cropStageAction = 'ACT PROMPTLY: Monitor daily and apply treatment if pest populations continue to grow. Early intervention prevents escalation.';
+    } else {
+      cropVulnerabilityText = 'LOW VULNERABILITY: The crop is either in seedling stage (can recover) or maturity stage (harvest ready). Pest impact is limited.';
+      cropStageAction = 'CONTINUE MONITORING: Regular scouting recommended. Treatment may not be necessary unless pest populations increase significantly.';
+    }
+    
+    // Combined risk explanation
+    String combinedRiskExplanation;
+    String actionRecommendation;
+    
+    if (isMoth) {
+      combinedRiskExplanation = 'SPREAD RISK: Moths are highly mobile and can fly long distances. Even if the crop is at a vulnerable stage, the primary concern is preventing spread to surrounding areas.';
+      actionRecommendation = 'IMMEDIATE: Install pheromone traps to monitor and reduce moth population. Consider perimeter treatments to prevent spread.';
+    } else if (isLarva) {
+      if (riskLevel == 'High') {
+        combinedRiskExplanation = 'CRITICAL COMBINATION: Larvae (direct crop damage) + Critical crop stage (maximum vulnerability) = HIGHEST RISK. The crop is at the tasseling-silking stage where damage directly affects yield.';
+        actionRecommendation = 'URGENT: Apply insecticide immediately. Focus on ear zone and actively growing tissues. Do not wait.';
+      } else if (riskLevel == 'Medium') {
+        combinedRiskExplanation = 'MODERATE RISK: Larvae present but crop is in vegetative stage with some recovery potential. However, if left unchecked, larvae will continue to feed and may reach damaging levels.';
+        actionRecommendation = 'TREAT WITHIN 24-48 HOURS: Apply recommended control to prevent population explosion. Monitor daily for signs of increasing damage.';
+      } else {
+        combinedRiskExplanation = 'LOW RISK: Larvae present but crop is either in seedling stage (can recover) or maturity stage (harvest ready). Damage is minimal and may not require treatment.';
+        actionRecommendation = 'CONTINUE SCOUTING: Monitor regularly. Treatment only needed if populations increase or crop enters a more vulnerable stage.';
+      }
+    } else if (isEgg) {
+      combinedRiskExplanation = 'TIMELY WARNING: Egg masses detected. While they cause no immediate damage, they will hatch into larvae within days. This is the best time to act preventively.';
+      actionRecommendation = 'REMOVE/MONITOR: Remove visible egg masses manually. Apply biological control (Trichogramma wasps). Prepare for larval emergence in 2-5 days.';
+    } else if (isPupa) {
+      combinedRiskExplanation = 'FUTURE GENERATION WARNING: Pupae indicate a new generation of moths will emerge soon. This will increase spread risk in the coming weeks.';
+      actionRecommendation = 'PREPARE: Strengthen biological control. Consider soil treatments. Prepare monitoring and control measures for the emerging adult population.';
+    } else {
+      combinedRiskExplanation = 'DETECTION UNCLEAR: The pest stage could not be identified with certainty. Manual verification is recommended.';
+      actionRecommendation = 'VERIFY: Conduct field scouting to confirm pest presence and stage. Assess damage level and crop status.';
+    }
+    
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: riskColor.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: riskColor.withOpacity(0.2), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.02),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Header ──
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: riskColor.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(riskIcon, color: riskColor, size: 22),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(lifeStageIcon, color: riskColor, size: 18),
+                        const SizedBox(width: 8),
+                        Text(
+                          lifeStageName,
+                          style: GoogleFonts.manrope(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: _darkGreen,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Text(
+                      riskType,
+                      style: GoogleFonts.manrope(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: riskColor,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: riskColor.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: riskColor.withOpacity(0.3)),
+                ),
+                child: Text(
+                  widget.severity.toUpperCase(),
+                  style: GoogleFonts.manrope(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: riskColor,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          
+          const SizedBox(height: 16),
+          const Divider(height: 1, color: _border),
+          const SizedBox(height: 16),
+          
+          // ── Life Stage Description ──
+          _buildRiskSection(
+            icon: Icons.info_outline_rounded,
+            color: _muted,
+            title: 'What does this life stage mean?',
+            content: lifeStageDescription,
+          ),
+          
+          const SizedBox(height: 14),
+          
+          // ── Crop Vulnerability ──
+          _buildRiskSection(
+            icon: Icons.eco_rounded,
+            color: _green,
+            title: 'Crop Stage Vulnerability',
+            content: cropVulnerabilityText,
+          ),
+          
+          const SizedBox(height: 14),
+          
+          // ── Combined Risk Assessment ──
+          _buildRiskSection(
+            icon: Icons.analytics_rounded,
+            color: riskColor,
+            title: 'Combined Risk Assessment',
+            content: combinedRiskExplanation,
+          ),
+          
+          const SizedBox(height: 16),
+          
+          // ── Action Recommendation ──
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: riskColor.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: riskColor.withOpacity(0.2)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: riskColor.withOpacity(0.2),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.priority_high_rounded,
+                    color: riskColor,
+                    size: 16,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'RECOMMENDED ACTION',
+                        style: GoogleFonts.manrope(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: riskColor,
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        actionRecommendation,
+                        style: GoogleFonts.manrope(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: _darkGreen,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          const SizedBox(height: 12),
+          
+          // ── Risk Level Indicator ──
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: riskColor.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.gpp_maybe_rounded, color: riskColor, size: 16),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Risk Level: ${riskLevel.toUpperCase()}',
+                            style: GoogleFonts.manrope(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: riskColor,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (isLarva)
+                        Text(
+                          'Infestation/Destruction Risk',
+                          style: GoogleFonts.manrope(
+                            fontSize: 10,
+                            color: _muted,
+                          ),
+                        )
+                      else if (isMoth)
+                        Text(
+                          'Spread Risk',
+                          style: GoogleFonts.manrope(
+                            fontSize: 10,
+                            color: _muted,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                Container(
+                  width: 60,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade200,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  child: FractionallySizedBox(
+                    widthFactor: riskLevel == 'High' ? 1.0 : riskLevel == 'Medium' ? 0.6 : 0.3,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: riskColor,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Helper widget for risk sections ──
+
+  Widget _buildRiskSection({
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String content,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          margin: const EdgeInsets.only(top: 2),
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Icon(icon, color: color, size: 14),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: GoogleFonts.manrope(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: _darkGreen,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                content,
+                style: GoogleFonts.manrope(
+                  fontSize: 13,
+                  color: _bodyText,
+                  height: 1.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 

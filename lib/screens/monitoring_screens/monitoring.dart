@@ -16,6 +16,7 @@ import 'package:flutter/gestures.dart';
 import 'package:visaia/screens/logging_screens/field_scouting_demo.dart';
 import 'package:visaia/screens/logging_screens/trap_lists.dart';
 import 'package:visaia/screens/logging_screens/trap_guide.dart';
+import 'package:visaia/utils/growth_stage.dart';
 
 // ==========================================
 // BRAND COLORS
@@ -50,6 +51,9 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   bool _wasThresholdTriggered = false;
   Map<String, dynamic>? _pendingChemicalRecommendation;
   bool _trapsInstalled = false;
+  String _fieldId = '';
+  String _farmId = '';
+  String _farmName = '';
 
   @override
   void initState() {
@@ -103,6 +107,12 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   int get _currentWeekFromPlanting =>
       (_currentDayFromPlanting / 7).ceil().clamp(1, _totalWeeks);
 
+  int get _selectedDayDap {
+    if (_plantingDate == null) return 0;
+    final dayDate = _getDayDate(_dailySelectedDay);
+    return dayDate.difference(_plantingDate!).inDays.clamp(0, _totalDays);
+  }
+
   // Weekly state
   int _selectedWeek = 0;
   int _expandedStationIndex = -1;
@@ -155,6 +165,9 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   // UI state
   bool _showControlModal = false;
   bool _showSuccessModal = false;
+  // Clustered report UI state
+  bool _showClusteredReportButton = false;
+  bool _isSavingReport = false;
 
   List<Map<String, dynamic>> _getDefaultStations(int count) {
     return List.generate(count, (i) => {
@@ -573,13 +586,10 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
 Future<void> _checkThresholdAfterCompletion() async {
   setState(() {
     _isCalculatingThreshold = true;
-    _wasThresholdTriggered = true; // Mark that threshold was triggered
   });
   
-  // Simulate a short loading animation (500ms)
   await Future.delayed(const Duration(milliseconds: 500));
   
-  // Calculate totals
   int totalDamaged = 0;
   int totalInspected = 0;
   for (var station in _stationData) {
@@ -588,15 +598,20 @@ Future<void> _checkThresholdAfterCompletion() async {
   }
   
   setState(() => _isCalculatingThreshold = false);
-  
-  // Avoid division by zero
   double damagePercent = (totalInspected > 0) ? (totalDamaged / totalInspected) * 100 : 0.0;
   
   if (damagePercent >= 10.0) {
+    _wasThresholdTriggered = true; // ✅ Move this inside the condition
     _showControlMethodModalWithResult(damagePercent, totalDamaged, totalInspected);
+    setState(() {
+      _showClusteredReportButton = true;
+    });
   } else {
     _showSafeModal(damagePercent, totalDamaged, totalInspected);
-    _wasThresholdTriggered = false; // Reset if no threshold
+    _wasThresholdTriggered = false;
+    setState(() {
+      _showClusteredReportButton = false;
+    });
   }
 }
 
@@ -699,7 +714,7 @@ void _showSafeModal(double percent, int damaged, int inspected) {
   );
 }
 
-  void _completeStationItem(int index) {
+  void _completeStationItem(int index) async {
     if (_isCurrentWeekLocked) return;
     
     final station = _stationData[index];
@@ -729,6 +744,7 @@ void _showSafeModal(double percent, int damaged, int inspected) {
     final totalStations = _stationData.length;
     final completedCount = _stationData.where((s) => s['completed'] as bool? ?? false).length;
     if (completedCount == totalStations && totalStations > 0) {
+      await _updateCycleGrowthStage();
       _checkThresholdAfterCompletion();
     }
   }
@@ -736,70 +752,74 @@ void _showSafeModal(double percent, int damaged, int inspected) {
   // ========================
   // DATA LOADING
   // ========================
-  Future<void> _loadCycleData() async {
-    try {
-      final cycle = await _firestoreService
-          .getCycle(widget.cycleId)
-          .timeout(const Duration(seconds: 15));
-      if (cycle == null) {
-        setState(() {
-          _error = 'Cycle not found';
-          _isInitialLoading = false;
-        });
-        return;
-      }
-
-      final planting = (cycle['plantingDate'] as Timestamp?)?.toDate();
-      final harvest = (cycle['harvestDate'] as Timestamp?)?.toDate();
-
-      if (planting == null || harvest == null) {
-        setState(() {
-          _error = 'Invalid cycle dates';
-          _isInitialLoading = false;
-        });
-        return;
-      }
-
-      if (harvest.isBefore(planting) || harvest.isAtSameMomentAs(planting)) {
-        setState(() {
-          _error = 'Harvest date must be after planting date';
-          _isInitialLoading = false;
-        });
-        return;
-      }
-
-      final controlMethod = cycle['controlMethod'] as String?;
-
+Future<void> _loadCycleData() async {
+  try {
+    final cycle = await _firestoreService
+        .getCycle(widget.cycleId)
+        .timeout(const Duration(seconds: 15));
+    if (cycle == null) {
       setState(() {
-        _plantingDate = planting;
-        _harvestDate = harvest;
-        _cycleName = cycle['cycleName'] ?? 'Unknown Cycle';
-        _fieldName = cycle['fieldName'] ?? 'Unknown Field';
-        _selectedWeek = (_currentWeekFromPlanting - 1).clamp(0, _totalWeeks - 1);
-        _dailySelectedDay = _currentDayFromPlanting.clamp(
-          _selectedWeek * 7,
-          ((_selectedWeek * 7 + 6).clamp(0, _totalDays - 1)),
-        );
-        _selectedControlMethod = controlMethod;
-        _trapsInstalled = cycle['trapsInstalled'] == true;
-      });
-
-      await _loadWeekData(_selectedWeek);
-      await _loadDailyLogData(_dailySelectedDay);
-    } on TimeoutException {
-      setState(() {
-        _error = 'Loading cycle data timed out. Check your connection.';
-      });
-    } catch (e) {
-      setState(() {
-        _error = 'Failed to load cycle data: $e';
-      });
-    } finally {
-      setState(() {
+        _error = 'Cycle not found';
         _isInitialLoading = false;
       });
+      return;
     }
+
+    final planting = (cycle['plantingDate'] as Timestamp?)?.toDate();
+    final harvest = (cycle['harvestDate'] as Timestamp?)?.toDate();
+
+    if (planting == null || harvest == null) {
+      setState(() {
+        _error = 'Invalid cycle dates';
+        _isInitialLoading = false;
+      });
+      return;
+    }
+
+    if (harvest.isBefore(planting) || harvest.isAtSameMomentAs(planting)) {
+      setState(() {
+        _error = 'Harvest date must be after planting date';
+        _isInitialLoading = false;
+      });
+      return;
+    }
+
+    final controlMethod = cycle['controlMethod'] as String?;
+
+    setState(() {
+      _plantingDate = planting;
+      _harvestDate = harvest;
+      _cycleName = cycle['cycleName'] ?? 'Unknown Cycle';
+      _fieldName = cycle['fieldName'] ?? 'Unknown Field';
+      _fieldId = cycle['fieldId'] ?? ''; // ← Add this
+      _farmId = cycle['farmId'] ?? '';   // ← Add this
+      _farmName = cycle['farmName'] ?? ''; // ← Add this
+      _selectedWeek = (_currentWeekFromPlanting - 1).clamp(0, _totalWeeks - 1);
+      _dailySelectedDay = _currentDayFromPlanting.clamp(
+        _selectedWeek * 7,
+        ((_selectedWeek * 7 + 6).clamp(0, _totalDays - 1)),
+      );
+      _selectedControlMethod = controlMethod;
+      _trapsInstalled = cycle['trapsInstalled'] == true;
+    });
+
+    await _loadWeekData(_selectedWeek);
+    await _loadDailyLogData(_dailySelectedDay);
+    await _updateCycleGrowthStage();
+  } on TimeoutException {
+    setState(() {
+      _error = 'Loading cycle data timed out. Check your connection.';
+    });
+  } catch (e) {
+    setState(() {
+      _error = 'Failed to load cycle data: $e';
+    });
+  } finally {
+    setState(() {
+      _isInitialLoading = false;
+    });
   }
+}
 
   Future<void> _loadWeekData(int weekIndex) async {
     if (weekIndex < 0 || weekIndex >= _totalWeeks) return;
@@ -1066,6 +1086,8 @@ void _showSafeModal(double percent, int damaged, int inspected) {
                           _buildHeader(),
                           const SizedBox(height: 12),
                           _buildControlMethodsCard(),
+                          const SizedBox(height: 12),
+                          _buildGrowthStageCard(),
                           const SizedBox(height: 16),
                           Expanded(
                             child: SingleChildScrollView(
@@ -1095,7 +1117,7 @@ void _showSafeModal(double percent, int damaged, int inspected) {
             ),
             if (_isCalculatingThreshold)
             Container(
-              color: Colors.black.withOpacity(0.5),
+              color: Colors.black.withValues(alpha:0.5),
               child: const Center(
                 child: Card(
                   elevation: 8,
@@ -1553,6 +1575,51 @@ if (isBiological) {
   }
 }
 
+// Helper to get field location
+Future<GeoPoint?> _getFieldLocation() async {
+  try {
+    final cycleDoc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(_userId)
+        .collection('cycles')
+        .doc(widget.cycleId)
+        .get();
+    
+    if (cycleDoc.exists) {
+      final data = cycleDoc.data();
+      final fieldId = data?['fieldId'] as String?;
+      if (fieldId != null) {
+        final fieldDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(_userId)
+            .collection('fields')
+            .doc(fieldId)
+            .get();
+        
+        if (fieldDoc.exists) {
+          final fieldData = fieldDoc.data();
+          final boundaries = fieldData?['boundaries'] as List?;
+          if (boundaries != null && boundaries.isNotEmpty) {
+            double latSum = 0;
+            double lngSum = 0;
+            for (final point in boundaries) {
+              latSum += (point['lat'] as num).toDouble();
+              lngSum += (point['lng'] as num).toDouble();
+            }
+            final lat = latSum / boundaries.length;
+            final lng = lngSum / boundaries.length;
+            return GeoPoint(lat, lng);
+          }
+        }
+      }
+    }
+    return null;
+  } catch (e) {
+    print('Error getting field location: $e');
+    return null;
+  }
+}
+
 void _showChemicalInfoDialog() {
   final recommendation = _getChemicalRecommendation();
   
@@ -1695,6 +1762,11 @@ void _showChemicalInfoDialog() {
   );
 }
 
+GrowthStageInfo _getCurrentGrowthStage() {
+  final dap = _selectedDayDap;
+  return getGrowthStage(dap);
+}
+
 Map<String, dynamic> _getChemicalRecommendation() {
   final weekNumber = _selectedWeek + 1;
   final hasThresholdTriggered = _wasThresholdTriggered;
@@ -1788,6 +1860,65 @@ void _addChemicalRecommendationsToTasks() {
   }
 }
 
+Widget _buildGrowthStageCard() {
+  final info = _getCurrentGrowthStage();
+  final color = info.vulnerabilityScore >= 0.7 ? kAccentRed : kActionGreen;
+  
+  return Container(
+    margin: const EdgeInsets.symmetric(horizontal: 20),
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: color.withValues(alpha: 0.3)),
+      boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 10)],
+    ),
+    child: Row(
+      children: [
+        Icon(Icons.eco, color: color, size: 28),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Growth Stage',
+                style: GoogleFonts.inter(fontSize: 12, color: kTextGrey),
+              ),
+              Text(
+                info.name,
+                style: GoogleFonts.inter(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: color,
+                ),
+              ),
+              Text(
+                'DAP $_selectedDayDap • ${info.riskLabel} vulnerability',
+                style: GoogleFonts.inter(fontSize: 12, color: kTextGrey),
+              ),
+            ],
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            info.vulnerabilityScore.toStringAsFixed(1),
+            style: GoogleFonts.inter(
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
   // ========================
   // WEEKLY CONTENT (main body — no tabs)
   // ========================
@@ -1812,7 +1943,7 @@ void _addChemicalRecommendationsToTasks() {
         if (_isWeekLoading)
           Positioned.fill(
             child: Container(
-              color: Colors.white.withOpacity(0.7),
+              color: Colors.white.withValues(alpha:0.7),
               child: const Center(
                 child:
                     CircularProgressIndicator(color: kActionGreen, strokeWidth: 2),
@@ -2060,6 +2191,39 @@ void _addChemicalRecommendationsToTasks() {
               isLocked: _isCurrentWeekLocked,
             );
           }),
+          if (_showClusteredReportButton)
+            Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: ElevatedButton.icon(
+                onPressed: _isSavingReport ? null : _createClusteredReport,
+                icon: _isSavingReport
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.report_problem, color: Colors.white),
+                label: Text(
+                  _isSavingReport ? 'Saving...' : 'Create Clustered Report',
+                  style: GoogleFonts.inter(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                    color: Colors.white,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFC62828),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  minimumSize: const Size(double.infinity, 54),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -3801,4 +3965,140 @@ Widget _buildRecommendedTaskCard({
           ]),
     );
   }
+
+  Future<void> _updateCycleGrowthStage() async {
+  try {
+    final currentDap = _currentDayFromPlanting;
+    final growthInfo = getGrowthStage(currentDap);
+    
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(_userId)
+        .collection('cycles')
+        .doc(widget.cycleId)
+        .update({
+      'currentDap': currentDap,
+      'currentGrowthStage': growthInfo.name,
+      'currentGrowthStageScore': growthInfo.vulnerabilityScore,
+      'currentRiskLabel': growthInfo.riskLabel,
+      'lastUpdated': FieldValue.serverTimestamp(),
+    });
+  } catch (e) {
+    print('Error updating growth stage: $e');
+  }
+}
+
+Future<void> _createClusteredReport() async {
+  if (_isSavingReport) return;
+  setState(() => _isSavingReport = true);
+
+  try {
+    // 1. Collect totals
+    int totalInspected = _stationData.fold(0, (sum, s) => sum + (s['plantsInspected'] as int? ?? 0));
+    double damagePercent = totalInspected > 0 ? (_totalDamaged / totalInspected) * 100 : 0.0;
+
+    // 2. Get growth stage
+    final growthInfo = _getCurrentGrowthStage();
+
+    // 3. Determine larva risk level based on growth stage (if larvae present)
+    String larvaRiskLevel = 'None';
+    if (_totalLarvae > 0) {
+      if (growthInfo.stage == GrowthStage.seedling) {
+        larvaRiskLevel = 'Low';
+      } else if (growthInfo.stage == GrowthStage.earlyVegetative) {
+        larvaRiskLevel = 'Medium';
+      } else {
+        larvaRiskLevel = 'High';
+      }
+    }
+
+    // 4. Moth risk is always High if any moths present
+    String mothRiskLevel = _totalMoths > 0 ? 'High' : 'None';
+
+    // 5. Get field location
+    final fieldLocation = await _getFieldLocation();
+
+    // 6. Build report data
+    Map<String, dynamic> reportData = {
+      'cycleId': widget.cycleId,
+      'timestamp': FieldValue.serverTimestamp(),
+      'dap': _selectedDayDap,
+      'growthStage': growthInfo.name,
+      'growthStageScore': growthInfo.vulnerabilityScore,
+      'totalDamaged': _totalDamaged,
+      'totalInspected': totalInspected,
+      'damagePercentage': damagePercent,
+      'totals': {
+        'eggs': _totalEggs,
+        'larvae': _totalLarvae,
+        'pupae': _totalPupae,
+        'moths': _totalMoths,
+      },
+      'larvaRisk': {
+        'present': _totalLarvae > 0,
+        'riskLevel': larvaRiskLevel,
+        'riskType': 'Infestation/Destruction',
+      },
+      'mothRisk': {
+        'present': _totalMoths > 0,
+        'riskLevel': mothRiskLevel,
+        'riskType': 'Spread',
+      },
+      'fieldId': _fieldId,
+      'fieldName': _fieldName,
+      'farmId': _farmId,
+      'farmName': _farmName,
+      'location': fieldLocation != null
+          ? {
+              'lat': fieldLocation.latitude,
+              'lng': fieldLocation.longitude,
+            }
+          : null,
+      'stationsData': _stationData.map((s) => {
+        'title': s['title'],
+        'completed': s['completed'],
+        'plantsInspected': s['plantsInspected'],
+        'damaged': s['damaged'],
+        'eggMasses': s['eggMasses'],
+        'larvae': s['larvae'],
+        'pupae': s['pupae'],
+        'moths': s['moths'],
+        'notes': s['notes'],
+      }).toList(),
+    };
+
+    // 7. Save to Firestore
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(_userId)
+        .collection('cycles')
+        .doc(widget.cycleId)
+        .collection('clustered_reports')
+        .add(reportData);
+
+    // 8. Success feedback
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ Clustered report saved successfully!'),
+          backgroundColor: kActionGreen,
+        ),
+      );
+      setState(() {
+        _showClusteredReportButton = false;
+        _isSavingReport = false;
+      });
+    }
+  } catch (e) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to save report: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+    setState(() => _isSavingReport = false);
+  }
+}
 }

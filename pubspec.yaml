@@ -56,6 +56,7 @@ dependencies:
   firebase_auth: ^6.2.0
   provider: ^6.1.5+1
   flutter_markdown: ^0.7.7+1
+  ph_address_finder: ^5.0.1
 
 dev_dependencies:
   flutter_test:

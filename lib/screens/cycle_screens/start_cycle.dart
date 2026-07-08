@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:visaia/utils/growth_stage.dart';
 
 class StartCroppingCycleScreen extends StatefulWidget {
   final String? farmId;
@@ -265,6 +266,16 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
     }
 
     try {
+      // Calculate the current growth stage based on planting date
+      final now = DateTime.now();
+      final planting = plantingDate ?? now;
+      final currentDap = now.difference(planting).inDays.clamp(0, 75);
+      final currentGrowthStage = getGrowthStage(currentDap);
+      
+      // Get all growth stages for this cycle (weekly breakdown)
+      final harvest = harvestDate ?? planting.add(const Duration(days: 75));
+      final weeklyStages = getGrowthStagesForCycle(planting, harvest);
+
       await FirebaseFirestore.instance
           .collection('users')
           .doc(user!.uid)
@@ -286,10 +297,26 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
         'farmId': widget.farmId ?? selectedFarmId,
         'farmName': farmName,
         'createdAt': FieldValue.serverTimestamp(),
+        
+        // ── NEW: Growth stage fields ──
+        'currentDap': currentDap,
+        'currentGrowthStage': currentGrowthStage.name,
+        'currentGrowthStageScore': currentGrowthStage.vulnerabilityScore,
+        'currentRiskLabel': currentGrowthStage.riskLabel,
+        'growthStages': weeklyStages.map((stage) => {
+          'name': stage.name,
+          'minDap': stage.minDap,
+          'maxDap': stage.maxDap,
+          'vulnerabilityScore': stage.vulnerabilityScore,
+          'riskLabel': stage.riskLabel,
+          'description': stage.description,
+        }).toList(),
+        'totalDays': harvest.difference(planting).inDays,
+        'totalWeeks': (harvest.difference(planting).inDays / 7).ceil(),
       });
 
       if (mounted) {
-        _showSnackBar('Cycle saved successfully');
+        _showSnackBar('Cycle saved successfully with growth stage tracking');
         Navigator.pop(context);
       }
     } catch (e) {
