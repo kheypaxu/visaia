@@ -621,7 +621,6 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
               const SizedBox(width: 12),
               Expanded(
                 child: DropdownButtonFormField<String>(
-                  value: _selectedCropType,
                   isExpanded: true,
                   decoration: const InputDecoration(
                     hintText: 'Select crop type',
@@ -689,7 +688,6 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
               const SizedBox(width: 12),
               Expanded(
                 child: DropdownButtonFormField<String>(
-                  value: _selectedVariety,
                   isExpanded: true,
                   decoration: const InputDecoration(
                     hintText: 'Select variety',

@@ -6,7 +6,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:convert';
-import 'dart:typed_data';
 
 class VerificationFormScreen extends StatefulWidget {
   const VerificationFormScreen({Key? key}) : super(key: key);
@@ -358,7 +357,6 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
 
                           // Sex Dropdown
                           DropdownButtonFormField<String>(
-                            value: _selectedSex,
                             style: const TextStyle(color: Colors.white),
                             dropdownColor: const Color(0xFF102216),
                             decoration: InputDecoration(

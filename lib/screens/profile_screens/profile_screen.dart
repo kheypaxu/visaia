@@ -994,23 +994,6 @@ class _FarmCard extends StatelessWidget {
                 ),
               ),
             ),
-          if (!isDeletable && isActive)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                "Can't delete active farm",
-                style: GoogleFonts.manrope(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                  color: ProfileScreen.darkGreen.withValues(alpha: 0.6),
-                ),
-              ),
-            ),
-          if (!isActive && !isDeletable)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(

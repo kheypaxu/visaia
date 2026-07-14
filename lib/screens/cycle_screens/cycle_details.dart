@@ -1171,7 +1171,7 @@ Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
               ),
               GestureDetector(
                 onTap: () {
-                  // TODO: Navigate to full activity log
+        // 
                 },
                 child: Text(
                   'View All',

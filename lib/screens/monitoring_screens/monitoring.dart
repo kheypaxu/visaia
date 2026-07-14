@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:visaia/screens/cycle_screens/completed_cycle_details.dart';
 import 'package:visaia/widgets/success_modal.dart';
 import 'package:visaia/services/firestore_service.dart';
 import 'package:visaia/screens/logging_screens/daily_log_screen.dart';
@@ -54,6 +53,8 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   String _fieldId = '';
   String _farmId = '';
   String _farmName = '';
+  String _farmerId = '';
+  String _farmerName = '';
 
   @override
   void initState() {
@@ -198,6 +199,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   // RECOMMENDED TASKS PER WEEK (weeks 1–8)
   // ========================
   static const Map<int, List<Map<String, dynamic>>> _weeklyRecommendedTasks = {
+    // ... (keep existing weeklyRecommendedTasks) ...
     1: [
       {
         'title': 'Land Preparation (Araro)',
@@ -523,15 +525,21 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   void _decrement(int index, String key) => _decrementPestCount(index, key);
   void _completeStation(int index) => _completeStationItem(index);
 
-  void _updatePlantsInspected(int index) {
+  void _updatePlantsInspected(int index, {bool increment = true}) {
     if (_isCurrentWeekLocked) return;
     setState(() {
       final current = _stationData[index]['plantsInspected'] as int? ?? 0;
-      if (current < 10) {
+      if (increment && current < 100) {
         _stationData[index]['plantsInspected'] = current + 1;
+      } else if (!increment && current > 10) {
+        _stationData[index]['plantsInspected'] = current - 1;
       }
     });
     _scheduleAutoSave();
+  }
+
+  void _decrementPlantsInspected(int index) {
+    _updatePlantsInspected(index, increment: false);
   }
 
   void _incrementPestCount(int index, String key) {
@@ -601,7 +609,7 @@ Future<void> _checkThresholdAfterCompletion() async {
   double damagePercent = (totalInspected > 0) ? (totalDamaged / totalInspected) * 100 : 0.0;
   
   if (damagePercent >= 10.0) {
-    _wasThresholdTriggered = true; // ✅ Move this inside the condition
+    _wasThresholdTriggered = true;
     _showControlMethodModalWithResult(damagePercent, totalDamaged, totalInspected);
     setState(() {
       _showClusteredReportButton = true;
@@ -663,7 +671,7 @@ void _showControlMethodModalWithResult(double percent, int damaged, int inspecte
             Navigator.pop(context);
             setState(() => _showControlModal = true);
           },
-          style: ElevatedButton.styleFrom(backgroundColor: kWhite),
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.white),
           child: const Text('View Control Methods'),
         ),
       ],
@@ -718,8 +726,23 @@ void _showSafeModal(double percent, int damaged, int inspected) {
     if (_isCurrentWeekLocked) return;
     
     final station = _stationData[index];
+    final plantsInspected = station['plantsInspected'] as int? ?? 0;
     final needsVerification = station['verificationRequired'] as bool? ?? false;
     final isVerificationCompleted = station['verificationCompleted'] as bool? ?? false;
+    
+    // Check minimum plants inspected (10)
+    if (plantsInspected < 10) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please inspect at least 10 plants before completing this station'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
     
     if (needsVerification && !isVerificationCompleted) {
       if (mounted) {
@@ -786,14 +809,58 @@ Future<void> _loadCycleData() async {
 
     final controlMethod = cycle['controlMethod'] as String?;
 
+    // Fetch farmer ID from cycle or from the farm
+    String farmerId = cycle['farmerId'] as String? ?? '';
+    String farmerName = '';
+
+    // If farmerId is not in cycle, try to get it from the farm
+    if (farmerId.isEmpty) {
+      final farmId = cycle['farmId'] as String? ?? '';
+      if (farmId.isNotEmpty) {
+        final farmDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(_userId)
+            .collection('farms')
+            .doc(farmId)
+            .get();
+        if (farmDoc.exists) {
+          farmerId = _userId; // The farm belongs to this user
+        }
+      }
+    }
+
+    // Fetch farmer name from farmers collection
+    if (farmerId.isNotEmpty) {
+      final farmerDoc = await FirebaseFirestore.instance
+          .collection('farmers')
+          .doc(farmerId)
+          .get();
+      if (farmerDoc.exists) {
+        final data = farmerDoc.data();
+        farmerName = data?['fullName'] as String? ?? data?['name'] as String? ?? '';
+      } else {
+        // Fallback to users collection
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(farmerId)
+            .get();
+        if (userDoc.exists) {
+          final data = userDoc.data();
+          farmerName = data?['fullName'] as String? ?? data?['name'] as String? ?? '';
+        }
+      }
+    }
+
     setState(() {
       _plantingDate = planting;
       _harvestDate = harvest;
       _cycleName = cycle['cycleName'] ?? 'Unknown Cycle';
       _fieldName = cycle['fieldName'] ?? 'Unknown Field';
-      _fieldId = cycle['fieldId'] ?? ''; // ← Add this
-      _farmId = cycle['farmId'] ?? '';   // ← Add this
-      _farmName = cycle['farmName'] ?? ''; // ← Add this
+      _fieldId = cycle['fieldId'] ?? '';
+      _farmId = cycle['farmId'] ?? '';
+      _farmName = cycle['farmName'] ?? '';
+      _farmerId = farmerId;
+      _farmerName = farmerName;
       _selectedWeek = (_currentWeekFromPlanting - 1).clamp(0, _totalWeeks - 1);
       _dailySelectedDay = _currentDayFromPlanting.clamp(
         _selectedWeek * 7,
@@ -1002,7 +1069,6 @@ Future<void> _loadCycleData() async {
     final chemicalName = task['title'] ?? 'Chemical Application';
     final details = task['details'] ?? task['description'] ?? '';
     
-    // Create a log entry in daily log
     final docRef = FirebaseFirestore.instance
         .collection('users')
         .doc(_userId)
@@ -1024,7 +1090,6 @@ Future<void> _loadCycleData() async {
       'chemicalName': chemicalName,
     });
     
-    // Update Firestore cycle with chemical application record
     await FirebaseFirestore.instance
         .collection('users')
         .doc(_userId)
@@ -1049,7 +1114,6 @@ Future<void> _loadCycleData() async {
       );
     }
     
-    // Refresh daily log
     await _loadDailyLogData(_dailySelectedDay);
     
   } catch (e) {
@@ -1064,7 +1128,6 @@ Future<void> _loadCycleData() async {
     }
   }
 }
-
 
   // ========================
   // BUILD
@@ -1216,7 +1279,6 @@ Widget _buildControlMethodsCard() {
   bool isBiological = _selectedControlMethod == "biological";
   bool isChemical = _selectedControlMethod == "chemical";
 
-  // Chemical Control Card
   if (isChemical) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 20),
@@ -1314,42 +1376,36 @@ Widget _buildControlMethodsCard() {
     );
   }
 
-// Biological Control Card
 if (isBiological) {
-  // Check if traps are installed
   bool trapsInstalled = _trapsInstalled;
   
   return GestureDetector(
     onTap: () async {
       if (trapsInstalled) {
-        // View existing traps - navigate to review screen
         await Navigator.push(
           context,
           MaterialPageRoute(
             builder: (context) => TrapSetupScreen(
               cycleId: widget.cycleId,
               userId: _userId,
-              initialStep: 2, // Start at review step (Step 3)
-              viewOnly: true, // View only mode
+              initialStep: 2,
+              viewOnly: true,
             ),
           ),
         );
       } else {
-        // Install new traps - start from step 1
         await Navigator.push(
           context,
           MaterialPageRoute(
             builder: (context) => TrapSetupScreen(
               cycleId: widget.cycleId,
               userId: _userId,
-              initialStep: 0, // Start from Step 1
+              initialStep: 0,
             ),
           ),
         );
       }
-      // Refresh daily log after returning
       await _loadDailyLogData(_dailySelectedDay);
-      // Refresh traps installed status
       final cycleDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(_userId)
@@ -1463,7 +1519,6 @@ if (isBiological) {
   );
 }
 
-  // Default Control Methods Card (no selection yet)
   return GestureDetector(
     onTap: () => setState(() => _showControlModal = true),
     child: Container(
@@ -1558,7 +1613,6 @@ if (isBiological) {
       );
     }
 
-    // If chemical, add chemical recommendation tasks
     if (method == 'chemical' && mounted) {
       await Future.delayed(const Duration(milliseconds: 500));
       _addChemicalRecommendationsToTasks();
@@ -1771,14 +1825,12 @@ Map<String, dynamic> _getChemicalRecommendation() {
   final weekNumber = _selectedWeek + 1;
   final hasThresholdTriggered = _wasThresholdTriggered;
   
-  // Analyze pest data
   bool hasHighEggs = _totalEggs > 5;
   bool hasHighLarvae = _totalLarvae > 3;
   bool hasHighMoths = _totalMoths > 2;
   
   Map<String, dynamic> recommendation = {};
   
-  // Determine based on crop stage (from Chemical Agents PDF)
   if (weekNumber <= 2) {
     recommendation = {
       'title': 'Apply Prevathon 5SC or Exalt',
@@ -1813,7 +1865,6 @@ Map<String, dynamic> _getChemicalRecommendation() {
     };
   }
   
-  // Add pest-specific guidance if threshold triggered
   if (hasThresholdTriggered) {
     if (hasHighEggs) {
       recommendation['details'] = '⚠️ High egg masses detected. Consider Atabron (IGR) to prevent larval development.';
@@ -1836,16 +1887,12 @@ Map<String, dynamic> _getChemicalRecommendation() {
 void _addChemicalRecommendationsToTasks() {
   final recommendation = _getChemicalRecommendation();
   
-  // Store for use in tasks
   setState(() {
     _pendingChemicalRecommendation = recommendation;
   });
   
-  // Add as recommended task
   final weekNumber = _selectedWeek + 1;
   if (weekNumber <= 8) {
-    // We'll add chemical tasks to the recommended section
-    // This will be handled in _buildRecommendedTasksSection
     setState(() {});
   }
   
@@ -1900,20 +1947,6 @@ Widget _buildGrowthStageCard() {
             ],
           ),
         ),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Text(
-            info.vulnerabilityScore.toStringAsFixed(1),
-            style: GoogleFonts.inter(
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-        ),
       ],
     ),
   );
@@ -1934,7 +1967,6 @@ Widget _buildGrowthStageCard() {
             _buildInspectionPoints(),
             _buildTotalFindings(),
             const SizedBox(height: 24),
-            // ---- Daily Activity Log inline, scoped to this week ----
             _buildDailyActivitySection(),
             const SizedBox(height: 32),
             _buildSaveButton(),
@@ -1978,7 +2010,6 @@ Widget _buildGrowthStageCard() {
               bool isLocked = index + 1 > _currentWeekFromPlanting;
               return GestureDetector(
                 onTap: () async {
-                  // When switching weeks, default day to first unlocked day in that week
                   final weekFirstDay = index * 7;
                   final weekLastDay =
                       (weekFirstDay + 6).clamp(0, _totalDays - 1);
@@ -2004,12 +2035,11 @@ Widget _buildGrowthStageCard() {
                     shape: BoxShape.circle,
                   ),
                   child: Stack(
-                    alignment: Alignment.center, // Center the stack content
+                    alignment: Alignment.center,
                     children: [
-                      // Center the Column
                       Column(
-                        mainAxisAlignment: MainAxisAlignment.center, // Center vertically
-                        crossAxisAlignment: CrossAxisAlignment.center, // Center horizontally
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
                           Text('Week',
                               style: GoogleFonts.inter(
@@ -2309,7 +2339,6 @@ Widget _buildGrowthStageCard() {
   
   List<Map<String, dynamic>> chemicalTasks = [];
   
-  // Add chemical recommendation if available
   if (_pendingChemicalRecommendation != null) {
     chemicalTasks.add({
       'title': _pendingChemicalRecommendation!['title'] ?? 'Apply Chemical Control',
@@ -2333,18 +2362,12 @@ Widget _buildRecommendedTasksSection() {
   final weekNumber = _selectedWeek + 1;
   if (weekNumber > 8) return const SizedBox.shrink();
 
-  // Get regular recommended tasks
   final regularTasks = _weeklyRecommendedTasks[weekNumber] ?? [];
-  
-  // Get chemical tasks (if chemical control is selected)
   final chemicalTasks = _getChemicalTasksForWeek(weekNumber);
-  
-  // Combine tasks
   final allTasks = [...regularTasks, ...chemicalTasks];
   
   final stateMap = _recommendedTaskState[_selectedWeek] ?? {};
 
-  // Separate into active and completed (not deleted)
   final activeTasks = <MapEntry<int, Map<String, dynamic>>>[];
   final completedTasks = <MapEntry<int, Map<String, dynamic>>>[];
 
@@ -2364,7 +2387,6 @@ Widget _buildRecommendedTasksSection() {
   return Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      // Header
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: Row(
@@ -2427,7 +2449,6 @@ Widget _buildRecommendedTasksSection() {
       ),
       const SizedBox(height: 12),
 
-      // Active recommended tasks
       if (activeTasks.isNotEmpty)
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -2444,7 +2465,6 @@ Widget _buildRecommendedTasksSection() {
           ),
         ),
 
-      // Completed recommended tasks
       if (completedTasks.isNotEmpty) ...[
         const SizedBox(height: 4),
         Padding(
@@ -2472,7 +2492,7 @@ Widget _buildRecommendedTaskCard({
   required int taskIndex,
   required Map<String, dynamic> task,
   required bool isCompleted,
-  bool isChemical = false, // Add this parameter
+  bool isChemical = false,
 }) {
   final isChemicalTask = isChemical || task['isChemical'] == true;
   
@@ -2497,7 +2517,6 @@ Widget _buildRecommendedTaskCard({
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Icon badge
         Container(
           width: 36,
           height: 36,
@@ -2521,7 +2540,6 @@ Widget _buildRecommendedTaskCard({
         ),
         const SizedBox(width: 12),
 
-        // Text
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2545,7 +2563,6 @@ Widget _buildRecommendedTaskCard({
                       ),
                     ),
                   ),
-                  // Category chip
                   Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 7, vertical: 2),
@@ -2583,7 +2600,6 @@ Widget _buildRecommendedTaskCard({
                     height: 1.4,
                   ),
                 ),
-                // Show chemical details if available
                 if (isChemicalTask && task['details'] != null) ...[
                   const SizedBox(height: 6),
                   Container(
@@ -2615,10 +2631,8 @@ Widget _buildRecommendedTaskCard({
               ],
               const SizedBox(height: 10),
 
-              // Action buttons
               Row(
                 children: [
-                  // Mark complete / Undo button
                   GestureDetector(
                     onTap: () {
                       setState(() {
@@ -2626,7 +2640,6 @@ Widget _buildRecommendedTaskCard({
                         _recommendedTaskState[_selectedWeek]![taskIndex] =
                             isCompleted ? 'active' : 'completed';
                       });
-                      // If chemical task completed, log it to daily log
                       if (!isCompleted && isChemicalTask) {
                         _logChemicalApplicationToDailyLog(task);
                       }
@@ -2667,7 +2680,6 @@ Widget _buildRecommendedTaskCard({
                   ),
                   const SizedBox(width: 8),
 
-                  // Delete button
                   GestureDetector(
                     onTap: () {
                       setState(() {
@@ -2721,7 +2733,6 @@ Widget _buildRecommendedTaskCard({
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Section divider with label
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: Row(
@@ -2771,7 +2782,6 @@ Widget _buildRecommendedTaskCard({
         ),
         const SizedBox(height: 16),
 
-        // Day selector — scoped to days within this week
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.only(left: 20),
@@ -2779,9 +2789,9 @@ Widget _buildRecommendedTaskCard({
             children: weekDays.map((globalDayIndex) {
               final isSelected = globalDayIndex == _dailySelectedDay;
               final isLocked = globalDayIndex > _currentDayFromPlanting;
-              final dayNumber = globalDayIndex + 1; // 1-based
+              final dayNumber = globalDayIndex + 1;
               final dayDate = _getDayDate(globalDayIndex);
-              final dayLabel = DateFormat('EEE').format(dayDate); // e.g. Mon
+              final dayLabel = DateFormat('EEE').format(dayDate);
 
               return GestureDetector(
                 onTap: () async {
@@ -2861,7 +2871,6 @@ Widget _buildRecommendedTaskCard({
             child: _buildLockedBanner('day'),
           ),
 
-        // Selected day info bar
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: Container(
@@ -2899,7 +2908,6 @@ Widget _buildRecommendedTaskCard({
         _buildRecommendedTasksSection(),
         const SizedBox(height: 16),
 
-        // Active tasks
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: Row(
@@ -2947,7 +2955,6 @@ Widget _buildRecommendedTaskCard({
 
         const SizedBox(height: 24),
 
-        // Completed tasks
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: Row(
@@ -2992,8 +2999,6 @@ Widget _buildRecommendedTaskCard({
 
         const SizedBox(height: 24),
 
-        // Add Activity button
-
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: AbsorbPointer(
@@ -3012,7 +3017,6 @@ Widget _buildRecommendedTaskCard({
                           userId: _userId,
                           cycleId: widget.cycleId,
                           shouldAssignCycle: false,
-                          // Pass the current day index so the log saves to the correct day
                           currentDayIndex: _dailySelectedDay,
                           plantingDate: _plantingDate,
                         ),
@@ -3270,7 +3274,6 @@ Widget _buildRecommendedTaskCard({
     final isCompleted = data['completed'] as bool? ?? false;
     final plantsInspected = data['plantsInspected'] as int? ?? 0;
     final needsVerification = data['verificationRequired'] as bool? ?? false;
-    const requiredPlants = 10;
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
@@ -3353,57 +3356,129 @@ Widget _buildRecommendedTaskCard({
                   children: [
                     const SizedBox(height: 20),
                     
-                    // Plants Inspected - Increment to 10
+                    // PLANTS INSPECTED - Starts at 0, can go to 100
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: const Color(0xFFF5F5F5),
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            'PLANTS INSPECTED',
-                            style: GoogleFonts.inter(
-                              fontSize: 9,
-                              color: kTextGrey,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
                           Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              if (plantsInspected < requiredPlants)
-                                GestureDetector(
-                                  onTap: () => _updatePlantsInspected(index),
-                                  child: Container(
-                                    width: 32,
-                                    height: 32,
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      borderRadius: BorderRadius.circular(8),
-                                      border: Border.all(color: kBorderColor),
-                                    ),
-                                    child: const Icon(Icons.add, size: 16, color: kActionGreen),
-                                  ),
-                                ),
-                              const SizedBox(width: 12),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                                decoration: BoxDecoration(
-                                  color: plantsInspected >= requiredPlants ? kLightGreenBg : Colors.white,
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(color: kBorderColor),
-                                ),
-                                child: Text(
-                                  '$plantsInspected / $requiredPlants',
-                                  style: GoogleFonts.inter(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 14,
-                                    color: plantsInspected >= requiredPlants ? kActionGreen : kTextDark,
-                                  ),
+                              Text(
+                                'PLANTS INSPECTED',
+                                style: GoogleFonts.inter(
+                                  fontSize: 9,
+                                  color: kTextGrey,
+                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
+                              Text(
+                                'Minimum 10 required',
+                                style: GoogleFonts.inter(
+                                  fontSize: 9,
+                                  color: plantsInspected >= 10 ? kActionGreen : Colors.orange.shade700,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Row(
+                                children: [
+                                  // Decrement button (always available)
+                                  GestureDetector(
+                                    onTap: () => _decrementPlantsInspected(index),
+                                    child: Container(
+                                      width: 32,
+                                      height: 32,
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(color: kBorderColor),
+                                      ),
+                                      child: const Icon(Icons.remove, size: 16, color: kTextDark),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  // Display current count - just the number
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: plantsInspected >= 10 ? kLightGreenBg : Colors.white,
+                                      borderRadius: BorderRadius.circular(20),
+                                      border: Border.all(
+                                        color: plantsInspected >= 10 ? kActionGreen : Colors.orange.shade200,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      '$plantsInspected',
+                                      style: GoogleFonts.inter(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 18,
+                                        color: plantsInspected >= 10 ? kActionGreen : 
+                                              (plantsInspected > 0 ? Colors.orange.shade700 : kTextGrey),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  // Increment button (only if < 100)
+                                  if (plantsInspected < 100)
+                                    GestureDetector(
+                                      onTap: () => _updatePlantsInspected(index),
+                                      child: Container(
+                                        width: 32,
+                                        height: 32,
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius: BorderRadius.circular(8),
+                                          border: Border.all(color: kBorderColor),
+                                        ),
+                                        child: const Icon(Icons.add, size: 16, color: kActionGreen),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              // Status indicator
+                              plantsInspected < 10
+                                  ? Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: Colors.orange.shade50,
+                                        borderRadius: BorderRadius.circular(10),
+                                        border: Border.all(color: Colors.orange.shade200),
+                                      ),
+                                      child: Text(
+                                        '${10 - plantsInspected} more needed',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 9,
+                                          color: Colors.orange.shade700,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    )
+                                  : Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: kLightGreenBg,
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: Text(
+                                        '✓ Minimum met',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 9,
+                                          color: kActionGreen,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
                             ],
                           ),
                         ],
@@ -3412,7 +3487,6 @@ Widget _buildRecommendedTaskCard({
                     
                     const SizedBox(height: 16),
                     
-                    // Damaged counter (still adjustable)
                     _buildCounterBox(
                       label: 'DAMAGED PLANTS',
                       value: data['damaged'] as int? ?? 0,
@@ -3455,7 +3529,6 @@ Widget _buildRecommendedTaskCard({
                     
                     const SizedBox(height: 16),
                     
-                    // Updated life stages: Egg Masses, Larvae, Pupae, Moths
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -3485,7 +3558,6 @@ Widget _buildRecommendedTaskCard({
                     
                     const SizedBox(height: 12),
                     
-                    // Moths row (new)
                     Row(
                       children: [
                         Expanded(
@@ -3498,7 +3570,7 @@ Widget _buildRecommendedTaskCard({
                           ),
                         ),
                         const SizedBox(width: 12),
-                        Expanded(child: SizedBox()), // Placeholder for alignment
+                        Expanded(child: SizedBox()),
                       ],
                     ),
                     
@@ -3511,7 +3583,6 @@ Widget _buildRecommendedTaskCard({
                     
                     const SizedBox(height: 16),
                     
-                    // Updated button row - Upload Photo and Verify
                     Row(
                       children: [
                         Expanded(
@@ -3562,7 +3633,6 @@ Widget _buildRecommendedTaskCard({
                     
                     const SizedBox(height: 16),
                     
-                    // Show verification warning if needed
                     if (needsVerification && !(data['verificationCompleted'] as bool? ?? false))
                       Container(
                         padding: const EdgeInsets.all(12),
@@ -3588,14 +3658,41 @@ Widget _buildRecommendedTaskCard({
                         ),
                       ),
                     
+                    // Show warning if plants inspected < 10
+                    if (plantsInspected < 10 && !isCompleted)
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.shade50,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.orange.shade200),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.warning_amber, color: Colors.orange, size: 18),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Please inspect at least 10 plants (currently $plantsInspected)',
+                                style: GoogleFonts.inter(
+                                  fontSize: 11,
+                                  color: Colors.orange.shade800,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    
                     const SizedBox(height: 16),
                     
-                    // Complete/Update Station button (disabled if verification needed)
                     SizedBox(
                       width: double.infinity,
                       height: 52,
                       child: ElevatedButton(
-                        onPressed: (isLocked || (needsVerification && !(data['verificationCompleted'] as bool? ?? false)))
+                        onPressed: (isLocked || 
+                            plantsInspected < 10 ||
+                            (needsVerification && !(data['verificationCompleted'] as bool? ?? false)))
                             ? null
                             : () => _completeStation(index),
                         style: ElevatedButton.styleFrom(
@@ -3993,14 +4090,11 @@ Future<void> _createClusteredReport() async {
   setState(() => _isSavingReport = true);
 
   try {
-    // 1. Collect totals
     int totalInspected = _stationData.fold(0, (sum, s) => sum + (s['plantsInspected'] as int? ?? 0));
     double damagePercent = totalInspected > 0 ? (_totalDamaged / totalInspected) * 100 : 0.0;
 
-    // 2. Get growth stage
     final growthInfo = _getCurrentGrowthStage();
 
-    // 3. Determine larva risk level based on growth stage (if larvae present)
     String larvaRiskLevel = 'None';
     if (_totalLarvae > 0) {
       if (growthInfo.stage == GrowthStage.seedling) {
@@ -4012,15 +4106,26 @@ Future<void> _createClusteredReport() async {
       }
     }
 
-    // 4. Moth risk is always High if any moths present
     String mothRiskLevel = _totalMoths > 0 ? 'High' : 'None';
 
-    // 5. Get field location
     final fieldLocation = await _getFieldLocation();
 
-    // 6. Build report data
+    // ─── Build report data ────────────────────────────────────────────────
     Map<String, dynamic> reportData = {
+      // IDs to connect to other collections
+      'userId': _userId,
       'cycleId': widget.cycleId,
+      'farmId': _farmId,
+      'fieldId': _fieldId,
+      'farmerId': _farmerId,
+      
+      // Names for display
+      'farmName': _farmName,
+      'fieldName': _fieldName,
+      'farmerName': _farmerName,
+      'cycleName': _cycleName,
+      
+      // Report data
       'timestamp': FieldValue.serverTimestamp(),
       'dap': _selectedDayDap,
       'growthStage': growthInfo.name,
@@ -4044,10 +4149,6 @@ Future<void> _createClusteredReport() async {
         'riskLevel': mothRiskLevel,
         'riskType': 'Spread',
       },
-      'fieldId': _fieldId,
-      'fieldName': _fieldName,
-      'farmId': _farmId,
-      'farmName': _farmName,
       'location': fieldLocation != null
           ? {
               'lat': fieldLocation.latitude,
@@ -4065,18 +4166,21 @@ Future<void> _createClusteredReport() async {
         'moths': s['moths'],
         'notes': s['notes'],
       }).toList(),
+      
+      // Control method info
+      'controlMethod': _selectedControlMethod,
+      'trapsInstalled': _trapsInstalled,
+      
+      // Status for validation
+      'status': 'pending',
+      'createdAt': FieldValue.serverTimestamp(),
     };
 
-    // 7. Save to Firestore
+    // ─── Save to top-level clustered_reports collection ──────────────────
     await FirebaseFirestore.instance
-        .collection('users')
-        .doc(_userId)
-        .collection('cycles')
-        .doc(widget.cycleId)
         .collection('clustered_reports')
         .add(reportData);
 
-    // 8. Success feedback
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(

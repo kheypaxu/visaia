@@ -477,7 +477,7 @@ class _CompletedCycleContent extends StatelessWidget {
         Column(
           children: [
             const Icon(Icons.check_circle, color: kPrimaryGreen, size: 24),
-            if (showLine) Container(width: 2, height: 50, color: kPrimaryGreen.withOpacity(0.2)),
+            if (showLine) Container(width: 2, height: 50, color: kPrimaryGreen.withValues(alpha:0.2)),
           ],
         ),
         const SizedBox(width: 16),
@@ -512,7 +512,7 @@ class _CompletedCycleContent extends StatelessWidget {
       child: Container(
         height: 240,
         decoration: BoxDecoration(
-          color: kPrimaryGreen.withOpacity(0.1),
+          color: kPrimaryGreen.withValues(alpha:0.1),
           image: const DecorationImage(
             image: NetworkImage('https://images.unsplash.com/photo-1500382017468-9049fed747ef?q=80&w=1000'),
             fit: BoxFit.cover,
@@ -523,7 +523,7 @@ class _CompletedCycleContent extends StatelessWidget {
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: [Colors.transparent, kPrimaryGreen.withOpacity(0.8)],
+              colors: [Colors.transparent, kPrimaryGreen.withValues(alpha:0.8)],
             ),
           ),
           padding: const EdgeInsets.all(24),
@@ -557,7 +557,7 @@ class _CompletedCycleContent extends StatelessWidget {
       decoration: BoxDecoration(
         color: kWhite,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: kBorder.withOpacity(0.5)),
+        border: Border.all(color: kBorder.withValues(alpha:0.5)),
       ),
       child: child,
     );

@@ -33,6 +33,93 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
   static const _mutedText = Color(0xFF9E9E9E);
   static const _borderColor = Color(0xFFDDEEE4);
 
+  // ─── Risk Level System (5 Levels based on Life Stage + DAP) ────────────
+  
+  /// Get growth stage from DAP (Days After Planting)
+  String _getGrowthStageFromDAP(int dap) {
+    if (dap <= 14) return 'SEEDLING';
+    if (dap <= 30) return 'EARLY_WHORL';
+    if (dap <= 45) return 'LATE_WHORL';
+    if (dap <= 55) return 'TASSELING_SILKING';
+    if (dap <= 75) return 'GRAIN_FILLING';
+    return 'MATURITY';
+  }
+
+  /// Get display name for growth stage
+  String _getGrowthStageDisplay(int dap) {
+    if (dap <= 14) return 'Seedling (0-14 DAP)';
+    if (dap <= 30) return 'Early Whorl (14-30 DAP)';
+    if (dap <= 45) return 'Late Whorl (30-45 DAP)';
+    if (dap <= 55) return 'Tasseling-Silking (45-55 DAP)';
+    if (dap <= 75) return 'Grain Filling (55-75 DAP)';
+    return 'Maturity (75+ DAP)';
+  }
+
+  /// Calculate risk level based on life stage and DAP
+  String _calculateRiskLevel({
+    required String lifeStage,
+    required int dap,
+  }) {
+    // Map life stage to key
+    String ls = lifeStage.toLowerCase();
+    String lifeStageKey;
+    if (ls.contains('egg')) lifeStageKey = 'egg';
+    else if (ls.contains('larva') || ls.contains('caterpillar')) lifeStageKey = 'larva';
+    else if (ls.contains('pupa')) lifeStageKey = 'pupa';
+    else if (ls.contains('moth') || ls.contains('adult')) lifeStageKey = 'moth';
+    else lifeStageKey = 'none';
+    
+    // Get growth stage from DAP
+    String growthStageKey = _getGrowthStageFromDAP(dap);
+    
+    // Risk matrix based on FAW Life Stage + Crop Growth Stage
+    // From the MitigationNew.pdf document
+    final riskMatrix = {
+      'egg': {
+        'SEEDLING': 'Low',
+        'EARLY_WHORL': 'Moderate',
+        'LATE_WHORL': 'Moderate',
+        'TASSELING_SILKING': 'Moderate',
+        'GRAIN_FILLING': 'Low',
+        'MATURITY': 'Very Low',
+      },
+      'larva': {
+        'SEEDLING': 'Moderate',
+        'EARLY_WHORL': 'Moderate',
+        'LATE_WHORL': 'High',
+        'TASSELING_SILKING': 'Very High',
+        'GRAIN_FILLING': 'High',
+        'MATURITY': 'Low',
+      },
+      'pupa': {
+        'SEEDLING': 'Very Low',
+        'EARLY_WHORL': 'Very Low',
+        'LATE_WHORL': 'Low',
+        'TASSELING_SILKING': 'Low',
+        'GRAIN_FILLING': 'Low',
+        'MATURITY': 'Low',
+      },
+      'moth': {
+        'SEEDLING': 'Low',
+        'EARLY_WHORL': 'Moderate',
+        'LATE_WHORL': 'High',
+        'TASSELING_SILKING': 'Moderate',
+        'GRAIN_FILLING': 'Low',
+        'MATURITY': 'Low',
+      },
+      'none': {
+        'SEEDLING': 'Very Low',
+        'EARLY_WHORL': 'Very Low',
+        'LATE_WHORL': 'Very Low',
+        'TASSELING_SILKING': 'Very Low',
+        'GRAIN_FILLING': 'Very Low',
+        'MATURITY': 'Very Low',
+      },
+    };
+    
+    return riskMatrix[lifeStageKey]?[growthStageKey] ?? 'Low';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -117,6 +204,20 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
       final daysSincePlanting = DateTime.now().difference(plantingDate).inDays;
       final weekNumber = (daysSincePlanting / 7).floor() + 1;
       final weekId = 'week_$weekNumber';
+
+      // ─── Calculate Risk Level ──────────────────────────────────────────
+      final dap = daysSincePlanting;
+      final riskLevel = _calculateRiskLevel(
+        lifeStage: widget.detectedStage,
+        dap: dap,
+      );
+      final growthStage = _getGrowthStageFromDAP(dap);
+      final growthStageDisplay = _getGrowthStageDisplay(dap);
+
+      print('  📊 Risk Assessment:');
+      print('    DAP: $dap days');
+      print('    Growth Stage: $growthStage ($growthStageDisplay)');
+      print('    Risk Level: $riskLevel');
 
       print('  Days since planting: $daysSincePlanting');
       print('  Week: $weekNumber ($weekId)');
@@ -225,48 +326,30 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
         },
         'completedStations': completedStations,
         'lastUpdated': FieldValue.serverTimestamp(),
+        // ─── Add risk assessment data ──────────────────────────────────
+        'riskAssessment': {
+          'overallRisk': riskLevel,
+          'growthStage': growthStage,
+          'growthStageDisplay': growthStageDisplay,
+          'dap': dap,
+          'weekNumber': weekNumber,
+          'lifeStage': widget.detectedStage,
+          'calculatedAt': FieldValue.serverTimestamp(),
+        },
       }, SetOptions(merge: true));
 
-      print('✓ Week data saved to Firestore');
+      print('✓ Week data saved to Firestore with risk assessment: $riskLevel');
 
       // Verify the save was successful by reading it back
       final verifySnapshot = await weekRef.get();
       if (verifySnapshot.exists) {
         final savedStations = verifySnapshot.data()?['stations'] as List?;
         final savedLarvae = verifySnapshot.data()?['totals']?['larvae'] ?? 0;
-        print('✓✓ VERIFIED: Week data exists with ${savedStations?.length} stations, larvae count: $savedLarvae');
+        final savedRisk = verifySnapshot.data()?['riskAssessment']?['overallRisk'] ?? 'N/A';
+        print('✓✓ VERIFIED: Week data exists with ${savedStations?.length} stations, larvae count: $savedLarvae, risk: $savedRisk');
       } else {
         print('❌ VERIFICATION FAILED: Week document not found after save!');
       }
-
-      // // Save as daily activity
-      // final dayNumber = daysSincePlanting + 1;
-      // final dayId = 'day_${dayNumber.toString().padLeft(2, '0')}';
-      // final activityId = 'pest_ai_${DateTime.now().millisecondsSinceEpoch}';
-      // final activityData = {
-      //   'type': 'AI Pest Detection - ${widget.pestName} (${widget.detectedStage})',
-      //   'notes': 'Added via AI image recognition to Station $_selectedStation.',
-      //   'images': widget.imagePath != null ? [widget.imagePath!] : [],
-      //   'completed': true,
-      //   'completedAt': FieldValue.serverTimestamp(),
-      //   'timestamp': FieldValue.serverTimestamp(),
-      //   'pestData': {
-      //     'pest': widget.pestName,
-      //     'stage': widget.detectedStage,
-      //     'station': _selectedStation,
-      //     'source': 'AI',
-      //   }
-      // };
-      // await FirebaseFirestore.instance
-      //     .collection('users')
-      //     .doc(widget.userId)
-      //     .collection('cycles')
-      //     .doc(_selectedCycleId)
-      //     .collection('dailyLogs')
-      //     .doc(dayId)
-      //     .collection('activities')
-      //     .doc(activityId)
-      //     .set(activityData);
 
       print('✓ Daily activity saved');
 
@@ -279,8 +362,14 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
           ),
         );
 
-        // Return the cycleId to AIResultScreen and close only this screen
-        Navigator.pop(context, _selectedCycleId);
+        // Return the cycleId along with DAP and growth stage to AIResultScreen
+        Navigator.pop(context, {
+          'cycleId': _selectedCycleId,
+          'dap': dap,
+          'growthStage': growthStage,
+          'growthStageDisplay': growthStageDisplay,
+          'riskLevel': riskLevel,
+        });
       }
     } catch (e) {
       print('❌ Error saving pest record: $e');
