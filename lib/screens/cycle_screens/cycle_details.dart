@@ -1017,12 +1017,44 @@ Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
   }
 
   Widget _buildRiskAlert() {
+    final now = DateTime.now();
+    final harvestDate = (_cycleData?['harvestDate'] as Timestamp?)?.toDate();
+    final daysUntilHarvest = harvestDate != null ? harvestDate.difference(now).inDays : 0;
+    final progress = _progress;
+
+    String riskLevel;
+    Color riskColor;
+    IconData riskIcon;
+    String riskMessage;
+
+    if (progress >= 0.95) {
+      riskLevel = 'READY TO HARVEST';
+      riskColor = const Color(0xFF1B5E37);
+      riskIcon = Icons.check_circle_outline;
+      riskMessage = 'Crop is mature and ready for harvest.';
+    } else if (daysUntilHarvest < 0) {
+      riskLevel = 'OVERDUE';
+      riskColor = const Color(0xFFBA1A1A);
+      riskIcon = Icons.warning_amber_rounded;
+      riskMessage = 'Harvest date has passed. Immediate action recommended.';
+    } else if (daysUntilHarvest <= 7) {
+      riskLevel = 'LOW RISK';
+      riskColor = const Color(0xFFF59E0B);
+      riskIcon = Icons.info_outline;
+      riskMessage = 'Harvest in $daysUntilHarvest day(s). Prepare for harvest.';
+    } else {
+      riskLevel = 'MONITORING';
+      riskColor = const Color(0xFF3B82F6);
+      riskIcon = Icons.visibility_outlined;
+      riskMessage = 'Cycle is progressing normally. Continue regular monitoring.';
+    }
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-            color: const Color(0xFFFECACA).withValues(alpha: 0.6)),
+            color: riskColor.withValues(alpha: 0.3)),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.03),
@@ -1030,6 +1062,47 @@ Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
             offset: const Offset(0, 1),
           ),
         ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: riskColor.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(riskIcon, color: riskColor, size: 18),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    riskLevel,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: riskColor,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    riskMessage,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: const Color(0xFF5E6266).withValues(alpha: 0.8),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

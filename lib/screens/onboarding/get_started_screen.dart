@@ -153,7 +153,7 @@ class GetStartedPage extends StatelessWidget {
                     child: ElevatedButton(
                       onPressed: () {
                         // Navigate to the next page
-                        Navigator.pushNamed(context, '/register');
+                        Navigator.pushNamed(context, '/login');
                       },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF4CAF50), // Green color

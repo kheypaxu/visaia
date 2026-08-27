@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:visaia/screens/auth/forgot_password_screen.dart';
 import 'package:visaia/screens/auth/registration_screen.dart';
 import 'package:visaia/services/auth_service.dart';
 import 'package:visaia/screens/auth/auth_gate.dart';
@@ -218,7 +219,12 @@ class _LoginPageState extends State<LoginPage> {
                             alignment: Alignment.centerRight,
                             child: TextButton(
                               onPressed: () {
-                                // Handle forgot password logic
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const ForgotPasswordScreen(),
+                                  ),
+                                );
                               },
                               child: Text(
                                 'Forgot Password?',
@@ -290,34 +296,6 @@ class _LoginPageState extends State<LoginPage> {
                                 ),
                               ),
                             ],
-                          ),
-                          const SizedBox(height: 12),
-
-                          // DEBUG: Bypass Login Button
-                          SizedBox(
-                            width: double.infinity,
-                            height: 40,
-                            child: ElevatedButton(
-                              onPressed: () {
-                                _emailController.text = 'nicsbengaora@gmail.com';
-                                _passwordController.text = 'password123';
-                                _login();
-                              },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.grey[700],
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                              ),
-                              child: Text(
-                                'DEBUG: Bypass Login',
-                                style: GoogleFonts.inter(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ),
                           ),
                         ],
                       ),

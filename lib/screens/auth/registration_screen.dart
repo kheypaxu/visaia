@@ -61,7 +61,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
         );
 
         // Navigate to verification form
-        Navigator.push(
+        Navigator.pushReplacement(
           context,
           MaterialPageRoute(
             builder: (context) => const VerificationFormScreen(),

@@ -42,45 +42,10 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
   // Crop data with varieties
   final Map<String, List<String>> _cropVarieties = {
     'Corn': [
+      'Hybrid Glutinous',
       'Conv. Hybrid',
       'GMO Hybrid',
-      'Hybrid Glutinous',
       'Green Corn'
-    ],
-    'Rice': [
-      'IR64',
-      'NSIC Rc 222',
-      'NSIC Rc 160',
-      'Premium Jasmine',
-      'Local Upland Rice',
-      'Lowland Rice',
-      'Hybrid Rice'
-    ],
-    'Wheat': [
-      'Hard Red Winter',
-      'Hard Red Spring',
-      'Soft Red Winter',
-      'White Wheat',
-      'Durum Wheat',
-      'Local Wheat'
-    ],
-    'Soybean': [
-      'Local Soybean',
-      'Hybrid Soybean 101',
-      'Hybrid Soybean 202',
-      'Edamame',
-      'Yellow Soybean',
-      'Black Soybean'
-    ],
-    'Vegetables': [
-      'Tomato',
-      'Eggplant',
-      'Pepper',
-      'Cabbage',
-      'Lettuce',
-      'Carrot',
-      'Onion',
-      'Garlic'
     ]
   };
 

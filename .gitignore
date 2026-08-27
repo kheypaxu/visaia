@@ -43,3 +43,9 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+change-pass.js
+
+node_modules
+package-lock.jsonpackage.json
+service_acc.json

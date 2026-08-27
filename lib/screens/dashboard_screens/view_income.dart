@@ -1,15 +1,197 @@
+import 'dart:io';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:share_plus/share_plus.dart';
 
-class CropFinanceScreen extends StatelessWidget {
-  const CropFinanceScreen({super.key});
+class CropFinanceScreen extends StatefulWidget {
+  final String userId;
+  final String activeFarmId;
 
-  // --- BRAND COLORS ---
+  const CropFinanceScreen({
+    super.key,
+    required this.userId,
+    required this.activeFarmId,
+  });
+
+  @override
+  State<CropFinanceScreen> createState() => _CropFinanceScreenState();
+}
+
+class _CropFinanceScreenState extends State<CropFinanceScreen> {
   static const Color darkGreen = Color(0xFF0D4D33);
   static const Color textGray = Color(0xFF43483E);
   static const Color bgSoftGreen = Color(0xFFF3F5EE);
-  static const Color accentGreen = Color(0xFF7BC72E);
   static const Color errorRed = Color(0xFFBA1A1A);
+
+  bool _isLoading = true;
+  bool _isExportingPdf = false;
+  String? _errorMessage;
+  String _cropName = '';
+
+  // Controllers for income inputs
+  final TextEditingController _harvestIncomeController = TextEditingController();
+  final TextEditingController _damageCostController = TextEditingController();
+  
+  // Controllers for cycle costs
+  final TextEditingController _controlMethodController = TextEditingController();
+  final TextEditingController _fertilizerController = TextEditingController();
+  final TextEditingController _seedsController = TextEditingController();
+  final TextEditingController _otherExpensesController = TextEditingController();
+
+  double _grossIncome = 0;
+  double _totalCycleCost = 0;
+  double _damageCost = 0;
+  double _netIncome = 0;
+  double _profitPercentage = 0;
+  int _cycleCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCycleData();
+  }
+
+  @override
+  void dispose() {
+    _harvestIncomeController.dispose();
+    _damageCostController.dispose();
+    _controlMethodController.dispose();
+    _fertilizerController.dispose();
+    _seedsController.dispose();
+    _otherExpensesController.dispose();
+    super.dispose();
+  }
+
+  String _getUserFriendlyError(dynamic error) {
+    if (error is FirebaseException) {
+      switch (error.code) {
+        case 'permission-denied':
+          return 'You don\'t have permission to access this data.';
+        case 'unavailable':
+          return 'Service is temporarily unavailable. Please try again.';
+        case 'not-found':
+          return 'Data not found. It may have been deleted.';
+        default:
+          return 'A database error occurred. Please try again later.';
+      }
+    }
+    return 'An unexpected error occurred. Please try again.';
+  }
+
+  Future<void> _loadCycleData() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      // Get active cycles to fetch crop name
+      final activeSnap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('cycles')
+          .where('farmId', isEqualTo: widget.activeFarmId)
+          .where('isCompleted', isEqualTo: false)
+          .limit(1)
+          .get();
+
+      if (activeSnap.docs.isNotEmpty) {
+        final data = activeSnap.docs.first.data();
+        _cropName = data['cropVariety'] ?? data['cropType'] ?? 'Glutinous Corn';
+      } else {
+        _cropName = 'Glutinous Corn';
+      }
+
+      // Get completed cycles for financial data
+      final completedSnap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('cycles')
+          .where('farmId', isEqualTo: widget.activeFarmId)
+          .where('isCompleted', isEqualTo: true)
+          .get();
+
+      double totalGross = 0;
+      double totalPestLoss = 0;
+      double totalOtherLoss = 0;
+      int count = 0;
+
+      for (final doc in completedSnap.docs) {
+        final data = doc.data();
+        final income = (data['grossIncome'] as num?)?.toDouble() ??
+            (data['totalValue'] as num?)?.toDouble() ??
+            0;
+        final pestLoss = (data['pestLoss'] as num?)?.toDouble() ?? 0;
+        final otherLoss = (data['otherLoss'] as num?)?.toDouble() ?? 0;
+
+        totalGross += income;
+        totalPestLoss += pestLoss;
+        totalOtherLoss += otherLoss;
+        count++;
+      }
+
+      setState(() {
+        _grossIncome = totalGross;
+        _damageCost = totalPestLoss;
+        _totalCycleCost = totalOtherLoss;
+        _netIncome = totalGross - totalPestLoss - totalOtherLoss;
+        _profitPercentage = totalGross > 0 ? ((_netIncome / totalGross) * 100) : 0;
+        _cycleCount = count;
+
+        _harvestIncomeController.text = totalGross > 0 ? totalGross.toStringAsFixed(2) : '0.00';
+        _damageCostController.text = totalPestLoss > 0 ? totalPestLoss.toStringAsFixed(2) : '0.00';
+        _controlMethodController.text = '0.00';
+        _fertilizerController.text = '0.00';
+        _seedsController.text = '0.00';
+        _otherExpensesController.text = totalOtherLoss > 0 ? totalOtherLoss.toStringAsFixed(2) : '0.00';
+
+        _isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Error loading cycle data: $e');
+      setState(() {
+        _isLoading = false;
+        _errorMessage = _getUserFriendlyError(e);
+      });
+    }
+  }
+
+  void _calculateIncome() {
+    final harvestIncome = double.tryParse(_harvestIncomeController.text.replaceAll(',', '')) ?? 0;
+    final controlMethod = double.tryParse(_controlMethodController.text.replaceAll(',', '')) ?? 0;
+    final fertilizer = double.tryParse(_fertilizerController.text.replaceAll(',', '')) ?? 0;
+    final seeds = double.tryParse(_seedsController.text.replaceAll(',', '')) ?? 0;
+    final otherExpenses = double.tryParse(_otherExpensesController.text.replaceAll(',', '')) ?? 0;
+    final damage = double.tryParse(_damageCostController.text.replaceAll(',', '')) ?? 0;
+
+    final totalCycleCost = controlMethod + fertilizer + seeds + otherExpenses;
+    final net = harvestIncome - totalCycleCost - damage;
+    final pct = harvestIncome > 0 ? ((net / harvestIncome) * 100) : 0;
+
+    setState(() {
+      _grossIncome = harvestIncome;
+      _totalCycleCost = totalCycleCost;
+      _damageCost = damage;
+      _netIncome = net;
+      _profitPercentage = pct.toDouble();
+    });
+  }
+
+  String _formatCurrency(double value) {
+    final formatted = value.toStringAsFixed(2);
+    final parts = formatted.split('.');
+    final intPart = parts[0].replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (Match m) => '${m[1]},',
+    );
+    return '₱$intPart.${parts[1]}';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -31,131 +213,229 @@ class CropFinanceScreen extends StatelessWidget {
           ),
         ),
         centerTitle: true,
+        actions: [
+          IconButton(
+            onPressed: _isExportingPdf ? null : _exportPdf,
+            icon: _isExportingPdf
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.file_download_outlined, color: darkGreen),
+          ),
+        ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 10),
-            Text(
-              'FINANCIAL ANALYTICS',
-              style: GoogleFonts.manrope(
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-                color: const Color(0xFF4C7A1D),
-                letterSpacing: 1.2,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Glutinous Corn Income\nCalculation',
-              style: GoogleFonts.epilogue(
-                fontSize: 28,
-                fontWeight: FontWeight.w800,
-                color: darkGreen,
-                height: 1.1,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Enter your harvest data to calculate precise net income and assess seasonal performance.',
-              style: GoogleFonts.manrope(
-                fontSize: 14,
-                color: textGray,
-                height: 1.5,
-              ),
-            ),
-            const SizedBox(height: 30),
-
-            // --- INPUT SECTION CARD ---
-            Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: bgSoftGreen.withOpacity(0.5),
-                borderRadius: BorderRadius.circular(30),
-              ),
-              child: Column(
-                children: [
-                  _buildInputField('Harvest Income (₱)', '12500'),
-                  const SizedBox(height: 20),
-                  _buildInputField('Damage Cost (₱)', '1200'),
-                  const SizedBox(height: 20),
-                  _buildInputField('Expenses Cost (₱)', '1200'),
-                  const SizedBox(height: 30),
-                  
-                  // Calculate Button
-                  SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: ElevatedButton.icon(
-                      onPressed: () {},
-                      icon: const Icon(Icons.calculate_outlined, color: Colors.white),
-                      label: Text(
-                        'Calculate Income',
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator(color: darkGreen))
+          : _errorMessage != null
+              ? _buildErrorView()
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 10),
+                      Text(
+                        'FINANCIAL ANALYTICS',
                         style: GoogleFonts.manrope(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          color: const Color(0xFF4C7A1D),
+                          letterSpacing: 1.2,
                         ),
                       ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: darkGreen,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(30),
+                      const SizedBox(height: 4),
+                      Text(
+                        '$_cropName Income Calculation',
+                        style: GoogleFonts.epilogue(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                          color: darkGreen,
+                          height: 1.1,
                         ),
-                        elevation: 0,
                       ),
-                    ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Enter your harvest data to calculate precise net income and assess seasonal performance.',
+                        style: GoogleFonts.manrope(
+                          fontSize: 13,
+                          color: textGray,
+                          height: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+
+                      // TOTAL HARVEST INCOME
+                      _buildSectionCard(
+                        title: 'TOTAL HARVEST INCOME',
+                        subtitle: 'Add seeds from planting to harvest',
+                        children: [
+                          _buildInputFieldWithIcon(
+                            'Harvest Income (₱)',
+                            _harvestIncomeController,
+                            Icons.agriculture_outlined,
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      // TOTAL CYCLE COST
+                      _buildSectionCard(
+                        title: 'TOTAL CYCLE COST',
+                        subtitle: 'Enter total amount spent from planting to harvest',
+                        children: [
+                          _buildInputFieldWithIcon(
+                            'Total Control Method Cost (₱)',
+                            _controlMethodController,
+                            Icons.pest_control_outlined,
+                          ),
+                          const SizedBox(height: 12),
+                          _buildInputFieldWithIcon(
+                            'Total Fertilizer Cost (₱)',
+                            _fertilizerController,
+                            Icons.grass_outlined,
+                          ),
+                          const SizedBox(height: 12),
+                          _buildInputFieldWithIcon(
+                            'Total Seeds Cost (₱)',
+                            _seedsController,
+                            Icons.eco_outlined,
+                          ),
+                          const SizedBox(height: 12),
+                          _buildInputFieldWithIcon(
+                            'Other Expenses (₱)',
+                            _otherExpensesController,
+                            Icons.receipt_long_outlined,
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      // TOTAL DAMAGE COST
+                      _buildSectionCard(
+                        title: 'TOTAL DAMAGE COST',
+                        subtitle: 'Estimated value of crops lost or damaged',
+                        children: [
+                          _buildInputFieldWithIcon(
+                            'Damage Cost (₱)',
+                            _damageCostController,
+                            Icons.warning_amber_outlined,
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 24),
+
+                      // CALCULATE BUTTON
+                      SizedBox(
+                        width: double.infinity,
+                        height: 52,
+                        child: ElevatedButton(
+                          onPressed: _calculateIncome,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: darkGreen,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(30),
+                            ),
+                            elevation: 0,
+                          ),
+                          child: Text(
+                            'Calculate Income',
+                            style: GoogleFonts.manrope(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(height: 30),
+
+                      // ESTIMATED NET INCOME RESULT
+                      _buildResultCard(),
+
+                      const SizedBox(height: 40),
+                    ],
                   ),
-                ],
-              ),
+                ),
+    );
+  }
+
+  Widget _buildSectionCard({
+    required String title,
+    required String subtitle,
+    required List<Widget> children,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE8EAE6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: GoogleFonts.manrope(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: darkGreen,
+              letterSpacing: 0.5,
             ),
-
-            const SizedBox(height: 30),
-
-            // --- ESTIMATED NET INCOME RESULT CARD ---
-            _buildResultCard(),
-            
-            const SizedBox(height: 40),
-          ],
-        ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            style: GoogleFonts.manrope(
+              fontSize: 12,
+              color: textGray.withValues(alpha: 0.7),
+            ),
+          ),
+          const SizedBox(height: 16),
+          ...children,
+        ],
       ),
     );
   }
 
-  Widget _buildInputField(String label, String initialValue) {
+  Widget _buildInputFieldWithIcon(
+    String label,
+    TextEditingController controller,
+    IconData icon,
+  ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           label,
           style: GoogleFonts.manrope(
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
             color: textGray,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         Container(
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(4),
+            color: bgSoftGreen,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFE8EAE6)),
           ),
           child: TextField(
-            controller: TextEditingController(text: initialValue),
+            controller: controller,
+            keyboardType: TextInputType.number,
             style: GoogleFonts.manrope(
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
               color: Colors.black,
             ),
-            decoration: const InputDecoration(
-              prefixIcon: Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                child: Text('₱', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-              ),
+            decoration: InputDecoration(
+              prefixIcon: Icon(icon, color: darkGreen, size: 20),
+              prefixIconConstraints: const BoxConstraints(minWidth: 44),
               border: InputBorder.none,
-              contentPadding: EdgeInsets.symmetric(vertical: 16),
+              contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 4),
             ),
           ),
         ),
@@ -163,147 +443,142 @@ class CropFinanceScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildResultCard() {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(40),
-        border: Border.all(color: const Color(0xFFE1E3E1)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.02),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
-          )
-        ],
-      ),
-      child: Column(
-        children: [
-          // Top Section with subtle green gradient
-          Container(
-            padding: const EdgeInsets.only(top: 40, bottom: 50),
-            width: double.infinity,
-            decoration: BoxDecoration(
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(40)),
-              gradient: RadialGradient(
-                center: const Alignment(0.9, -0.9),
-                radius: 1.2,
-                colors: [
-                  const Color.fromARGB(255, 72, 138, 7).withValues(alpha:0.35),
-                  const Color.fromARGB(255, 173, 243, 81).withValues(alpha:0.0),
-                ],
+  Widget _buildErrorView() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline, size: 64, color: errorRed.withValues(alpha: 0.7)),
+            const SizedBox(height: 20),
+            Text(
+              'Oops! Something went wrong',
+              style: GoogleFonts.epilogue(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: darkGreen,
               ),
             ),
-            child: Column(
-              children: [
-                Text(
-                  'ESTIMATED NET INCOME',
-                  style: GoogleFonts.manrope(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: textGray.withOpacity(0.6),
-                    letterSpacing: 0.8,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      '₱11,300',
-                      style: GoogleFonts.manrope(
-                        fontSize: 48,
-                        fontWeight: FontWeight.w800,
-                        color: darkGreen,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    const Icon(Icons.trending_up, color: Colors.green, size: 32),
-                  ],
-                ),
-              ],
+            const SizedBox(height: 12),
+            Text(
+              _errorMessage ?? 'An unexpected error occurred.',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.manrope(fontSize: 14, color: textGray, height: 1.5),
             ),
-          ),
-
-          // Breakdown List
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 30),
-            child: Column(
-              children: [
-                _buildBreakdownRow('Harvest Income', '+₱12,500.00', const Color(0xFF0D4D33)),
-                const Divider(height: 32, color: Color(0xFFF1F1F1)),
-                _buildBreakdownRow('Damage Cost', '-\₱1,200.00', errorRed),
-                const SizedBox(height: 24),
-                
-                // Performance Badge
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                  decoration: BoxDecoration(
-                    color: bgSoftGreen,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Total\nPerformance',
-                        style: GoogleFonts.manrope(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.black,
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFD9E7CB),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          '+90.4% PROFIT',
-                          style: GoogleFonts.manrope(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w900,
-                            color: const Color.fromARGB(246, 2, 117, 71),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 30),
-
-          // Footer Metrics
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 30),
-            child: Row(
-              children: [
-                Expanded(child: _buildFooterMetric(Icons.bolt_outlined,'Income exceeds\naverage by 12%')),
-                Expanded(child: _buildFooterMetric(Icons.verified_outlined, 'Resilience Score:\nHigh')),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 30),
-
-          // Export PDF Button
-          Padding(
-            padding: const EdgeInsets.only(bottom: 30),
-            child: ElevatedButton.icon(
-              onPressed: () {},
-              icon: const Icon(Icons.file_download_outlined, size: 18),
-              label: const Text('Export PDF'),
+            const SizedBox(height: 30),
+            ElevatedButton.icon(
+              onPressed: _loadCycleData,
+              icon: const Icon(Icons.refresh, size: 20),
+              label: const Text('Retry'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: darkGreen,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildResultCard() {
+    final isPositive = _netIncome >= 0;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFE8EAE6)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'ESTIMATED NET INCOME',
+            style: GoogleFonts.manrope(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: textGray.withValues(alpha: 0.6),
+              letterSpacing: 0.8,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Text(
+                _formatCurrency(_netIncome),
+                style: GoogleFonts.manrope(
+                  fontSize: 32,
+                  fontWeight: FontWeight.w800,
+                  color: darkGreen,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                isPositive ? Icons.trending_up : Icons.trending_down,
+                color: isPositive ? Colors.green : errorRed,
+                size: 28,
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          const Divider(color: Color(0xFFF1F1F1)),
+          const SizedBox(height: 16),
+          _buildResultRow('Harvest Income', '+${_formatCurrency(_grossIncome)}', darkGreen),
+          const SizedBox(height: 12),
+          _buildResultRow('Total Damage Cost', '-${_formatCurrency(_damageCost)}', errorRed),
+          if (_totalCycleCost > 0) ...[
+            const SizedBox(height: 12),
+            _buildResultRow('Total Cycle Cost', '-${_formatCurrency(_totalCycleCost)}', errorRed),
+          ],
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: bgSoftGreen,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Profit/Loss',
+                  style: GoogleFonts.manrope(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black,
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: isPositive ? const Color(0xFFD9E7CB) : const Color(0xFFFFDADA),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    isPositive
+                        ? '+${_profitPercentage.toStringAsFixed(1)}%'
+                        : '${_profitPercentage.toStringAsFixed(1)}%',
+                    style: GoogleFonts.manrope(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: isPositive ? Colors.green[800] : errorRed,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -311,39 +586,124 @@ class CropFinanceScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildBreakdownRow(String label, String value, Color valueColor) {
+  Widget _buildResultRow(String label, String value, Color color) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(
           label,
-          style: GoogleFonts.manrope(fontSize: 15, fontWeight: FontWeight.w600, color: textGray),
+          style: GoogleFonts.manrope(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: textGray,
+          ),
         ),
         Text(
           value,
-          style: GoogleFonts.manrope(fontSize: 15, fontWeight: FontWeight.w800, color: valueColor),
+          style: GoogleFonts.manrope(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: color,
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildFooterMetric(IconData icon, String text) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, color: const Color(0xFF6B4B00), size: 20),
-        const SizedBox(width: 8),
-        Flexible(
-          child: Text(
-            text,
-            style: GoogleFonts.manrope(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: textGray,
+  Future<void> _exportPdf() async {
+    setState(() => _isExportingPdf = true);
+
+    try {
+      final pdf = pw.Document();
+      final now = DateTime.now();
+      final dateStr = DateFormat('MMMM dd, yyyy').format(now);
+
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(40),
+          build: (pw.Context context) => [
+            pw.Header(
+              level: 0,
+              child: pw.Text('Crop Finance Report',
+                  style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold)),
             ),
-          ),
+            pw.SizedBox(height: 8),
+            pw.Text('Generated on: $dateStr',
+                style: const pw.TextStyle(fontSize: 12, color: PdfColors.grey700)),
+            pw.SizedBox(height: 24),
+
+            pw.Container(
+              padding: const pw.EdgeInsets.all(16),
+              decoration: pw.BoxDecoration(
+                color: PdfColors.green50,
+                borderRadius: pw.BorderRadius.circular(8),
+              ),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text('NET INCOME',
+                      style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold, color: PdfColors.grey700)),
+                  pw.SizedBox(height: 8),
+                  pw.Text(_formatCurrency(_netIncome),
+                      style: pw.TextStyle(fontSize: 32, fontWeight: pw.FontWeight.bold)),
+                  pw.SizedBox(height: 4),
+                  pw.Text('Based on $_cycleCount completed cycle(s)',
+                      style: const pw.TextStyle(fontSize: 12, color: PdfColors.green800)),
+                ],
+              ),
+            ),
+            pw.SizedBox(height: 20),
+
+            pw.TableHelper.fromTextArray(
+              headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+              headerDecoration: const pw.BoxDecoration(color: PdfColors.grey200),
+              cellPadding: const pw.EdgeInsets.all(8),
+              headers: ['Item', 'Amount'],
+              data: [
+                ['Crop Name', _cropName],
+                ['Harvest Income', _formatCurrency(_grossIncome)],
+                ['Total Cycle Cost', '-${_formatCurrency(_totalCycleCost)}'],
+                ['Damage Cost', '-${_formatCurrency(_damageCost)}'],
+                ['Net Income', _formatCurrency(_netIncome)],
+                ['Profit/Loss', '${_profitPercentage.toStringAsFixed(1)}%'],
+              ],
+            ),
+            pw.SizedBox(height: 30),
+            pw.Divider(),
+            pw.SizedBox(height: 8),
+            pw.Text('This report was generated automatically from completed cycle data.',
+                style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey500)),
+          ],
         ),
-      ],
-    );
+      );
+
+      final output = await getTemporaryDirectory();
+      final file = File('${output.path}/crop_finance_report.pdf');
+      await file.writeAsBytes(await pdf.save());
+
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path)],
+          text: 'Crop Finance Report - $dateStr',
+        ),
+      );
+    } catch (e) {
+      debugPrint('Error generating PDF: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_getUserFriendlyError(e)),
+            backgroundColor: errorRed,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isExportingPdf = false);
+      }
+    }
   }
 }

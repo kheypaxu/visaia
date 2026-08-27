@@ -480,6 +480,7 @@ Widget build(BuildContext context) {
             HomeDashboard(
               key: ValueKey('home_$activeFarmId'),
               userId: userId,
+              activeFarmId: activeFarmId,
             ),
             CroppingCyclesScreen(
               key: ValueKey('cycles_$activeFarmId'),
@@ -552,10 +553,22 @@ Widget build(BuildContext context) {
             "icon": Icons.pie_chart_outline,
             "label": "Full\nAnalysis",
             "onTap": () {
+              if (activeFarmId == null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Please select a farm first'),
+                    backgroundColor: Color(0xFFD32F2F),
+                  ),
+                );
+                return;
+              }
               Navigator.push(
                   context,
                   MaterialPageRoute(
-                      builder: (_) => const IncomeEstimationScreen()));
+                      builder: (_) => IncomeEstimationScreen(
+                            userId: userId,
+                            activeFarmId: activeFarmId,
+                          )));
             },
           },
         ];

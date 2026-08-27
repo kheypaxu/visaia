@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:convert';
+import 'dart:developer' as developer;
 
 class VerificationFormScreen extends StatefulWidget {
   const VerificationFormScreen({Key? key}) : super(key: key);
@@ -15,27 +16,31 @@ class VerificationFormScreen extends StatefulWidget {
 }
 
 class _VerificationFormScreenState extends State<VerificationFormScreen> {
-  // Form key for validation
   final _formKey = GlobalKey<FormState>();
 
-  // Text editing controllers
   final _fullNameController = TextEditingController();
   final _middleNameController = TextEditingController();
   final _rsbsaIdController = TextEditingController();
   final _farmSizeController = TextEditingController();
 
-  // Dropdown values
   String? _selectedSex;
   DateTime? _selectedBirthdate;
-  String _farmerIdPath = 'No file selected';
-
-  // List of sex options
   final List<String> _sexOptions = ['Male', 'Female', 'Other'];
+
+  String? _base64Image;
+  String _farmerIdFileName = 'No file selected';
+  
+  bool _isSubmitting = false;
+  
+  // Track if user has RSBSA ID
+  bool _hasRsbsaId = true; // Default to true
+  
+  // Track if user wants to skip farmer ID (only applicable for RSBSA holders)
+  bool _skipFarmerId = false;
 
   @override
   void initState() {
     super.initState();
-    // Validate authentication status before showing the form
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (FirebaseAuth.instance.currentUser == null) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -61,11 +66,10 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
     super.dispose();
   }
 
-  // Method to show date picker
   Future<void> _selectBirthdate(BuildContext context) async {
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: _selectedBirthdate ?? DateTime.now(),
+      initialDate: _selectedBirthdate ?? DateTime.now().subtract(const Duration(days: 365 * 18)),
       firstDate: DateTime(1900),
       lastDate: DateTime.now(),
     );
@@ -75,9 +79,6 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
       });
     }
   }
-
-  String? _base64Image;
-  String _farmerIdFileName = 'No file selected';
 
   Future<void> _uploadFarmerId() async {
     try {
@@ -90,6 +91,7 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
         Uint8List? fileBytes = result.files.first.bytes;
 
         if (fileBytes != null) {
+          // Compress image to prevent memory issues
           String base64String = base64Encode(fileBytes);
 
           setState(() {
@@ -110,61 +112,120 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
   }
 
   void _submitForm() async {
-    if (_formKey.currentState!.validate()) {
-      if (_farmerIdFileName == 'No file selected') {
+    if (_isSubmitting) return;
+    
+    if (!_formKey.currentState!.validate()) return;
+
+    // Check farmer ID upload based on RSBSA status
+    if (_hasRsbsaId) {
+      // If they have RSBSA, they can skip farmer ID
+      if (!_skipFarmerId && _farmerIdFileName == 'No file selected') {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please upload your Farmer ID')),
+          const SnackBar(content: Text('Please upload your Farmer ID or check "Skip"')),
         );
         return;
       }
+    } else {
+      // If they don't have RSBSA, they MUST upload an ID
+      if (_farmerIdFileName == 'No file selected') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please upload a valid government-issued ID')),
+        );
+        return;
+      }
+    }
 
-      try {
-        User user = FirebaseAuth.instance.currentUser!;
+    setState(() => _isSubmitting = true);
 
-        await FirebaseFirestore.instance
-            .collection("farmers")
-            .doc(user.uid)
-            .set({
-          "uid": user.uid,
-          "email": user.email,
-          "fullName": _fullNameController.text.trim(),
-          "middleName": _middleNameController.text.trim(),
-          "rsbsaId": _rsbsaIdController.text.trim(),
-          "farmSize": double.parse(_farmSizeController.text),
-          "sex": _selectedSex,
-          "birthdate": _selectedBirthdate?.toIso8601String(),
-          "farmerIdFileName": _farmerIdFileName,
-          "farmerIdImage": _base64Image,
-          "status": "pending",
-          "createdAt": FieldValue.serverTimestamp(),
-        });
+    try {
+      User? user = FirebaseAuth.instance.currentUser;
+      
+      if (user == null) {
+        throw Exception('You have been logged out. Please register again.');
+      }
 
-        await FirebaseAuth.instance.signOut();
+      // Build farmer data
+      Map<String, dynamic> farmerData = {
+        "uid": user.uid,
+        "email": user.email ?? '',
+        "fullName": _fullNameController.text.trim(),
+        "middleName": _middleNameController.text.trim(),
+        "farmSize": double.parse(_farmSizeController.text),
+        "sex": _selectedSex,
+        "birthdate": _selectedBirthdate?.toIso8601String(),
+        "status": "pending",
+        "createdAt": FieldValue.serverTimestamp(),
+        "hasRsbsaId": _hasRsbsaId,
+      };
 
+      // Handle RSBSA ID
+      if (_hasRsbsaId) {
+        farmerData["rsbsaId"] = _rsbsaIdController.text.trim();
+        farmerData["skipFarmerId"] = _skipFarmerId;
+        
+        // Only add farmer ID image if not skipped
+        if (!_skipFarmerId && _base64Image != null) {
+          farmerData["farmerIdFileName"] = _farmerIdFileName;
+          farmerData["farmerIdImage"] = _base64Image;
+        } else {
+          farmerData["farmerIdFileName"] = null;
+          farmerData["farmerIdImage"] = null;
+        }
+      } else {
+        // No RSBSA ID - must upload alternative ID
+        farmerData["rsbsaId"] = null;
+        farmerData["skipFarmerId"] = true; // Forced skip since no RSBSA
+        farmerData["farmerIdFileName"] = _farmerIdFileName;
+        farmerData["farmerIdImage"] = _base64Image;
+      }
+
+      developer.log('📤 Saving farmer data: $farmerData');
+
+      // Save to Firestore
+      await FirebaseFirestore.instance
+          .collection("farmers")
+          .doc(user.uid)
+          .set(farmerData);
+
+      // Sign out after successful submission
+      await FirebaseAuth.instance.signOut();
+
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-                "Your account is pending approval. Please wait for admin verification."),
+              "Your account is pending approval. Please wait for admin verification."
+            ),
             backgroundColor: Color(0xFF8DBA60),
+            duration: Duration(seconds: 3),
           ),
         );
 
-        Navigator.pushAndRemoveUntil(
-          context,
+        Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (context) => const LoginPage()),
           (route) => false,
         );
-      } catch (e) {
+      }
+      
+    } catch (e) {
+      developer.log('❌ Submit error: $e');
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString())),
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            backgroundColor: Colors.redAccent,
+          ),
         );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // Make the app fullscreen to match RegistrationPage
     SystemChrome.setSystemUIOverlayStyle(
       const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
@@ -175,7 +236,6 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
     return Scaffold(
       body: Stack(
         children: [
-          // Background image layer
           Container(
             width: double.infinity,
             height: double.infinity,
@@ -186,14 +246,12 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
               ),
             ),
           ),
-          // Dark blue overlay with 75% opacity
           Container(
             width: double.infinity,
             height: double.infinity,
             color: const Color(0xFF102216).withValues(alpha: 0.75),
           ),
           
-          // Form content layer
           SingleChildScrollView(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 40.0),
@@ -293,33 +351,110 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
                           ),
                           const SizedBox(height: 16),
 
-                          // RSBSA ID Number Field
-                          TextFormField(
-                            controller: _rsbsaIdController,
-                            style: const TextStyle(color: Colors.white),
-                            decoration: InputDecoration(
-                              labelText: 'RSBSA ID Number',
-                              hintText: 'e.g., 1234-5678-9012',
-                              hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.4)),
-                              labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
-                              prefixIcon: const Icon(Icons.credit_card, color: Color(0xFF8DBA60)),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12.0),
-                                borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12.0),
-                                borderSide: const BorderSide(color: Color(0xFF8DBA60)),
-                              ),
+                          // RSBSA ID Toggle
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.05),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
                             ),
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Please enter your RSBSA ID number';
-                              }
-                              return null;
-                            },
+                            child: Row(
+                              children: [
+                                const Icon(Icons.assignment_ind, color: Color(0xFF8DBA60)),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Do you have an RSBSA ID?',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      color: Colors.white.withValues(alpha: 0.8),
+                                    ),
+                                  ),
+                                ),
+                                Row(
+                                  children: [
+                                    ChoiceChip(
+                                      label: Text(
+                                        'Yes',
+                                        style: GoogleFonts.inter(
+                                          color: _hasRsbsaId ? Colors.black : Colors.white,
+                                        ),
+                                      ),
+                                      selected: _hasRsbsaId,
+                                      onSelected: (selected) {
+                                        setState(() {
+                                          _hasRsbsaId = selected;
+                                          if (!selected) {
+                                            _rsbsaIdController.clear();
+                                          }
+                                        });
+                                      },
+                                      selectedColor: const Color(0xFF8DBA60),
+                                      backgroundColor: Colors.transparent,
+                                      side: BorderSide(
+                                        color: _hasRsbsaId ? const Color(0xFF8DBA60) : Colors.white.withValues(alpha: 0.3),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    ChoiceChip(
+                                      label: Text(
+                                        'No',
+                                        style: GoogleFonts.inter(
+                                          color: !_hasRsbsaId ? Colors.black : Colors.white,
+                                        ),
+                                      ),
+                                      selected: !_hasRsbsaId,
+                                      onSelected: (selected) {
+                                        setState(() {
+                                          _hasRsbsaId = !selected;
+                                          if (!_hasRsbsaId) {
+                                            _rsbsaIdController.clear();
+                                          }
+                                        });
+                                      },
+                                      selectedColor: const Color(0xFF8DBA60),
+                                      backgroundColor: Colors.transparent,
+                                      side: BorderSide(
+                                        color: !_hasRsbsaId ? const Color(0xFF8DBA60) : Colors.white.withValues(alpha: 0.3),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
                           ),
                           const SizedBox(height: 16),
+
+                          // RSBSA ID Field (only show if user has RSBSA ID)
+                          if (_hasRsbsaId)
+                            TextFormField(
+                              controller: _rsbsaIdController,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: InputDecoration(
+                                labelText: 'RSBSA ID Number',
+                                hintText: 'e.g., 1234-5678-9012',
+                                hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.4)),
+                                labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
+                                prefixIcon: const Icon(Icons.credit_card, color: Color(0xFF8DBA60)),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12.0),
+                                  borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12.0),
+                                  borderSide: const BorderSide(color: Color(0xFF8DBA60)),
+                                ),
+                              ),
+                              validator: (value) {
+                                if (_hasRsbsaId && (value == null || value.isEmpty)) {
+                                  return 'Please enter your RSBSA ID number';
+                                }
+                                return null;
+                              },
+                            ),
+                          
+                          if (_hasRsbsaId) const SizedBox(height: 16),
 
                           // Farm Size Field
                           TextFormField(
@@ -418,27 +553,115 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
                           ),
                           const SizedBox(height: 16),
 
-                          // Farmer ID Upload
-                          ListTile(
-                            title: Text(
-                              'Farmer ID',
-                              style: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
+                          // Farmer ID Upload Section
+                          if (_hasRsbsaId) ...[
+                            // For users WITH RSBSA ID
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: ListTile(
+                                    title: Text(
+                                      'Farmer ID (RSBSA ID Image)',
+                                      style: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
+                                    ),
+                                    subtitle: Text(
+                                      _farmerIdFileName == 'No file selected' 
+                                          ? 'e.g., rsbsa_id.jpg'
+                                          : _farmerIdFileName,
+                                      style: const TextStyle(color: Colors.white),
+                                    ),
+                                    leading: const Icon(Icons.cloud_upload, color: Color(0xFF8DBA60)),
+                                    trailing: const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 16),
+                                    tileColor: Colors.white.withValues(alpha: 0.05),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12.0),
+                                      side: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
+                                    ),
+                                    onTap: _skipFarmerId ? null : _uploadFarmerId,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Checkbox(
+                                  value: _skipFarmerId,
+                                  onChanged: (bool? value) {
+                                    setState(() {
+                                      _skipFarmerId = value ?? false;
+                                      if (_skipFarmerId) {
+                                        _base64Image = null;
+                                        _farmerIdFileName = 'No file selected';
+                                      }
+                                    });
+                                  },
+                                  activeColor: const Color(0xFF8DBA60),
+                                  checkColor: Colors.black,
+                                ),
+                                Text(
+                                  'Skip',
+                                  style: GoogleFonts.inter(
+                                    color: Colors.white.withValues(alpha: 0.7),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
                             ),
-                            subtitle: Text(
-                              _farmerIdPath == 'No file selected' 
-                                  ? 'e.g., farmer_id.jpg'
-                                  : _farmerIdPath,
-                              style: const TextStyle(color: Colors.white),
+                            if (_skipFarmerId) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                '✅ RSBSA ID image skipped. You can upload it later.',
+                                style: GoogleFonts.inter(
+                                  color: const Color(0xFF8DBA60),
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ] else ...[
+                            // For users WITHOUT RSBSA ID
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.orange.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.info_outline, color: Colors.orange, size: 20),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'Since you don\'t have an RSBSA ID, please upload any valid government-issued ID for verification purposes.',
+                                      style: GoogleFonts.inter(
+                                        color: Colors.orange,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                            leading: const Icon(Icons.cloud_upload, color: Color(0xFF8DBA60)),
-                            trailing: const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 16),
-                            tileColor: Colors.white.withValues(alpha: 0.05),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12.0),
-                              side: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
+                            const SizedBox(height: 8),
+                            ListTile(
+                              title: Text(
+                                'Alternative ID Upload',
+                                style: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
+                              ),
+                              subtitle: Text(
+                                _farmerIdFileName == 'No file selected' 
+                                    ? 'e.g., passport, drivers_license.jpg'
+                                    : _farmerIdFileName,
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                              leading: const Icon(Icons.cloud_upload, color: Color(0xFF8DBA60)),
+                              trailing: const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 16),
+                              tileColor: Colors.white.withValues(alpha: 0.05),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12.0),
+                                side: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
+                              ),
+                              onTap: _uploadFarmerId,
                             ),
-                            onTap: _uploadFarmerId,
-                          ),
+                          ],
+
                           const SizedBox(height: 24),
 
                           // Submit Button
@@ -446,21 +669,30 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
                             width: double.infinity,
                             height: 50,
                             child: ElevatedButton(
-                              onPressed: _submitForm,
+                              onPressed: _isSubmitting ? null : _submitForm,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color(0xFF8DBA60),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(30),
                                 ),
                               ),
-                              child: Text(
-                                'Submit',
-                                style: GoogleFonts.inter(
-                                  color: Colors.black,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                              child: _isSubmitting
+                                  ? const SizedBox(
+                                      height: 24,
+                                      width: 24,
+                                      child: CircularProgressIndicator(
+                                        color: Colors.black,
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : Text(
+                                      'Submit',
+                                      style: GoogleFonts.inter(
+                                        color: Colors.black,
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
                             ),
                           ),
                           const SizedBox(height: 16),

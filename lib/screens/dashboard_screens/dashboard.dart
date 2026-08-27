@@ -176,18 +176,25 @@ class ActivityLogModel {
 class MonitoringFirestoreService {
   final FirebaseFirestore _db;
   final String _userId;
+  final String? _farmId;
 
-  MonitoringFirestoreService({FirebaseFirestore? db, required String userId})
+  MonitoringFirestoreService({FirebaseFirestore? db, required String userId, String? farmId})
       : _db = db ?? FirebaseFirestore.instance,
-        _userId = userId;
+        _userId = userId,
+        _farmId = farmId;
 
   // ----- Fields (from user document) -----
   Future<List<FieldModel>> getFields() async {
-    final snapshot = await _db
+    Query<Map<String, dynamic>> ref = _db
         .collection('users')
         .doc(_userId)
-        .collection('fields')
-        .get();
+        .collection('fields');
+
+    if (_farmId != null) {
+      ref = ref.where('farmId', isEqualTo: _farmId);
+    }
+
+    final snapshot = await ref.get();
 
     return snapshot.docs
         .map((doc) => FieldModel.fromMap(doc.id, doc.data()))
@@ -196,11 +203,17 @@ class MonitoringFirestoreService {
 
   // ----- Active Cycles (isCompleted == false) -----
   Stream<List<CycleModel>> getActiveCycles() {
-    return _db
+    Query<Map<String, dynamic>> ref = _db
         .collection('users')
         .doc(_userId)
         .collection('cycles')
-        .where('isCompleted', isEqualTo: false)
+        .where('isCompleted', isEqualTo: false);
+
+    if (_farmId != null) {
+      ref = ref.where('farmId', isEqualTo: _farmId);
+    }
+
+    return ref
         .snapshots()
         .map((snap) => snap.docs
             .map((doc) => CycleModel.fromMap(doc.id, doc.data()))
@@ -216,9 +229,28 @@ class MonitoringFirestoreService {
         .where('isActive', isEqualTo: true)
         .orderBy('detectedAt', descending: true)
         .snapshots()
-        .map((snap) => snap.docs
-            .map((doc) => PestModel.fromFirestore(doc))
-            .toList());
+        .asyncMap((snap) async {
+      List<PestModel> pests = snap.docs
+          .map((doc) => PestModel.fromFirestore(doc))
+          .toList();
+
+      if (_farmId != null && pests.isNotEmpty) {
+        final fieldIds = await _getFieldIdsForFarm();
+        pests = pests.where((p) => fieldIds.contains(p.fieldId)).toList();
+      }
+
+      return pests;
+    });
+  }
+
+  Future<Set<String>> _getFieldIdsForFarm() async {
+    final snapshot = await _db
+        .collection('users')
+        .doc(_userId)
+        .collection('fields')
+        .where('farmId', isEqualTo: _farmId)
+        .get();
+    return snapshot.docs.map((doc) => doc.id).toSet();
   }
 
   // ----- Recent Activity Logs (last 5) -----
@@ -228,20 +260,35 @@ class MonitoringFirestoreService {
         .doc(_userId)
         .collection('activityLogs')
         .orderBy('timestamp', descending: true)
-        .limit(limit)
+        .limit(limit * 3) // fetch extra to filter by farm
         .snapshots()
-        .map((snap) => snap.docs
-            .map((doc) => ActivityLogModel.fromFirestore(doc))
-            .toList());
+        .asyncMap((snap) async {
+      List<ActivityLogModel> logs = snap.docs
+          .map((doc) => ActivityLogModel.fromFirestore(doc))
+          .toList();
+
+      if (_farmId != null && logs.isNotEmpty) {
+        final fieldIds = await _getFieldIdsForFarm();
+        logs = logs.where((l) => fieldIds.contains(l.fieldId)).toList();
+      }
+
+      return logs.take(limit).toList();
+    });
   }
 
   // ----- Total Yield (sum of income from completed cycles) -----
   Stream<double> getTotalYield() {
-    return _db
+    Query<Map<String, dynamic>> ref = _db
         .collection('users')
         .doc(_userId)
         .collection('cycles')
-        .where('isCompleted', isEqualTo: true)
+        .where('isCompleted', isEqualTo: true);
+
+    if (_farmId != null) {
+      ref = ref.where('farmId', isEqualTo: _farmId);
+    }
+
+    return ref
         .snapshots()
         .map((snap) => snap.docs.fold<double>(0.0, (sum, doc) {
               final data = doc.data();
@@ -251,11 +298,17 @@ class MonitoringFirestoreService {
   }
 
   Stream<double> getNetIncome() {
-    return _db
+    Query<Map<String, dynamic>> ref = _db
         .collection('users')
         .doc(_userId)
         .collection('cycles')
-        .where('isCompleted', isEqualTo: true)
+        .where('isCompleted', isEqualTo: true);
+
+    if (_farmId != null) {
+      ref = ref.where('farmId', isEqualTo: _farmId);
+    }
+
+    return ref
         .snapshots()
         .map((snap) => snap.docs.fold<double>(0.0, (sum, doc) {
               final data = doc.data();
@@ -383,9 +436,10 @@ String _severityFromCount(int count) {
 // ======================= HOMEDASHBOARD WIDGET =======================
 
 class HomeDashboard extends StatelessWidget {
-  final String userId; 
+  final String userId;
+  final String? activeFarmId;
 
-  const HomeDashboard({super.key, required this.userId});
+  const HomeDashboard({super.key, required this.userId, this.activeFarmId});
 
   // Brand colors
   static const Color darkGreen = Color(0xFF0D4D33);
@@ -394,7 +448,7 @@ class HomeDashboard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final service = MonitoringFirestoreService(userId: userId);
+    final service = MonitoringFirestoreService(userId: userId, farmId: activeFarmId);
 
     return Scaffold(
       body: SingleChildScrollView(

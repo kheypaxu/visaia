@@ -111,29 +111,38 @@ class _CompletedCycleContent extends StatelessWidget {
   double get area => (data['area'] ?? 0.0).toDouble();
   double get pestLoss => (data['pestLoss'] ?? 0.0).toDouble();
   double get otherLoss => (data['otherLoss'] ?? 0.0).toDouble();
-  double get grossIncome => (data['grossIncome'] ?? 0.0).toDouble();
-  double get netIncome => (data['netIncome'] ?? 0.0).toDouble();
-  
+  double get grossIncome => (data['grossIncome'] ?? data['totalValue'] ?? 0.0).toDouble();
+  double get damagedYield => (data['damagedYield'] ?? 0.0).toDouble();
+  double get marketPrice => (data['marketPrice'] ?? 0.0).toDouble();
+  double get lossRate => (data['lossRate'] ?? 0.0).toDouble();
+
+  double get netIncome {
+    final stored = (data['netIncome'] as num?)?.toDouble();
+    if (stored != null && stored != 0) return stored;
+    return grossIncome - pestLoss - otherLoss;
+  }
+
   double get efficiencyScore {
-    // Calculate efficiency based on yield vs expected (simplified)
-    // You can adjust this formula based on your business logic
-    final expectedYield = area * 8.0; // Assuming 8 tons per hectare as baseline
+    final expectedYield = area * 8.0;
     if (expectedYield <= 0) return 0.0;
     final efficiency = (totalYield / expectedYield) * 100;
     return efficiency.clamp(0.0, 100.0);
   }
-  
+
   double get pestControlSuccess {
-    if (pestLoss <= 0) return 100.0;
-    // Calculate success rate based on pest loss percentage
-    return (100.0 - pestLoss).clamp(0.0, 100.0);
+    if (pestLoss <= 0 && damagedYield <= 0) return 100.0;
+    if (grossIncome <= 0) return 100.0;
+    final totalLossValue = pestLoss + otherLoss + (damagedYield * marketPrice);
+    final lossPercentage = (totalLossValue / grossIncome) * 100;
+    return (100.0 - lossPercentage).clamp(0.0, 100.0);
   }
-  
+
   double get irrigationAccuracy {
-    // This could be fetched from a separate collection
-    // For now, return a default or calculate based on other metrics
-    return 94.5; // Placeholder - you can modify this
+    return 94.5;
   }
+
+  bool get isHarvestRecording => data['totalValue'] != null;
+  bool get isPreviousCycle => data['isPreviousCycle'] == true;
   
   String get formattedArchivedDate {
     if (archivedDate == null) return 'Not archived';
@@ -286,6 +295,11 @@ class _CompletedCycleContent extends StatelessWidget {
   }
 
   Widget _buildHarvestSummary() {
+    final actualYield = (data['actualYield'] as num?)?.toDouble();
+    final goodYield = (data['goodYield'] as num?)?.toDouble();
+    final displayYield = actualYield ?? totalYield;
+    final yieldUnit = isHarvestRecording ? 'kg' : 'Tons';
+    
     return _buildCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -294,11 +308,38 @@ class _CompletedCycleContent extends StatelessWidget {
           const SizedBox(height: 16),
           Row(
             children: [
-              _buildStat(totalYield.toStringAsFixed(1), 'Tons', 'Final Yield'),
+              _buildStat(displayYield.toStringAsFixed(1), yieldUnit, 'Final Yield'),
               const SizedBox(width: 40),
               _buildStat(area.toStringAsFixed(2), 'Ha', 'Harvested Area'),
             ],
           ),
+          if (isHarvestRecording && damagedYield > 0) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                _buildStat(damagedYield.toStringAsFixed(1), 'kg', 'Damaged'),
+                const SizedBox(width: 40),
+                _buildStat(marketPrice.toStringAsFixed(0), '₱/kg', 'Market Price'),
+              ],
+            ),
+          ],
+          if (goodYield != null && goodYield > 0) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: kCompletedBg,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Good Yield:', style: TextStyle(color: kTextGrey, fontSize: 12)),
+                  Text('${goodYield.toStringAsFixed(1)} kg', style: const TextStyle(color: kPrimaryGreen, fontWeight: FontWeight.w700)),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.all(12),
@@ -329,6 +370,23 @@ class _CompletedCycleContent extends StatelessWidget {
               ],
             ),
           ),
+          if (lossRate > 0) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF3E0),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Loss Rate:', style: TextStyle(color: kTextGrey, fontSize: 12)),
+                  Text('${lossRate.toStringAsFixed(1)}%', style: const TextStyle(color: Color(0xFFE65100), fontWeight: FontWeight.w700)),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -389,9 +447,10 @@ class _CompletedCycleContent extends StatelessWidget {
   }
 
   Widget _buildFinancialResults() {
-    final pestLossAmount = (totalYield * (pestLoss / 100)).toDouble();
+    final pestLossAmount = pestLoss;
     final otherLossAmount = otherLoss;
-    final totalDeductions = pestLossAmount + otherLossAmount;
+    final damagedYieldValue = damagedYield * marketPrice;
+    final totalDeductions = pestLossAmount + otherLossAmount + damagedYieldValue;
     
     return Container(
       padding: const EdgeInsets.all(24),
@@ -406,9 +465,11 @@ class _CompletedCycleContent extends StatelessWidget {
           const SizedBox(height: 24),
           _buildFinanceRow('Gross Income', '₱${grossIncome.toStringAsFixed(2)}'),
           if (pestLoss > 0)
-            _buildFinanceRow('Pest Loss (${pestLoss.toStringAsFixed(1)}%)', '- ₱${pestLossAmount.toStringAsFixed(2)}'),
+            _buildFinanceRow('Pest Loss', '- ₱${pestLossAmount.toStringAsFixed(2)}'),
           if (otherLoss > 0)
-            _buildFinanceRow('Other Losses', '- ₱${otherLoss.toStringAsFixed(2)}'),
+            _buildFinanceRow('Other Losses', '- ₱${otherLossAmount.toStringAsFixed(2)}'),
+          if (damagedYield > 0)
+            _buildFinanceRow('Damaged Yield (${damagedYield.toStringAsFixed(1)} kg)', '- ₱${damagedYieldValue.toStringAsFixed(2)}'),
           const Divider(color: Colors.white24, height: 32),
           const Center(child: Text('NET INCOME', style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.w800))),
           const SizedBox(height: 8),
@@ -418,7 +479,7 @@ class _CompletedCycleContent extends StatelessWidget {
               style: const TextStyle(color: kWhite, fontSize: 40, fontWeight: FontWeight.w900),
             ),
           ),
-          if (pestLoss > 0 || otherLoss > 0)
+          if (totalDeductions > 0)
             Padding(
               padding: const EdgeInsets.only(top: 12),
               child: Text(
