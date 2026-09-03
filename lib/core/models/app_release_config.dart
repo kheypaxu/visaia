@@ -2,18 +2,15 @@ class PlatformReleaseConfig {
   const PlatformReleaseConfig({
     required this.latestVersion,
     required this.latestBuild,
-    required this.minimumBuild,
   });
 
   final String latestVersion;
   final int latestBuild;
-  final int minimumBuild;
 
   factory PlatformReleaseConfig.fromMap(Map<String, dynamic> data) {
     return PlatformReleaseConfig(
       latestVersion: data['latestVersion'] as String? ?? '',
       latestBuild: (data['latestBuild'] as num?)?.toInt() ?? 0,
-      minimumBuild: (data['minimumBuild'] as num?)?.toInt() ?? 0,
     );
   }
 }

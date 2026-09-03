@@ -37,8 +37,6 @@ class _AppVersionGateState extends State<AppVersionGate> {
     }
 
     switch (result.status) {
-      case UpdateStatus.optionalUpdate:
-        await _showUpdateDialog(result.config!, required: false);
       case UpdateStatus.requiredUpdate:
         await _showUpdateDialog(result.config!, required: true);
       case UpdateStatus.maintenance:

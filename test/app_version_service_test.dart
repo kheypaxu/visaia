@@ -5,33 +5,14 @@ void main() {
   group('AppVersionService.compareBuilds', () {
     test('reports an up-to-date build', () {
       expect(
-        AppVersionService.compareBuilds(
-          installedBuild: 5,
-          latestBuild: 5,
-          minimumBuild: 3,
-        ),
+        AppVersionService.compareBuilds(installedBuild: 5, latestBuild: 5),
         UpdateStatus.upToDate,
       );
     });
 
-    test('reports an optional update', () {
+    test('requires an update for any older build', () {
       expect(
-        AppVersionService.compareBuilds(
-          installedBuild: 4,
-          latestBuild: 5,
-          minimumBuild: 3,
-        ),
-        UpdateStatus.optionalUpdate,
-      );
-    });
-
-    test('reports a required update', () {
-      expect(
-        AppVersionService.compareBuilds(
-          installedBuild: 2,
-          latestBuild: 5,
-          minimumBuild: 3,
-        ),
+        AppVersionService.compareBuilds(installedBuild: 4, latestBuild: 5),
         UpdateStatus.requiredUpdate,
       );
     });
