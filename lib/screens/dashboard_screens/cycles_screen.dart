@@ -275,7 +275,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
       title: cycle.cycleName,
       harvestDate: cycle.formattedHarvestDateLong,
       income: cycle.formattedIncome,
-      hasIncome: cycle.income != null,
+      hasIncome: cycle.displayIncome != null,
       onViewDetailsTap: () {
         Navigator.push(
           context,

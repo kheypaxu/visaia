@@ -19,6 +19,9 @@ class CycleModel {
   final String? status;
   final String? statusText;
   final double? income;
+  final double? grossIncome;
+  final double? netIncome;
+  final double? totalValue;
   final DateTime? createdAt;
 
   CycleModel({
@@ -35,6 +38,9 @@ class CycleModel {
     this.status,
     this.statusText,
     this.income,
+    this.grossIncome,
+    this.netIncome,
+    this.totalValue,
     this.createdAt,
   });
 
@@ -54,6 +60,9 @@ class CycleModel {
       status: map['status'],
       statusText: map['statusText'],
       income: (map['income'] as num?)?.toDouble(),
+      grossIncome: (map['grossIncome'] as num?)?.toDouble(),
+      netIncome: (map['netIncome'] as num?)?.toDouble(),
+      totalValue: (map['totalValue'] as num?)?.toDouble(),
       createdAt: _parseTimestamp(map['createdAt']),
     );
   }
@@ -122,6 +131,9 @@ class CycleModel {
     String? status,
     String? statusText,
     double? income,
+    double? grossIncome,
+    double? netIncome,
+    double? totalValue,
     bool clearPlantingDate = false,
     bool clearHarvestDate = false,
     bool clearStatus = false,
@@ -141,18 +153,22 @@ class CycleModel {
       status: clearStatus ? null : (status ?? this.status),
       statusText: clearStatus ? null : (statusText ?? this.statusText),
       income: clearIncome ? null : (income ?? this.income),
+      grossIncome: grossIncome ?? this.grossIncome,
+      netIncome: netIncome ?? this.netIncome,
+      totalValue: totalValue ?? this.totalValue,
       createdAt: createdAt,
     );
   }
 
   // ================= COMPUTED PROPERTIES =================
 
-  /// Checks if cycle should be displayed as completed
-  /// (explicit flag OR harvest date passed)
+  /// Only persisted completion state moves a cycle into historical records.
+  /// A passed estimated harvest date does not mean an ongoing cycle was
+  /// actually harvested.
   bool get shouldBeCompleted {
     if (isCompleted) return true;
-    if (harvestDate == null) return false;
-    return DateTime.now().difference(harvestDate!).inDays > 1;
+    final normalizedStatus = status?.toLowerCase();
+    return normalizedStatus == 'completed' || normalizedStatus == 'harvested';
   }
 
   /// Calculates progress percentage (0.0 to 1.0)
@@ -210,9 +226,13 @@ class CycleModel {
 
   /// Formatted income
   String get formattedIncome {
-    if (income == null) return 'Not recorded';
-    return '\$${income!.toStringAsFixed(2)}';
+    if (displayIncome == null) return 'Not recorded';
+    return '\u20B1${displayIncome!.toStringAsFixed(2)}';
   }
+
+  /// Supports the field names written by harvest recording, historical
+  /// cycles, and older cycle documents.
+  double? get displayIncome => netIncome ?? income ?? grossIncome ?? totalValue;
 
   /// Gets crop-specific icon name
   String get cropIconName {

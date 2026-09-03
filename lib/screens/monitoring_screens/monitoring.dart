@@ -1,15 +1,12 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:visaia/widgets/success_modal.dart';
 import 'package:visaia/services/firestore_service.dart';
 import 'package:visaia/screens/logging_screens/daily_log_screen.dart';
-import 'package:visaia/screens/logging_screens/analyzing.dart';
 import 'package:visaia/screens/logging_screens/pest_verification.dart';
 import 'package:flutter/gestures.dart';
 import 'package:visaia/screens/logging_screens/field_scouting_demo.dart';
@@ -30,6 +27,78 @@ const Color kBorderColor = Color(0xFFE0E0E0);
 const Color kSoftGreenLabel = Color(0xFFC8E6C9);
 const Color kActiveTaskBlue = Color(0xFF1565C0);
 const Color kActiveTaskBg = Color(0xFFE3F2FD);
+
+// ==========================================
+// FAW DAMAGE ASSESSMENT (TNAU 1-5 SCALES)
+// Basis: Srinivasan et al. (2022), Madras Agricultural Journal 109:69-75
+// ==========================================
+enum FAWAssessmentType { whorl, cob, transitional }
+
+/// Determines which TNAU scoring guide applies based on Days After Planting.
+/// Seedling/Early Whorl/Late Whorl (0-45 DAP) -> Whorl Leaf scale
+/// Tasseling-Silking (45-55 DAP) -> transitional, farmer selects part
+/// Grain Filling/Maturity (55+ DAP) -> Cob scale
+FAWAssessmentType getFAWAssessmentType(int dap) {
+  if (dap <= 45) return FAWAssessmentType.whorl;
+  if (dap <= 55) return FAWAssessmentType.transitional;
+  return FAWAssessmentType.cob;
+}
+
+const List<Map<String, String>> kWhorlLeafDamageScale = [
+  {
+    'score': '1',
+    'label': 'No damage / pinhole',
+    'desc': 'No visible damage or only very small pinhole-like feeding marks.',
+  },
+  {
+    'score': '2',
+    'label': '< 1 inch holes',
+    'desc': 'Small circular or elongated feeding holes less than ~1 inch.',
+  },
+  {
+    'score': '3',
+    'label': '> 1 inch holes',
+    'desc': 'Clearly visible elongated feeding holes greater than ~1 inch.',
+  },
+  {
+    'score': '4',
+    'label': 'Mild shredding',
+    'desc': 'Elongated holes (1-2 in) with mild shredding/tearing of whorl leaves.',
+  },
+  {
+    'score': '5',
+    'label': 'Severe shredding/defoliation',
+    'desc': 'Extensive feeding damage with severe shredding and substantial leaf loss.',
+  },
+];
+
+const List<Map<String, String>> kCobDamageScale = [
+  {
+    'score': '1',
+    'label': 'Nil to slight tip damage',
+    'desc': 'No visible cob damage or only slight damage at the tip.',
+  },
+  {
+    'score': '2',
+    'label': '< 25% cob area',
+    'desc': 'FAW damage visible on less than one-fourth of the cob area.',
+  },
+  {
+    'score': '3',
+    'label': '26-50% cob area',
+    'desc': 'Approximately one-fourth to one-half of the cob area is damaged.',
+  },
+  {
+    'score': '4',
+    'label': '51-75% cob area',
+    'desc': 'More than half and up to approximately three-fourths of the cob area is damaged.',
+  },
+  {
+    'score': '5',
+    'label': 'Extensive cob damage',
+    'desc': 'Extensive FAW-associated cob damage (pending RCPC clarification on exact percentage).',
+  },
+];
 
 class MonitoringScreen extends StatefulWidget {
   final String cycleId;
@@ -174,7 +243,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     return List.generate(count, (i) => {
       'title': 'Station ${i + 1}',
       'completed': false,
-      'plantsInspected': 0,
+      'plantsInspected': 10,
       'damaged': 0,
       'fawObserved': false,
       'eggMasses': 0,
@@ -184,11 +253,15 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
       'notes': '',
       'verificationRequired': false,
       'verificationCompleted': false,
+      'damageAssessmentChoice': null,
+      'plantDamageScores': <Map<String, dynamic>>[],
+      'damagePhotos': <String>[],
       'capturedImages': {
         'eggMasses': [],
         'larvae': [],
         'pupae': [],
         'moths': [],
+        'damage': [],
       },
     });
   }
@@ -464,26 +537,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     super.dispose();
   }
 
-  Future<void> _uploadPhotoForStation(int stationIndex) async {
-    final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(
-      source: ImageSource.camera,
-      imageQuality: 85,
-    );
-    
-    if (image != null && mounted) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => AnalyzingScreen(
-            imageFile: File(image.path),
-            userId: _userId,
-          ),
-        ),
-      );
-    }
-  }
-
   Future<void> _verifyPestObservations(int stationIndex, Map<String, dynamic> station) async {
     final hasEggMasses = (station['eggMasses'] as int? ?? 0) > 0;
     final hasLarvae = (station['larvae'] as int? ?? 0) > 0;
@@ -525,22 +578,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   void _decrement(int index, String key) => _decrementPestCount(index, key);
   void _completeStation(int index) => _completeStationItem(index);
 
-  void _updatePlantsInspected(int index, {bool increment = true}) {
-    if (_isCurrentWeekLocked) return;
-    setState(() {
-      final current = _stationData[index]['plantsInspected'] as int? ?? 0;
-      if (increment && current < 100) {
-        _stationData[index]['plantsInspected'] = current + 1;
-      } else if (!increment && current > 10) {
-        _stationData[index]['plantsInspected'] = current - 1;
-      }
-    });
-    _scheduleAutoSave();
-  }
-
-  void _decrementPlantsInspected(int index) {
-    _updatePlantsInspected(index, increment: false);
-  }
 
   void _incrementPestCount(int index, String key) {
     if (_isCurrentWeekLocked) return;
@@ -591,6 +628,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     _scheduleAutoSave();
   }
 
+
 Future<void> _checkThresholdAfterCompletion() async {
   setState(() {
     _isCalculatingThreshold = true;
@@ -615,10 +653,10 @@ Future<void> _checkThresholdAfterCompletion() async {
       _showClusteredReportButton = true;
     });
   } else {
-    _showSafeModal(damagePercent, totalDamaged, totalInspected);
     _wasThresholdTriggered = false;
+    _showSafeModal(damagePercent, totalDamaged, totalInspected);
     setState(() {
-      _showClusteredReportButton = false;
+      _showClusteredReportButton = true;
     });
   }
 }
@@ -641,7 +679,7 @@ void _showControlMethodModalWithResult(double percent, int damaged, int inspecte
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Damage threshold exceeded!',
+            'Damage threshold exceeded! (High Level Report)',
             style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w700, color: kAccentRed),
           ),
           const SizedBox(height: 12),
@@ -697,7 +735,7 @@ void _showSafeModal(double percent, int damaged, int inspected) {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Damage is under control.',
+            'Damage is under control (Low Level).',
             style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w700, color: kActionGreen),
           ),
           const SizedBox(height: 8),
@@ -707,7 +745,7 @@ void _showSafeModal(double percent, int damaged, int inspected) {
           ),
           const SizedBox(height: 8),
           Text(
-            'No immediate control action required. Continue monitoring as usual.',
+            'No immediate control action required. You can create your low-level weekly clustered report.',
             style: GoogleFonts.inter(fontSize: 13, color: kTextGrey),
           ),
         ],
@@ -715,7 +753,19 @@ void _showSafeModal(double percent, int damaged, int inspected) {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('OK', style: TextStyle(color: kActionGreen, fontWeight: FontWeight.bold)),
+          child: const Text('Later', style: TextStyle(color: kTextGrey)),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            Navigator.pop(context);
+            _createClusteredReport();
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: kActionGreen,
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          child: const Text('Save Report'),
         ),
       ],
     ),
@@ -730,12 +780,12 @@ void _showSafeModal(double percent, int damaged, int inspected) {
     final needsVerification = station['verificationRequired'] as bool? ?? false;
     final isVerificationCompleted = station['verificationCompleted'] as bool? ?? false;
     
-    // Check minimum plants inspected (10)
+    // Check for exactly 10 plants inspected (changed from minimum 10)
     if (plantsInspected < 10) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Please inspect at least 10 plants before completing this station'),
+            content: Text('Please inspect all 10 plants before completing this station'),
             backgroundColor: Colors.orange,
             duration: Duration(seconds: 3),
           ),
@@ -756,6 +806,21 @@ void _showSafeModal(double percent, int damaged, int inspected) {
       }
       return;
     }
+
+    // Check FAW damage assessment completeness (per Damaged-Plant Guideline)
+    final damageIncomplete = _isDamageAssessmentIncomplete(index);
+    if (damageIncomplete != null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(damageIncomplete),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
     
     setState(() {
       _stationData[index]['completed'] = true;
@@ -770,6 +835,102 @@ void _showSafeModal(double percent, int damaged, int inspected) {
       await _updateCycleGrowthStage();
       _checkThresholdAfterCompletion();
     }
+  }
+
+  // ========================
+  // FAW DAMAGE ASSESSMENT HELPERS
+  // ========================
+
+  /// FAW presence per the guideline: egg masses, larvae, pupae, moths, or a
+  /// positive FAW detection (fawObserved) recorded at the station.
+  bool _hasFAWPresence(Map<String, dynamic> station) {
+    final eggs = station['eggMasses'] as int? ?? 0;
+    final larvae = station['larvae'] as int? ?? 0;
+    final pupae = station['pupae'] as int? ?? 0;
+    final moths = station['moths'] as int? ?? 0;
+    final fawObserved = station['fawObserved'] as bool? ?? false;
+    return eggs > 0 || larvae > 0 || pupae > 0 || moths > 0 || fawObserved;
+  }
+
+  /// Keeps plantDamageScores rows in sync with the current "damaged" count,
+  /// so the per-plant scoring table always matches the number of damaged
+  /// plants recorded at the station.
+  List<Map<String, dynamic>> _ensureDamageScoreRows(int stationIndex) {
+    final station = _stationData[stationIndex];
+    final damaged = station['damaged'] as int? ?? 0;
+    final rows = List<Map<String, dynamic>>.from(
+      ((station['plantDamageScores'] as List?) ?? [])
+          .map((e) => Map<String, dynamic>.from(e as Map)),
+    );
+    if (rows.length < damaged) {
+      for (int i = rows.length; i < damaged; i++) {
+        rows.add({'plantNumber': i + 1, 'whorlScore': null, 'cobScore': null});
+      }
+    } else if (rows.length > damaged) {
+      rows.removeRange(damaged, rows.length);
+    }
+    station['plantDamageScores'] = rows;
+    return rows;
+  }
+
+  void _setDamageAssessmentChoice(int stationIndex, String? choice) {
+    if (_isCurrentWeekLocked) return;
+    setState(() {
+      _stationData[stationIndex]['damageAssessmentChoice'] = choice;
+    });
+    _scheduleAutoSave();
+  }
+
+  void _setPlantDamageScore(int stationIndex, int plantIndex, String key, int score) {
+    if (_isCurrentWeekLocked) return;
+    setState(() {
+      final rows = _ensureDamageScoreRows(stationIndex);
+      rows[plantIndex][key] = score;
+      _stationData[stationIndex]['plantDamageScores'] = rows;
+    });
+    _scheduleAutoSave();
+  }
+
+  /// Returns a user-facing message if the damage assessment for [stationIndex]
+  /// is required but incomplete, otherwise null.
+  String? _isDamageAssessmentIncomplete(int stationIndex) {
+    final station = _stationData[stationIndex];
+    if (!_hasFAWPresence(station)) return null;
+
+    final damaged = station['damaged'] as int? ?? 0;
+    if (damaged <= 0) return null;
+
+    final assessmentType = getFAWAssessmentType(_selectedDayDap);
+
+    String? choice;
+    if (assessmentType == FAWAssessmentType.transitional) {
+      choice = station['damageAssessmentChoice'] as String?;
+      if (choice == null) {
+        return 'Please select where the fresh FAW damage is observed (Whorl/Leaves, Cob/Ear, or Both)';
+      }
+    } else {
+      choice = assessmentType == FAWAssessmentType.whorl ? 'whorl' : 'cob';
+    }
+
+    final needsWhorl = choice == 'whorl' || choice == 'both';
+    final needsCob = choice == 'cob' || choice == 'both';
+
+    final rows = _ensureDamageScoreRows(stationIndex);
+    final incomplete = rows.length < damaged ||
+        rows.any((r) =>
+            (needsWhorl && r['whorlScore'] == null) ||
+            (needsCob && r['cobScore'] == null));
+
+    if (incomplete) {
+      return 'Please complete the damage score for all $damaged damaged plant(s)';
+    }
+
+    final photos = (station['damagePhotos'] as List?) ?? [];
+    if (photos.isEmpty) {
+      return 'Please attach a photo showing the visible FAW damage';
+    }
+
+    return null;
   }
 
   // ========================
@@ -849,6 +1010,19 @@ Future<void> _loadCycleData() async {
           farmerName = data?['fullName'] as String? ?? data?['name'] as String? ?? '';
         }
       }
+
+      // Add a fallback for farmer name if it's still empty after the fetch
+      if (farmerName.isEmpty) {
+        // Try to get from users collection as a fallback
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(_userId)
+            .get();
+        if (userDoc.exists) {
+          final data = userDoc.data();
+          farmerName = data?['fullName'] as String? ?? data?['name'] as String? ?? 'Unknown Farmer';
+        }
+      }
     }
 
     setState(() {
@@ -898,18 +1072,40 @@ Future<void> _loadCycleData() async {
           .getWeek(widget.cycleId, weekId)
           .timeout(const Duration(seconds: 15));
 
+      final loadedTaskState = <int, String>{};
+      if (weekData != null && weekData['recommendedTaskState'] != null) {
+        final rawMap = Map<String, dynamic>.from(weekData['recommendedTaskState'] as Map);
+        rawMap.forEach((k, v) {
+          final intKey = int.tryParse(k.toString());
+          if (intKey != null && v is String) {
+            loadedTaskState[intKey] = v;
+          }
+        });
+      }
+
       if (weekData != null && weekData['stations'] != null) {
         final stations = List<Map<String, dynamic>>.from(
             (weekData['stations'] as List)
                 .map((s) => Map<String, dynamic>.from(s)));
+        final allCompleted = stations.isNotEmpty &&
+            stations.every((s) => s['completed'] == true);
+        int totalDamaged = stations.fold(0, (sum, item) => sum + (item['damaged'] as int? ?? 0));
+        int totalInspected = stations.fold(0, (sum, item) => sum + (item['plantsInspected'] as int? ?? 0));
+        double damagePercent = totalInspected > 0 ? (totalDamaged / totalInspected) * 100 : 0.0;
         setState(() {
           _stationData = stations;
           _expandedStationIndex = -1;
+          _showClusteredReportButton = allCompleted;
+          _wasThresholdTriggered = damagePercent >= 10.0;
+          _recommendedTaskState[weekIndex] = loadedTaskState;
         });
       } else {
         setState(() {
           _stationData = _getDefaultStations(5);
           _expandedStationIndex = -1;
+          _showClusteredReportButton = false;
+          _wasThresholdTriggered = false;
+          _recommendedTaskState[weekIndex] = loadedTaskState;
         });
       }
     } on TimeoutException {
@@ -997,6 +1193,8 @@ Future<void> _loadCycleData() async {
 
   Future<void> _saveCurrentWeekData({bool silent = false}) async {
     final weekId = 'week_${_selectedWeek + 1}';
+    final stateMap = _recommendedTaskState[_selectedWeek] ?? {};
+    final firestoreTaskMap = stateMap.map((k, v) => MapEntry(k.toString(), v));
     final data = {
       'stations': _stationData,
       'totals': {
@@ -1006,6 +1204,7 @@ Future<void> _loadCycleData() async {
         'pupae': _totalPupae,
         'moths': _totalMoths,
       },
+      'recommendedTaskState': firestoreTaskMap,
       'timestamp': FieldValue.serverTimestamp(),
       'completedStations': _completedCount,
     };
@@ -1015,6 +1214,25 @@ Future<void> _loadCycleData() async {
       if (!silent && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Auto-save failed: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _saveRecommendedTaskState(int weekIndex) async {
+    try {
+      final weekId = 'week_${weekIndex + 1}';
+      final stateMap = _recommendedTaskState[weekIndex] ?? {};
+      final firestoreMap = stateMap.map((k, v) => MapEntry(k.toString(), v));
+      await _firestoreService.saveWeek(widget.cycleId, weekId, {
+        'recommendedTaskState': firestoreMap,
+        'lastUpdated': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('Error saving recommended task state: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to save task state: $e')),
         );
       }
     }
@@ -2235,9 +2453,18 @@ Widget _buildGrowthStageCard() {
                           color: Colors.white,
                         ),
                       )
-                    : const Icon(Icons.report_problem, color: Colors.white),
+                    : Icon(
+                        _wasThresholdTriggered
+                            ? Icons.warning_amber_rounded
+                            : Icons.assignment_turned_in_rounded,
+                        color: Colors.white,
+                      ),
                 label: Text(
-                  _isSavingReport ? 'Saving...' : 'Create Clustered Report',
+                  _isSavingReport
+                      ? 'Saving Clustered Report...'
+                      : (_wasThresholdTriggered
+                          ? 'Create High-Level Clustered Report'
+                          : 'Create Low-Level Clustered Report'),
                   style: GoogleFonts.inter(
                     fontWeight: FontWeight.w700,
                     fontSize: 15,
@@ -2245,7 +2472,9 @@ Widget _buildGrowthStageCard() {
                   ),
                 ),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFC62828),
+                  backgroundColor: _wasThresholdTriggered
+                      ? const Color(0xFFC62828)
+                      : kActionGreen,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
@@ -2634,12 +2863,15 @@ Widget _buildRecommendedTaskCard({
               Row(
                 children: [
                   GestureDetector(
-                    onTap: () {
+                    onTap: () async {
+                      final newStatus =
+                          isCompleted ? 'active' : 'completed';
                       setState(() {
                         _recommendedTaskState[_selectedWeek] ??= {};
                         _recommendedTaskState[_selectedWeek]![taskIndex] =
-                            isCompleted ? 'active' : 'completed';
+                            newStatus;
                       });
+                      await _saveRecommendedTaskState(_selectedWeek);
                       if (!isCompleted && isChemicalTask) {
                         _logChemicalApplicationToDailyLog(task);
                       }
@@ -2681,12 +2913,13 @@ Widget _buildRecommendedTaskCard({
                   const SizedBox(width: 8),
 
                   GestureDetector(
-                    onTap: () {
+                    onTap: () async {
                       setState(() {
                         _recommendedTaskState[_selectedWeek] ??= {};
                         _recommendedTaskState[_selectedWeek]![taskIndex] =
                             'deleted';
                       });
+                      await _saveRecommendedTaskState(_selectedWeek);
                     },
                     child: Container(
                       padding: const EdgeInsets.symmetric(
@@ -3263,480 +3496,685 @@ Widget _buildRecommendedTaskCard({
   // ========================
   // EXPANDABLE STATION TILE
   // ========================
-  Widget _buildExpandableStationTile({
-    required int index,
-    required String title,
-    required bool isExpanded,
-    required Map<String, dynamic> data,
-    required String stationNumber,
-    bool isLocked = false,
-  }) {
-    final isCompleted = data['completed'] as bool? ?? false;
-    final plantsInspected = data['plantsInspected'] as int? ?? 0;
-    final needsVerification = data['verificationRequired'] as bool? ?? false;
+Widget _buildExpandableStationTile({
+  required int index,
+  required String title,
+  required bool isExpanded,
+  required Map<String, dynamic> data,
+  required String stationNumber,
+  bool isLocked = false,
+}) {
+  final isCompleted = data['completed'] as bool? ?? false;
+  final plantsInspected = data['plantsInspected'] as int? ?? 0;
+  final needsVerification = data['verificationRequired'] as bool? ?? false;
 
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOut,
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: isExpanded ? const EdgeInsets.all(20) : const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(isExpanded ? 20 : 16),
-        border: Border.all(
-          color: isExpanded ? kActionGreen : kBorderColor.withValues(alpha: 0.6),
-          width: isExpanded ? 2 : 1,
-        ),
+  return AnimatedContainer(
+    duration: const Duration(milliseconds: 300),
+    curve: Curves.easeInOut,
+    margin: const EdgeInsets.only(bottom: 12),
+    padding: isExpanded ? const EdgeInsets.all(20) : const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(isExpanded ? 20 : 16),
+      border: Border.all(
+        color: isExpanded ? const Color(0xFF1B4332) : kBorderColor.withValues(alpha: 0.6),
+        width: isExpanded ? 1.5 : 1,
       ),
-      child: Column(
-        children: [
-          GestureDetector(
-            onTap: () => _toggleStation(index),
-            behavior: HitTestBehavior.opaque,
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 14,
-                  backgroundColor: isCompleted
-                      ? const Color.fromARGB(255, 155, 228, 61)
-                      : (isExpanded ? kPrimaryGreen : const Color(0xFFE0E0E0)),
-                  child: isCompleted
-                      ? const Icon(Icons.check, size: 14, color: Color.fromARGB(255, 23, 94, 27))
-                      : Text(
-                          stationNumber,
-                          style: TextStyle(
-                            color: isExpanded ? Colors.white : kTextGrey,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
+    ),
+    child: Column(
+      children: [
+        GestureDetector(
+          onTap: () => _toggleStation(index),
+          behavior: HitTestBehavior.opaque,
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 14,
+                backgroundColor: isCompleted
+                    ? const Color.fromARGB(255, 155, 228, 61)
+                    : (isExpanded ? const Color(0xFF1B4332) : const Color(0xFFE0E0E0)),
+                child: isCompleted
+                    ? const Icon(Icons.check, size: 14, color: Color.fromARGB(255, 23, 94, 27))
+                    : Text(
+                        stationNumber,
+                        style: TextStyle(
+                          color: isExpanded ? Colors.white : kTextGrey,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  title,
+                  style: GoogleFonts.inter(
+                    fontWeight: isExpanded ? FontWeight.w700 : FontWeight.w600,
+                    fontSize: isExpanded ? 16 : 14,
+                    color: const Color(0xFF1E293B),
+                  ),
+                ),
+              ),
+              if (isCompleted)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE8F5E9),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    'COMPLETED',
+                    style: GoogleFonts.inter(
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                      color: const Color.fromARGB(255, 49, 114, 51),
+                    ),
+                  ),
+                ),
+              if (isCompleted) const SizedBox(width: 8),
+              AnimatedRotation(
+                duration: const Duration(milliseconds: 300),
+                turns: isExpanded ? 0.5 : 0.0,
+                child: const Icon(Icons.keyboard_arrow_down, color: kTextGrey),
+              ),
+            ],
+          ),
+        ),
+        AnimatedCrossFade(
+          firstChild: const SizedBox(width: double.infinity, height: 0),
+          secondChild: AbsorbPointer(
+            absorbing: isLocked || isCompleted,
+            child: Opacity(
+              opacity: isLocked || isCompleted ? 0.45 : 1.0,
+              child: Column(
+                children: [
+                  const SizedBox(height: 16),
+                  
+                  // PLANTS INSPECTED
+                  _buildPlantsInspectedSection(
+                    plantsInspected: plantsInspected,
+                  ),
+                  
+                  const SizedBox(height: 16),
+                  
+                  // PESTS FOUND
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'PESTS FOUND',
+                        style: GoogleFonts.inter(
+                          fontSize: 10,
+                          color: const Color(0xFF64748B),
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildPestCounterCard(
+                              label: 'EGG MASSES',
+                              value: data['eggMasses'] as int? ?? 0,
+                              onDecrement: () => _decrement(index, 'eggMasses'),
+                              onIncrement: () => _increment(index, 'eggMasses'),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: _buildPestCounterCard(
+                              label: 'LARVAE',
+                              value: data['larvae'] as int? ?? 0,
+                              onDecrement: () => _decrement(index, 'larvae'),
+                              onIncrement: () => _increment(index, 'larvae'),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildPestCounterCard(
+                              label: 'PUPAE',
+                              value: data['pupae'] as int? ?? 0,
+                              onDecrement: () => _decrement(index, 'pupae'),
+                              onIncrement: () => _increment(index, 'pupae'),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: _buildPestCounterCard(
+                              label: 'MOTHS',
+                              value: data['moths'] as int? ?? 0,
+                              onDecrement: () => _decrement(index, 'moths'),
+                              onIncrement: () => _increment(index, 'moths'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  
+                  const SizedBox(height: 16),
+                  
+                  // DAMAGED PLANT
+                  _buildDamagedPlantSection(
+                    damagedCount: data['damaged'] as int? ?? 0,
+                    onDecrement: () => _decrement(index, 'damaged'),
+                    onIncrement: () => _increment(index, 'damaged'),
+                  ),
+                  
+                  const SizedBox(height: 16),
+
+                  _buildDamageAssessmentSection(index, data),
+
+                  const SizedBox(height: 16),
+                  
+                  _buildEditableNotesBox(
+                    notes: data['notes'] as String? ?? '',
+                    onChanged: (val) => _updateNotes(index, val),
+                  ),
+                  
+                  const SizedBox(height: 16),
+                  
+                  // Verify button
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: isLocked ? null : () => _verifyPestObservations(index, data),
+                          icon: Icon(
+                            Icons.verified_outlined, 
+                            size: 18,
+                            color: needsVerification ? Colors.white : Colors.white,
+                          ),
+                          label: Text(
+                            needsVerification ? 'Verify Now' : 'Verify',
+                            style: TextStyle(
+                              color: needsVerification ? Colors.white : Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: needsVerification ? Colors.orange : kActionGreen,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(25),
+                            ),
                           ),
                         ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: GoogleFonts.inter(
-                      fontWeight: isExpanded ? FontWeight.w700 : FontWeight.w600,
-                      fontSize: isExpanded ? 15 : 14,
-                    ),
-                  ),
-                ),
-                if (isCompleted)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE8F5E9),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      'COMPLETED',
-                      style: GoogleFonts.inter(
-                        fontSize: 9,
-                        fontWeight: FontWeight.bold,
-                        color: const Color.fromARGB(255, 49, 114, 51),
                       ),
-                    ),
+                    ],
                   ),
-                if (isCompleted) const SizedBox(width: 8),
-                AnimatedRotation(
-                  duration: const Duration(milliseconds: 300),
-                  turns: isExpanded ? 0.5 : 0.0,
-                  child: const Icon(Icons.keyboard_arrow_down, color: kTextGrey),
-                ),
-              ],
-            ),
-          ),
-          AnimatedCrossFade(
-            firstChild: const SizedBox(width: double.infinity, height: 0),
-            secondChild: AbsorbPointer(
-              absorbing: isLocked || isCompleted,
-              child: Opacity(
-                opacity: isLocked || isCompleted ? 0.45 : 1.0,
-                child: Column(
-                  children: [
-                    const SizedBox(height: 20),
-                    
-                    // PLANTS INSPECTED - Starts at 0, can go to 100
+                  
+                  const SizedBox(height: 16),
+                  
+                  // Warning: Needs verification
+                  if (needsVerification && !(data['verificationCompleted'] as bool? ?? false))
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF5F5F5),
+                        color: Colors.orange.shade50,
                         borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.orange.shade200),
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      child: Row(
                         children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                'PLANTS INSPECTED',
-                                style: GoogleFonts.inter(
-                                  fontSize: 9,
-                                  color: kTextGrey,
-                                  fontWeight: FontWeight.bold,
-                                ),
+                          Icon(Icons.warning_amber, color: Colors.orange, size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Verification required: Please verify observed pests before completing',
+                              style: GoogleFonts.inter(
+                                fontSize: 11,
+                                color: Colors.orange.shade800,
                               ),
-                              Text(
-                                'Minimum 10 required',
-                                style: GoogleFonts.inter(
-                                  fontSize: 9,
-                                  color: plantsInspected >= 10 ? kActionGreen : Colors.orange.shade700,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Row(
-                                children: [
-                                  // Decrement button (always available)
-                                  GestureDetector(
-                                    onTap: () => _decrementPlantsInspected(index),
-                                    child: Container(
-                                      width: 32,
-                                      height: 32,
-                                      decoration: BoxDecoration(
-                                        color: Colors.white,
-                                        borderRadius: BorderRadius.circular(8),
-                                        border: Border.all(color: kBorderColor),
-                                      ),
-                                      child: const Icon(Icons.remove, size: 16, color: kTextDark),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  // Display current count - just the number
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                                    decoration: BoxDecoration(
-                                      color: plantsInspected >= 10 ? kLightGreenBg : Colors.white,
-                                      borderRadius: BorderRadius.circular(20),
-                                      border: Border.all(
-                                        color: plantsInspected >= 10 ? kActionGreen : Colors.orange.shade200,
-                                      ),
-                                    ),
-                                    child: Text(
-                                      '$plantsInspected',
-                                      style: GoogleFonts.inter(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 18,
-                                        color: plantsInspected >= 10 ? kActionGreen : 
-                                              (plantsInspected > 0 ? Colors.orange.shade700 : kTextGrey),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  // Increment button (only if < 100)
-                                  if (plantsInspected < 100)
-                                    GestureDetector(
-                                      onTap: () => _updatePlantsInspected(index),
-                                      child: Container(
-                                        width: 32,
-                                        height: 32,
-                                        decoration: BoxDecoration(
-                                          color: Colors.white,
-                                          borderRadius: BorderRadius.circular(8),
-                                          border: Border.all(color: kBorderColor),
-                                        ),
-                                        child: const Icon(Icons.add, size: 16, color: kActionGreen),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                              // Status indicator
-                              plantsInspected < 10
-                                  ? Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                      decoration: BoxDecoration(
-                                        color: Colors.orange.shade50,
-                                        borderRadius: BorderRadius.circular(10),
-                                        border: Border.all(color: Colors.orange.shade200),
-                                      ),
-                                      child: Text(
-                                        '${10 - plantsInspected} more needed',
-                                        style: GoogleFonts.inter(
-                                          fontSize: 9,
-                                          color: Colors.orange.shade700,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                    )
-                                  : Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                      decoration: BoxDecoration(
-                                        color: kLightGreenBg,
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                      child: Text(
-                                        '✓ Minimum met',
-                                        style: GoogleFonts.inter(
-                                          fontSize: 9,
-                                          color: kActionGreen,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                    ),
-                            ],
+                            ),
                           ),
                         ],
                       ),
                     ),
-                    
-                    const SizedBox(height: 16),
-                    
-                    _buildCounterBox(
-                      label: 'DAMAGED PLANTS',
-                      value: data['damaged'] as int? ?? 0,
-                      onDecrement: () => _decrement(index, 'damaged'),
-                      onIncrement: () => _increment(index, 'damaged'),
-                      valueColor: (data['damaged'] as int? ?? 0) > 0 ? kAccentRed : kTextDark,
-                    ),
-                    
-                    if (data['fawObserved'] as bool? ?? false) ...[
-                      const SizedBox(height: 16),
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFFEBEE),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(2),
-                              decoration: const BoxDecoration(
-                                color: kAccentRed,
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(Icons.check, color: Colors.white, size: 10),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              'FAW damage observed',
+                  
+                  // Show warning if plants inspected < 10 (not at max)
+                  if (plantsInspected < 10 && !isCompleted)
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.orange.shade200),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.warning_amber, color: Colors.orange, size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Please inspect all 10 plants (${10 - plantsInspected} remaining)',
                               style: GoogleFonts.inter(
-                                color: kAccentRed,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 13,
+                                fontSize: 11,
+                                color: Colors.orange.shade800,
                               ),
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                    ],
-                    
-                    const SizedBox(height: 16),
-                    
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        _buildSmallCounter(
-                          label: 'EGG MASSES',
-                          value: data['eggMasses'] as int? ?? 0,
-                          valueColor: (data['eggMasses'] as int? ?? 0) > 0 ? kAccentRed : kTextDark,
-                          onDecrement: () => _decrement(index, 'eggMasses'),
-                          onIncrement: () => _increment(index, 'eggMasses'),
-                        ),
-                        _buildSmallCounter(
-                          label: 'LARVAE',
-                          value: data['larvae'] as int? ?? 0,
-                          valueColor: (data['larvae'] as int? ?? 0) > 0 ? kAccentRed : kTextDark,
-                          onDecrement: () => _decrement(index, 'larvae'),
-                          onIncrement: () => _increment(index, 'larvae'),
-                        ),
-                        _buildSmallCounter(
-                          label: 'PUPAE',
-                          value: data['pupae'] as int? ?? 0,
-                          valueColor: (data['pupae'] as int? ?? 0) > 0 ? kAccentRed : kTextDark,
-                          onDecrement: () => _decrement(index, 'pupae'),
-                          onIncrement: () => _increment(index, 'pupae'),
-                        ),
-                      ],
                     ),
-                    
-                    const SizedBox(height: 12),
-                    
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildSmallCounter(
-                            label: 'MOTHS',
-                            value: data['moths'] as int? ?? 0,
-                            valueColor: (data['moths'] as int? ?? 0) > 0 ? kAccentRed : kTextDark,
-                            onDecrement: () => _decrement(index, 'moths'),
-                            onIncrement: () => _increment(index, 'moths'),
-                          ),
+                  
+                  const SizedBox(height: 16),
+                  
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton(
+                      onPressed: (isLocked || 
+                          plantsInspected < 10 ||
+                          (needsVerification && !(data['verificationCompleted'] as bool? ?? false)))
+                          ? null
+                          : () => _completeStation(index),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: isCompleted ? Colors.white : kActionGreen,
+                        disabledBackgroundColor: const Color(0xFFE0E0E0),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(26),
+                          side: isCompleted ? const BorderSide(color: kActionGreen) : BorderSide.none,
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(child: SizedBox()),
-                      ],
-                    ),
-                    
-                    const SizedBox(height: 16),
-                    
-                    _buildEditableNotesBox(
-                      notes: data['notes'] as String? ?? '',
-                      onChanged: (val) => _updateNotes(index, val),
-                    ),
-                    
-                    const SizedBox(height: 16),
-                    
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: isLocked ? null : () => _uploadPhotoForStation(index),
-                            icon: const Icon(Icons.photo_camera_outlined, size: 18),
-                            label: const Text('Upload Photo'),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: isLocked ? kTextGrey : kTextDark,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              side: BorderSide(color: isLocked ? kBorderColor : kBorderColor),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(25),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: () async {
-                              if (isLocked) return;
-                              await _verifyPestObservations(index, data);
-                            },
-                            icon: Icon(
-                              Icons.verified_outlined, 
-                              size: 18,
-                              color: needsVerification ? Colors.white : Colors.white,
-                            ),
-                            label: Text(
-                              needsVerification ? 'Verify Now' : 'Verify',
-                              style: TextStyle(
-                                color: needsVerification ? Colors.white : Colors.white,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: needsVerification ? Colors.orange : kActionGreen,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(25),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    
-                    const SizedBox(height: 16),
-                    
-                    if (needsVerification && !(data['verificationCompleted'] as bool? ?? false))
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.orange.shade50,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.orange.shade200),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(Icons.warning_amber, color: Colors.orange, size: 18),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                'Verification required: Please verify observed pests before completing',
-                                style: GoogleFonts.inter(
-                                  fontSize: 11,
-                                  color: Colors.orange.shade800,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
+                        elevation: 0,
                       ),
-                    
-                    // Show warning if plants inspected < 10
-                    if (plantsInspected < 10 && !isCompleted)
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.orange.shade50,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.orange.shade200),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(Icons.warning_amber, color: Colors.orange, size: 18),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                'Please inspect at least 10 plants (currently $plantsInspected)',
-                                style: GoogleFonts.inter(
-                                  fontSize: 11,
-                                  color: Colors.orange.shade800,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    
-                    const SizedBox(height: 16),
-                    
-                    SizedBox(
-                      width: double.infinity,
-                      height: 52,
-                      child: ElevatedButton(
-                        onPressed: (isLocked || 
-                            plantsInspected < 10 ||
-                            (needsVerification && !(data['verificationCompleted'] as bool? ?? false)))
-                            ? null
-                            : () => _completeStation(index),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: isCompleted ? Colors.white : kActionGreen,
-                          disabledBackgroundColor: const Color(0xFFE0E0E0),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(26),
-                            side: isCompleted ? const BorderSide(color: kActionGreen) : BorderSide.none,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            isCompleted ? Icons.update_outlined : Icons.check_circle_outline,
+                            color: isLocked ? kTextGrey : (isCompleted ? kActionGreen : Colors.white),
+                            size: 20,
                           ),
-                          elevation: 0,
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              isCompleted ? Icons.update_outlined : Icons.check_circle_outline,
+                          const SizedBox(width: 8),
+                          Text(
+                            isCompleted ? 'Update Station' : 'Complete Station',
+                            style: GoogleFonts.inter(
                               color: isLocked ? kTextGrey : (isCompleted ? kActionGreen : Colors.white),
-                              size: 20,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
                             ),
-                            const SizedBox(width: 8),
-                            Text(
-                              isCompleted ? 'Update Station' : 'Complete Station',
-                              style: GoogleFonts.inter(
-                                color: isLocked ? kTextGrey : (isCompleted ? kActionGreen : Colors.white),
-                                fontWeight: FontWeight.bold,
-                                fontSize: 15,
-                              ),
-                            ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
-            crossFadeState: isExpanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
-            duration: const Duration(milliseconds: 300),
-            sizeCurve: Curves.easeInOut,
           ),
-        ],
+          crossFadeState: isExpanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+          duration: const Duration(milliseconds: 300),
+          sizeCurve: Curves.easeInOut,
+        ),
+      ],
+    ),
+  );
+}
+
+  // ========================
+  // FAW DAMAGE ASSESSMENT UI (per TNAU 1-5 Guideline)
+  // ========================
+
+Widget _buildDamageAssessmentSection(int stationIndex, Map<String, dynamic> station) {
+  if (!_hasFAWPresence(station)) return const SizedBox.shrink();
+  final damaged = station['damaged'] as int? ?? 0;
+  if (damaged <= 0) return const SizedBox.shrink();
+
+  final assessmentType = getFAWAssessmentType(_selectedDayDap);
+  final choice = station['damageAssessmentChoice'] as String?;
+
+  Widget content;
+  if (assessmentType == FAWAssessmentType.transitional && choice == null) {
+    content = _buildTasselingChoicePrompt(stationIndex);
+  } else {
+    final effectiveChoice = assessmentType == FAWAssessmentType.transitional
+        ? choice!
+        : (assessmentType == FAWAssessmentType.whorl ? 'whorl' : 'cob');
+    final rows = _ensureDamageScoreRows(stationIndex);
+    content = _buildPlantScoringTable(stationIndex, rows, effectiveChoice, assessmentType);
+  }
+
+  return Container(
+    margin: const EdgeInsets.only(top: 12),
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF3F0FA),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: const Color(0xFFD1C4E9), width: 0.5),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.grading_outlined, color: Color(0xFF6A1B9A), size: 16),
+            const SizedBox(width: 6),
+            Text(
+              'Plant Damage Assessment',
+              style: GoogleFonts.inter(
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
+                color: const Color(0xFF6A1B9A),
+              ),
+            ),
+            if (damaged > 0)
+              Container(
+                margin: const EdgeInsets.only(left: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFC62828).withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '$damaged plants',
+                  style: GoogleFonts.inter(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFFC62828),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(
+          'Score each damaged plant (1-5)',
+          style: GoogleFonts.inter(fontSize: 10, color: kTextGrey),
+        ),
+        const SizedBox(height: 8),
+        content,
+      ],
+    ),
+  );
+}
+
+Widget _buildTasselingChoicePrompt(int stationIndex) {
+  Widget optionChip(String label, String value) {
+    return GestureDetector(
+      onTap: () => _setDamageAssessmentChoice(stationIndex, value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        margin: const EdgeInsets.only(right: 6, bottom: 4),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFF6A1B9A)),
+        ),
+        child: Text(
+          label,
+          style: GoogleFonts.inter(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: const Color(0xFF6A1B9A),
+          ),
+        ),
       ),
     );
   }
+
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(
+        'Where is the fresh FAW damage observed?',
+        style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w600),
+      ),
+      const SizedBox(height: 6),
+      Wrap(children: [
+        optionChip('Whorl / Leaves', 'whorl'),
+        optionChip('Cob / Ear', 'cob'),
+        optionChip('Both', 'both'),
+      ]),
+    ],
+  );
+}
+
+Widget _buildPlantScoringTable(
+  int stationIndex,
+  List<Map<String, dynamic>> rows,
+  String type,
+  FAWAssessmentType assessmentType,
+) {
+  final showWhorl = type == 'whorl' || type == 'both';
+  final showCob = type == 'cob' || type == 'both';
+
+  int scoredCount = rows.where((r) =>
+      (!showWhorl || r['whorlScore'] != null) &&
+      (!showCob || r['cobScore'] != null)).length;
+
+  final allScores = <int>[];
+  for (final r in rows) {
+    if (showWhorl && r['whorlScore'] != null) allScores.add(r['whorlScore'] as int);
+    if (showCob && r['cobScore'] != null) allScores.add(r['cobScore'] as int);
+  }
+  final avg = allScores.isEmpty
+      ? 0.0
+      : allScores.reduce((a, b) => a + b) / allScores.length;
+
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      if (assessmentType == FAWAssessmentType.transitional)
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton(
+            onPressed: () => _setDamageAssessmentChoice(stationIndex, null),
+            style: TextButton.styleFrom(
+              padding: EdgeInsets.zero,
+              minimumSize: const Size(0, 0),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('Change selection', style: TextStyle(fontSize: 11)),
+          ),
+        ),
+      // Use a ListView.builder with shrinkWrap for better space management
+      ...rows.asMap().entries.map((entry) {
+        final i = entry.key;
+        final row = entry.value;
+        return Container(
+          margin: const EdgeInsets.only(bottom: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: kBorderColor, width: 0.5),
+          ),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 60,
+                child: Text(
+                  'Plant ${row['plantNumber']}',
+                  style: GoogleFonts.inter(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 11,
+                    color: kTextDark,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (showWhorl) ...[
+                if (type == 'both')
+                  SizedBox(
+                    width: 36,
+                    child: Text(
+                      'Whorl',
+                      style: GoogleFonts.inter(
+                        fontSize: 9,
+                        color: kTextGrey,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                Expanded(
+                  flex: 2,
+                  child: _buildCompactScoreSelector(
+                    value: row['whorlScore'] as int?,
+                    onSelect: (v) => _setPlantDamageScore(stationIndex, i, 'whorlScore', v),
+                  ),
+                ),
+                if (showCob && type == 'both') const SizedBox(width: 8),
+              ],
+              if (showCob) ...[
+                if (type == 'both')
+                  SizedBox(
+                    width: 32,
+                    child: Text(
+                      'Cob',
+                      style: GoogleFonts.inter(
+                        fontSize: 9,
+                        color: kTextGrey,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                Expanded(
+                  flex: 2,
+                  child: _buildCompactScoreSelector(
+                    value: row['cobScore'] as int?,
+                    onSelect: (v) => _setPlantDamageScore(stationIndex, i, 'cobScore', v),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      }),
+      const SizedBox(height: 6),
+      // Compact stats row
+      Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _damageStatChipCompact('Damaged', '${rows.length}'),
+          _damageStatChipCompact('Scored', '$scoredCount'),
+          _damageStatChipCompact('Avg', avg > 0 ? avg.toStringAsFixed(1) : '-',
+              color: const Color(0xFFC62828)),
+        ],
+      ),
+      const SizedBox(height: 8),
+      // Scoring guide with compact layout
+      if (showWhorl) _buildCompactScoringGuide('WHORL', kWhorlLeafDamageScale),
+      if (showWhorl && showCob) const SizedBox(height: 4),
+      if (showCob) _buildCompactScoringGuide('EAR COB', kCobDamageScale),
+    ],
+  );
+}
+
+Widget _buildCompactScoreSelector({
+  required int? value,
+  required ValueChanged<int> onSelect,
+}) {
+  return Row(
+    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+    children: List.generate(5, (i) {
+      final score = i + 1;
+      final selected = value == score;
+      return GestureDetector(
+        onTap: () => onSelect(score),
+        child: Container(
+          width: 28,
+          height: 28,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: selected ? const Color(0xFFC62828) : const Color(0xFFF5F5F5),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: selected ? const Color(0xFFC62828) : Colors.grey.shade300,
+              width: selected ? 2 : 1,
+            ),
+          ),
+          child: Text(
+            '$score',
+            style: GoogleFonts.inter(
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+              color: selected ? Colors.white : kTextDark,
+            ),
+          ),
+        ),
+      );
+    }),
+  );
+}
+
+Widget _damageStatChipCompact(String label, String value, {Color? color}) {
+  return Row(
+    children: [
+      Text(
+        '$label: ',
+        style: GoogleFonts.inter(
+          fontSize: 10,
+          color: kTextGrey,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      Text(
+        value,
+        style: GoogleFonts.inter(
+          fontSize: 13,
+          fontWeight: FontWeight.bold,
+          color: color ?? kTextDark,
+        ),
+      ),
+    ],
+  );
+}
+
+Widget _buildCompactScoringGuide(String title, List<Map<String, String>> scale) {
+  return Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(8),
+    decoration: BoxDecoration(
+      color: const Color(0xFFFAFAFA),
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(color: Colors.grey.shade200, width: 0.5),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.info_outline, size: 12, color: kTextGrey),
+            const SizedBox(width: 4),
+            Text(
+              'FAW DAMAGE SCORING GUIDE ($title)',
+              style: GoogleFonts.inter(
+                fontSize: 8,
+                fontWeight: FontWeight.bold,
+                color: kTextGrey,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Wrap(
+          spacing: 2,
+          runSpacing: 0,
+          children: scale.map((s) => Padding(
+            padding: const EdgeInsets.symmetric(vertical: 0.5),
+            child: Text(
+              '${s['score']}: ${s['label']}',
+              style: GoogleFonts.inter(
+                fontSize: 9,
+                color: kTextDark,
+                height: 1.2,
+              ),
+            ),
+          )).toList(),
+        ),
+      ],
+    ),
+  );
+}
 
   // ========================
   // SAVE BUTTON
@@ -3769,73 +4207,96 @@ Widget _buildRecommendedTaskCard({
   // ========================
   // REUSABLE INPUT COMPONENTS
   // ========================
-  Widget _buildCounterBox({
+  Widget _buildPlantsInspectedSection({
+    required int plantsInspected,
+  }) {
+    final displayCount = plantsInspected > 0 ? plantsInspected : 10;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'PLANTS INSPECTED',
+          style: GoogleFonts.inter(
+            fontSize: 10,
+            color: const Color(0xFF64748B),
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.5,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          height: 48,
+          decoration: BoxDecoration(
+            color: const Color(0xFFEAF0FA),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: const Color(0xFFD6E4F0), width: 1),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            '$displayCount',
+            style: GoogleFonts.inter(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: const Color(0xFF1E293B),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPestCounterCard({
     required String label,
     required int value,
     required VoidCallback onDecrement,
     required VoidCallback onIncrement,
-    Color? valueColor,
   }) {
-    final color = valueColor ?? kTextDark;
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
       decoration: BoxDecoration(
-          color: const Color(0xFFF5F5F5),
-          borderRadius: BorderRadius.circular(12)),
+        color: const Color(0xFFEAF0FA),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFD6E4F0), width: 1),
+      ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Text(label,
-              style: GoogleFonts.inter(
-                  fontSize: 9,
-                  color: kTextGrey,
-                  fontWeight: FontWeight.bold)),
-          const SizedBox(height: 4),
+          Text(
+            label,
+            style: GoogleFonts.inter(
+              fontSize: 9,
+              color: const Color(0xFF475569),
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.5,
+            ),
+          ),
+          const SizedBox(height: 6),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               GestureDetector(
                 onTap: onDecrement,
-                child: Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.06),
-                            blurRadius: 4,
-                            offset: const Offset(0, 1))
-                      ]),
-                  child:
-                      const Icon(Icons.remove, size: 14, color: kTextDark),
+                behavior: HitTestBehavior.opaque,
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  child: Icon(Icons.remove, size: 16, color: Color(0xFF64748B)),
                 ),
               ),
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 200),
-                child: Text('$value',
-                    key: ValueKey<int>(value),
-                    style: GoogleFonts.inter(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                        color: color)),
+              Text(
+                '$value',
+                style: GoogleFonts.inter(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                  color: const Color(0xFF1E293B),
+                ),
               ),
               GestureDetector(
                 onTap: onIncrement,
-                child: Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.06),
-                            blurRadius: 4,
-                            offset: const Offset(0, 1))
-                      ]),
-                  child: const Icon(Icons.add, size: 14, color: kTextDark),
+                behavior: HitTestBehavior.opaque,
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  child: Icon(Icons.add, size: 16, color: Color(0xFF64748B)),
                 ),
               ),
             ],
@@ -3845,73 +4306,72 @@ Widget _buildRecommendedTaskCard({
     );
   }
 
-  Widget _buildSmallCounter({
-    required String label,
-    required int value,
-    required Color valueColor,
+  Widget _buildDamagedPlantSection({
+    required int damagedCount,
     required VoidCallback onDecrement,
     required VoidCallback onIncrement,
   }) {
-    return Container(
-      width: 100,
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
-      decoration: BoxDecoration(
-          color: const Color(0xFFF5F5F5),
-          borderRadius: BorderRadius.circular(25)),
-      child: Column(
-        children: [
-          Text(label,
-              style: GoogleFonts.inter(
-                  fontSize: 8,
-                  color: kTextGrey,
-                  fontWeight: FontWeight.bold)),
-          Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'DAMAGED PLANT',
+          style: GoogleFonts.inter(
+            fontSize: 10,
+            color: const Color(0xFF64748B),
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.5,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          height: 48,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: const Color(0xFFD6E4F0), width: 1.2),
+          ),
+          child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               GestureDetector(
                 onTap: onDecrement,
                 child: Container(
-                  width: 22,
-                  height: 22,
-                  decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.06),
-                            blurRadius: 3)
-                      ]),
-                  child:
-                      const Icon(Icons.remove, size: 12, color: kTextDark),
+                  width: 34,
+                  height: 34,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFEAF0FA),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.remove, size: 18, color: Color(0xFF334155)),
                 ),
               ),
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 200),
-                child: Text('$value',
-                    key: ValueKey<int>(value),
-                    style: GoogleFonts.inter(
-                        fontWeight: FontWeight.bold, color: valueColor)),
+              Text(
+                '$damagedCount',
+                style: GoogleFonts.inter(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: const Color(0xFF1E293B),
+                ),
               ),
               GestureDetector(
                 onTap: onIncrement,
                 child: Container(
-                  width: 22,
-                  height: 22,
-                  decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.06),
-                            blurRadius: 3)
-                      ]),
-                  child: const Icon(Icons.add, size: 12, color: kTextDark),
+                  width: 34,
+                  height: 34,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFEAF0FA),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.add, size: 18, color: Color(0xFF334155)),
                 ),
               ),
             ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -4085,6 +4545,127 @@ Widget _buildRecommendedTaskCard({
   }
 }
 
+double? _averageScore(Iterable<int> values) {
+  final list = values.toList();
+  if (list.isEmpty) return null;
+  return list.reduce((a, b) => a + b) / list.length;
+}
+
+// Add this method to get all captured images from stations
+Map<String, List<String>> _getAllCapturedImages() {
+  final allImages = <String, List<String>>{};
+  
+  for (final station in _stationData) {
+    final stationTitle = station['title'] as String? ?? 'Unknown';
+    final capturedImages = station['capturedImages'] as Map<String, dynamic>? ?? {};
+    
+    // Get pest images
+    final eggImages = List<String>.from(capturedImages['eggMasses'] ?? []);
+    final larvaeImages = List<String>.from(capturedImages['larvae'] ?? []);
+    final pupaeImages = List<String>.from(capturedImages['pupae'] ?? []);
+    final mothImages = List<String>.from(capturedImages['moths'] ?? []);
+    final damageImages = List<String>.from(capturedImages['damage'] ?? []);
+    
+    // Also check direct damagePhotos field
+    final directDamagePhotos = List<String>.from(station['damagePhotos'] ?? []);
+    final allDamagePhotos = [...damageImages, ...directDamagePhotos];
+    
+    // Store images with station context
+    allImages['${stationTitle}_eggMasses'] = eggImages;
+    allImages['${stationTitle}_larvae'] = larvaeImages;
+    allImages['${stationTitle}_pupae'] = pupaeImages;
+    allImages['${stationTitle}_moths'] = mothImages;
+    allImages['${stationTitle}_damage'] = allDamagePhotos;
+  }
+  
+  return allImages;
+}
+
+// ─── Plant Damage Report ─────────────────────────────────────────────
+Future<void> _createPlantDamageReport() async {
+  final growthInfo = _getCurrentGrowthStage();
+  final dap = _selectedDayDap;
+  final weekNumber = (dap / 7).ceil();
+
+  int totalInspected = _stationData.fold(0, (sum, s) => sum + (s['plantsInspected'] as int? ?? 0));
+  double damagePercent = totalInspected > 0 ? (_totalDamaged / totalInspected) * 100 : 0.0;
+
+  // Collect per-plant damage scores and damage photos across all stations
+  final allPlantScores = <Map<String, dynamic>>[];
+  final allDamagePhotos = <String>[];
+  final stationBreakdown = <Map<String, dynamic>>[];
+
+  for (final station in _stationData) {
+    final scores = (station['plantDamageScores'] as List?) ?? [];
+    for (final sc in scores) {
+      final whorlScore = sc['whorlScore'];
+      final cobScore = sc['cobScore'];
+      if (whorlScore != null || cobScore != null) {
+        allPlantScores.add({
+          'station': station['title'],
+          'plantNumber': sc['plantNumber'],
+          'whorlScore': whorlScore,
+          'cobScore': cobScore,
+        });
+      }
+    }
+
+    // Aggregate damage photos from capturedImages['damage'] and damagePhotos
+    final capturedDamage = List<String>.from(station['capturedImages']?['damage'] ?? []);
+    final directDamagePhotos = List<String>.from(station['damagePhotos'] ?? []);
+    final stationPhotos = [...capturedDamage, ...directDamagePhotos];
+    allDamagePhotos.addAll(stationPhotos);
+
+    final stationDamaged = station['damaged'] as int? ?? 0;
+    final stationInspected = station['plantsInspected'] as int? ?? 0;
+    if (stationDamaged > 0 || stationInspected > 0) {
+      stationBreakdown.add({
+        'station': station['title'],
+        'damaged': stationDamaged,
+        'plantsInspected': stationInspected,
+        'damagePhotos': stationPhotos,
+        'plantDamageScores': scores,
+        'notes': station['notes'] ?? '',
+      });
+    }
+  }
+
+  final avgWhorlScore = _averageScore(
+      allPlantScores.where((e) => e['whorlScore'] != null).map((e) => e['whorlScore'] as int));
+  final avgCobScore = _averageScore(
+      allPlantScores.where((e) => e['cobScore'] != null).map((e) => e['cobScore'] as int));
+
+  final reportData = {
+    'userId': _userId,
+    'cycleId': widget.cycleId,
+    'cycleName': _cycleName,
+    'farmId': _farmId,
+    'fieldId': _fieldId,
+    'farmerId': _farmerId,
+    'farmName': _farmName,
+    'fieldName': _fieldName,
+    'farmerName': _farmerName,
+    'weekNumber': weekNumber,
+    'dap': dap,
+    'growthStage': growthInfo.name,
+    'totalDamaged': _totalDamaged,
+    'totalInspected': totalInspected,
+    'damagePercentage': damagePercent,
+    'allDamagePhotos': allDamagePhotos,
+    'plantDamageScores': allPlantScores,
+    'averageWhorlScore': avgWhorlScore,
+    'averageCobScore': avgCobScore,
+    'stationBreakdown': stationBreakdown,
+    'status': 'pending',
+    'createdAt': FieldValue.serverTimestamp(),
+  };
+
+  await FirebaseFirestore.instance
+      .collection('plant_damage_reports')
+      .add(reportData);
+}
+
+// ─── Clustered Report ────────────────────────────────────────────────
 Future<void> _createClusteredReport() async {
   if (_isSavingReport) return;
   setState(() => _isSavingReport = true);
@@ -4092,6 +4673,9 @@ Future<void> _createClusteredReport() async {
   try {
     int totalInspected = _stationData.fold(0, (sum, s) => sum + (s['plantsInspected'] as int? ?? 0));
     double damagePercent = totalInspected > 0 ? (_totalDamaged / totalInspected) * 100 : 0.0;
+    final bool exceedsThreshold = damagePercent >= 10.0;
+    final String reportLevel = exceedsThreshold ? 'High' : 'Low';
+    final String severityLevel = exceedsThreshold ? 'High Level' : 'Low Level';
 
     final growthInfo = _getCurrentGrowthStage();
 
@@ -4110,7 +4694,35 @@ Future<void> _createClusteredReport() async {
 
     final fieldLocation = await _getFieldLocation();
 
-    // ─── Build report data ────────────────────────────────────────────────
+    // ─── FAW Damage Assessment summary ──────────────────────────────────
+    final allPlantScores = <Map<String, dynamic>>[];
+    for (final s in _stationData) {
+      final scores = (s['plantDamageScores'] as List?) ?? [];
+      for (final sc in scores) {
+        final whorlScore = sc['whorlScore'];
+        final cobScore = sc['cobScore'];
+        if (whorlScore != null || cobScore != null) {
+          allPlantScores.add({
+            'station': s['title'],
+            'plantNumber': sc['plantNumber'],
+            'damageType': s['damageAssessmentChoice'] ?? _damageTypeLabelForDap(),
+            'whorlScore': whorlScore,
+            'cobScore': cobScore,
+          });
+        }
+      }
+    }
+    final avgWhorlScore = _averageScore(
+        allPlantScores.where((e) => e['whorlScore'] != null).map((e) => e['whorlScore'] as int));
+    final avgCobScore = _averageScore(
+        allPlantScores.where((e) => e['cobScore'] != null).map((e) => e['cobScore'] as int));
+
+    // ─── Get all captured images ────────────────────────────────────────
+    final allCapturedImages = _getAllCapturedImages();
+
+    final weekNumber = (_selectedDayDap / 7).ceil();
+
+    // ─── Build report data ──────────────────────────────────────────────
     Map<String, dynamic> reportData = {
       // IDs to connect to other collections
       'userId': _userId,
@@ -4127,12 +4739,18 @@ Future<void> _createClusteredReport() async {
       
       // Report data
       'timestamp': FieldValue.serverTimestamp(),
+      'weekNumber': weekNumber, 
       'dap': _selectedDayDap,
       'growthStage': growthInfo.name,
       'growthStageScore': growthInfo.vulnerabilityScore,
       'totalDamaged': _totalDamaged,
       'totalInspected': totalInspected,
       'damagePercentage': damagePercent,
+      'exceedsThreshold': exceedsThreshold,
+      'reportLevel': reportLevel,
+      'severityLevel': severityLevel,
+      'level': reportLevel.toLowerCase(),
+      'isHighLevel': exceedsThreshold,
       'totals': {
         'eggs': _totalEggs,
         'larvae': _totalLarvae,
@@ -4148,6 +4766,15 @@ Future<void> _createClusteredReport() async {
         'present': _totalMoths > 0,
         'riskLevel': mothRiskLevel,
         'riskType': 'Spread',
+      },
+      // ─── ADD CAPTURED IMAGES ──────────────────────────────────────────
+      'capturedImages': allCapturedImages,
+      // FAW plant damage assessment
+      'damageAssessment': {
+        'plantScores': allPlantScores,
+        'averageWhorlLeafScore': avgWhorlScore,
+        'averageCobScore': avgCobScore,
+        'validationStatus': 'pending',
       },
       'location': fieldLocation != null
           ? {
@@ -4165,6 +4792,16 @@ Future<void> _createClusteredReport() async {
         'pupae': s['pupae'],
         'moths': s['moths'],
         'notes': s['notes'],
+        'damageAssessmentChoice': s['damageAssessmentChoice'],
+        'plantDamageScores': s['plantDamageScores'],
+        // Include image count for reference
+        'imageCount': {
+          'eggMasses': (s['capturedImages']?['eggMasses'] as List?)?.length ?? 0,
+          'larvae': (s['capturedImages']?['larvae'] as List?)?.length ?? 0,
+          'pupae': (s['capturedImages']?['pupae'] as List?)?.length ?? 0,
+          'moths': (s['capturedImages']?['moths'] as List?)?.length ?? 0,
+          'damage': (s['capturedImages']?['damage'] as List?)?.length ?? 0,
+        },
       }).toList(),
       
       // Control method info
@@ -4176,15 +4813,20 @@ Future<void> _createClusteredReport() async {
       'createdAt': FieldValue.serverTimestamp(),
     };
 
-    // ─── Save to top-level clustered_reports collection ──────────────────
+    // ─── Save to top-level clustered_reports collection ────────────────
     await FirebaseFirestore.instance
         .collection('clustered_reports')
         .add(reportData);
 
+    // ─── Save plant damage report ─────────────────────────────────────
+    await _createPlantDamageReport();
+
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('✅ Clustered report saved successfully!'),
+        SnackBar(
+          content: Text(exceedsThreshold
+              ? '✅ High-level clustered report and plant damage report saved successfully!'
+              : '✅ Low-level clustered report and plant damage report saved successfully!'),
           backgroundColor: kActionGreen,
         ),
       );
@@ -4203,6 +4845,18 @@ Future<void> _createClusteredReport() async {
       );
     }
     setState(() => _isSavingReport = false);
+  }
+}
+
+String _damageTypeLabelForDap() {
+  final type = getFAWAssessmentType(_selectedDayDap);
+  switch (type) {
+    case FAWAssessmentType.whorl:
+      return 'whorl';
+    case FAWAssessmentType.cob:
+      return 'cob';
+    case FAWAssessmentType.transitional:
+      return 'unspecified';
   }
 }
 }

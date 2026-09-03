@@ -12,11 +12,13 @@ import 'package:share_plus/share_plus.dart';
 class CropFinanceScreen extends StatefulWidget {
   final String userId;
   final String activeFarmId;
+  final String cycleId;
 
   const CropFinanceScreen({
     super.key,
     required this.userId,
     required this.activeFarmId,
+    required this.cycleId,
   });
 
   @override
@@ -91,58 +93,36 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
     });
 
     try {
-      // Get active cycles to fetch crop name
-      final activeSnap = await FirebaseFirestore.instance
+      final cycleDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(widget.userId)
           .collection('cycles')
-          .where('farmId', isEqualTo: widget.activeFarmId)
-          .where('isCompleted', isEqualTo: false)
-          .limit(1)
+          .doc(widget.cycleId)
           .get();
 
-      if (activeSnap.docs.isNotEmpty) {
-        final data = activeSnap.docs.first.data();
-        _cropName = data['cropVariety'] ?? data['cropType'] ?? 'Glutinous Corn';
-      } else {
-        _cropName = 'Glutinous Corn';
+      if (!cycleDoc.exists) {
+        throw StateError('Completed cycle not found');
       }
-
-      // Get completed cycles for financial data
-      final completedSnap = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.userId)
-          .collection('cycles')
-          .where('farmId', isEqualTo: widget.activeFarmId)
-          .where('isCompleted', isEqualTo: true)
-          .get();
-
-      double totalGross = 0;
-      double totalPestLoss = 0;
-      double totalOtherLoss = 0;
-      int count = 0;
-
-      for (final doc in completedSnap.docs) {
-        final data = doc.data();
-        final income = (data['grossIncome'] as num?)?.toDouble() ??
-            (data['totalValue'] as num?)?.toDouble() ??
-            0;
-        final pestLoss = (data['pestLoss'] as num?)?.toDouble() ?? 0;
-        final otherLoss = (data['otherLoss'] as num?)?.toDouble() ?? 0;
-
-        totalGross += income;
-        totalPestLoss += pestLoss;
-        totalOtherLoss += otherLoss;
-        count++;
+      final data = cycleDoc.data()!;
+      if (data['isCompleted'] != true) {
+        throw StateError('Income analysis is only available for completed cycles');
       }
+      _cropName = data['cropVariety'] ?? data['cropType'] ?? 'Unknown Crop';
+      final totalGross = (data['grossIncome'] as num?)?.toDouble() ??
+          (data['totalValue'] as num?)?.toDouble() ??
+          (data['income'] as num?)?.toDouble() ??
+          0;
+      final totalPestLoss = (data['pestLoss'] as num?)?.toDouble() ?? 0;
+      final totalOtherLoss = (data['otherLoss'] as num?)?.toDouble() ?? 0;
+      final storedNet = (data['netIncome'] as num?)?.toDouble();
 
       setState(() {
         _grossIncome = totalGross;
         _damageCost = totalPestLoss;
         _totalCycleCost = totalOtherLoss;
-        _netIncome = totalGross - totalPestLoss - totalOtherLoss;
+        _netIncome = storedNet ?? totalGross - totalPestLoss - totalOtherLoss;
         _profitPercentage = totalGross > 0 ? ((_netIncome / totalGross) * 100) : 0;
-        _cycleCount = count;
+        _cycleCount = 1;
 
         _harvestIncomeController.text = totalGross > 0 ? totalGross.toStringAsFixed(2) : '0.00';
         _damageCostController.text = totalPestLoss > 0 ? totalPestLoss.toStringAsFixed(2) : '0.00';
@@ -160,27 +140,6 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
         _errorMessage = _getUserFriendlyError(e);
       });
     }
-  }
-
-  void _calculateIncome() {
-    final harvestIncome = double.tryParse(_harvestIncomeController.text.replaceAll(',', '')) ?? 0;
-    final controlMethod = double.tryParse(_controlMethodController.text.replaceAll(',', '')) ?? 0;
-    final fertilizer = double.tryParse(_fertilizerController.text.replaceAll(',', '')) ?? 0;
-    final seeds = double.tryParse(_seedsController.text.replaceAll(',', '')) ?? 0;
-    final otherExpenses = double.tryParse(_otherExpensesController.text.replaceAll(',', '')) ?? 0;
-    final damage = double.tryParse(_damageCostController.text.replaceAll(',', '')) ?? 0;
-
-    final totalCycleCost = controlMethod + fertilizer + seeds + otherExpenses;
-    final net = harvestIncome - totalCycleCost - damage;
-    final pct = harvestIncome > 0 ? ((net / harvestIncome) * 100) : 0;
-
-    setState(() {
-      _grossIncome = harvestIncome;
-      _totalCycleCost = totalCycleCost;
-      _damageCost = damage;
-      _netIncome = net;
-      _profitPercentage = pct.toDouble();
-    });
   }
 
   String _formatCurrency(double value) {
@@ -253,7 +212,7 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Enter your harvest data to calculate precise net income and assess seasonal performance.',
+                        'Read-only financial analysis from this completed cycle.',
                         style: GoogleFonts.manrope(
                           fontSize: 13,
                           color: textGray,
@@ -325,31 +284,7 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
 
                       const SizedBox(height: 24),
 
-                      // CALCULATE BUTTON
-                      SizedBox(
-                        width: double.infinity,
-                        height: 52,
-                        child: ElevatedButton(
-                          onPressed: _calculateIncome,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: darkGreen,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(30),
-                            ),
-                            elevation: 0,
-                          ),
-                          child: Text(
-                            'Calculate Income',
-                            style: GoogleFonts.manrope(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(height: 30),
+                      const SizedBox(height: 10),
 
                       // ESTIMATED NET INCOME RESULT
                       _buildResultCard(),
@@ -425,6 +360,8 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
           ),
           child: TextField(
             controller: controller,
+            readOnly: true,
+            enableInteractiveSelection: false,
             keyboardType: TextInputType.number,
             style: GoogleFonts.manrope(
               fontSize: 16,

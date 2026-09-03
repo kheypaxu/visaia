@@ -1,8 +1,11 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 
 class PestVerificationScreen extends StatefulWidget {
   final String userId;
@@ -27,8 +30,11 @@ class PestVerificationScreen extends StatefulWidget {
 class _PestVerificationScreenState extends State<PestVerificationScreen> {
   final ImagePicker _picker = ImagePicker();
   Map<String, List<String>> _capturedImages = {};
-  Map<String, bool> _verificationStatus = {};
   Map<String, bool> _isProcessing = {};
+  
+  // Damage verification state
+  List<String> _damagePhotos = [];
+  bool _isDamageProcessing = false;
 
   static const _green = Color(0xFF1A5C30);
   static const _lightGreen = Color(0xFFEAF3DE);
@@ -36,6 +42,9 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
   static const _bgColor = Color(0xFFF7F8F5);
   static const _cardWhite = Color(0xFFFFFFFF);
   static const _orange = Color(0xFFFF9800);
+  static const _purple = Color(0xFF7B1FA2);
+  static const _textDark = Color(0xFF1A1A1A);
+  static const _textGrey = Color(0xFF666666);
 
   final List<Map<String, dynamic>> _pestTypes = [
     {'key': 'eggMasses', 'label': 'Egg Masses', 'icon': Icons.circle, 'color': const Color(0xFFE91E63)},
@@ -51,6 +60,7 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
   }
 
   void _initializeVerificationData() {
+    // Initialize pest images
     final capturedImages = widget.station['capturedImages'] as Map<String, dynamic>? ?? {};
     _capturedImages = {
       'eggMasses': List<String>.from(capturedImages['eggMasses'] ?? []),
@@ -59,32 +69,52 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
       'moths': List<String>.from(capturedImages['moths'] ?? []),
     };
 
-    for (var pest in _pestTypes) {
-      final key = pest['key'] as String;
-      final count = widget.station[key] as int? ?? 0;
-      final hasCaptured = _capturedImages[key]?.isNotEmpty ?? false;
-      _verificationStatus[key] = (count > 0 && hasCaptured) || count == 0;
-    }
+    // Initialize damage photos
+    _damagePhotos = List<String>.from(widget.station['damagePhotos'] ?? []);
+  }
+
+  bool _hasFAWPresence() {
+    final eggs = widget.station['eggMasses'] as int? ?? 0;
+    final larvae = widget.station['larvae'] as int? ?? 0;
+    final pupae = widget.station['pupae'] as int? ?? 0;
+    final moths = widget.station['moths'] as int? ?? 0;
+    final fawObserved = widget.station['fawObserved'] as bool? ?? false;
+    return eggs > 0 || larvae > 0 || pupae > 0 || moths > 0 || fawObserved;
   }
 
   Widget _buildImage(String imageData) {
     try {
-      // If it's a network URL
-      if (imageData.startsWith('http')) {
+      if (imageData.startsWith('http://') || imageData.startsWith('https://')) {
         return Image.network(
           imageData,
           fit: BoxFit.cover,
           width: double.infinity,
           height: double.infinity,
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return Center(
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  value: loadingProgress.expectedTotalBytes != null
+                      ? loadingProgress.cumulativeBytesLoaded /
+                          loadingProgress.expectedTotalBytes!
+                      : null,
+                  color: _accentGreen,
+                ),
+              ),
+            );
+          },
           errorBuilder: (_, __, ___) {
             return const Center(
-              child: Icon(Icons.broken_image),
+              child: Icon(Icons.broken_image, color: Colors.grey),
             );
           },
         );
       }
 
-      // If it's base64
       final pureBase64 = imageData.contains(',')
           ? imageData.split(',').last
           : imageData;
@@ -98,93 +128,142 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
         height: double.infinity,
         errorBuilder: (_, __, ___) {
           return const Center(
-            child: Icon(Icons.broken_image),
+            child: Icon(Icons.broken_image, color: Colors.grey),
           );
         },
       );
     } catch (e) {
-      debugPrint('Image decode error: $e');
-
       return Container(
         color: Colors.grey.shade200,
         child: const Center(
-          child: Icon(
-            Icons.broken_image,
-            color: Colors.grey,
-          ),
+          child: Icon(Icons.broken_image, color: Colors.grey),
         ),
       );
     }
   }
 
-  Future<String> _convertImageToBase64(File imageFile) async {
-    final bytes = await imageFile.readAsBytes();
-    final base64String = base64Encode(bytes);
-    return 'data:image/jpeg;base64,$base64String';
+  /// Compresses the image to reduce file size while maintaining clarity,
+  /// then uploads it to Firebase Storage and returns the download URL.
+  Future<String?> _compressAndUploadImage(File imageFile, String typePrefix) async {
+    try {
+      Uint8List? compressedBytes;
+      try {
+        compressedBytes = await FlutterImageCompress.compressWithFile(
+          imageFile.path,
+          minWidth: 1024,
+          minHeight: 1024,
+          quality: 70,
+          format: CompressFormat.jpeg,
+        );
+      } catch (e) {
+        debugPrint('FlutterImageCompress error, using raw bytes: $e');
+        compressedBytes = await imageFile.readAsBytes();
+      }
+
+      compressedBytes ??= await imageFile.readAsBytes();
+
+      final fileName = '${typePrefix}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final storagePath =
+          'pest_verifications/${widget.userId}/${widget.cycleId}/station_${widget.stationIndex + 1}/$fileName';
+
+      final storageRef = FirebaseStorage.instance.ref().child(storagePath);
+      final metadata = SettableMetadata(
+        contentType: 'image/jpeg',
+        customMetadata: {
+          'userId': widget.userId,
+          'cycleId': widget.cycleId,
+          'stationIndex': widget.stationIndex.toString(),
+          'type': typePrefix,
+          'uploadedAt': DateTime.now().toIso8601String(),
+        },
+      );
+
+      final uploadTask = await storageRef.putData(compressedBytes, metadata);
+      final downloadUrl = await uploadTask.ref.getDownloadURL();
+      return downloadUrl;
+    } catch (e) {
+      debugPrint('Error uploading image to Firebase Storage: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to upload image: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return null;
+    }
   }
 
+  // ==================== PEST VERIFICATION METHODS ====================
   Future<void> _capturePestImage(String pestType) async {
     final XFile? image = await _picker.pickImage(
       source: ImageSource.camera,
-      imageQuality: 70, // Reduced quality for base64 size
+      imageQuality: 75,
     );
     
     if (image != null && mounted) {
-      setState(() {
-        _isProcessing[pestType] = true;
-      });
+      setState(() => _isProcessing[pestType] = true);
       
-      // Convert image to base64
-      final base64Image = await _convertImageToBase64(File(image.path));
+      final downloadUrl = await _compressAndUploadImage(File(image.path), pestType);
       
       if (mounted) {
         setState(() {
-          _capturedImages[pestType]!.add(base64Image);
-          _verificationStatus[pestType] = true;
+          if (downloadUrl != null) {
+            _capturedImages[pestType]!.add(downloadUrl);
+          }
           _isProcessing[pestType] = false;
         });
         
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${_getPestLabel(pestType)} image captured and saved'),
-            backgroundColor: _accentGreen,
-            duration: const Duration(seconds: 1),
-          ),
-        );
+        if (downloadUrl != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${_getPestLabel(pestType)} image captured and uploaded'),
+              backgroundColor: _accentGreen,
+              duration: const Duration(seconds: 1),
+            ),
+          );
+        }
       }
     }
   }
 
-  Future<void> _pickFromGallery(String pestType) async {
+  Future<void> _pickPestImageFromGallery(String pestType) async {
     final XFile? image = await _picker.pickImage(
       source: ImageSource.gallery,
-      imageQuality: 70, // Reduced quality for base64 size
+      imageQuality: 75,
     );
     
     if (image != null && mounted) {
-      setState(() {
-        _isProcessing[pestType] = true;
-      });
+      setState(() => _isProcessing[pestType] = true);
       
-      // Convert image to base64
-      final base64Image = await _convertImageToBase64(File(image.path));
+      final downloadUrl = await _compressAndUploadImage(File(image.path), pestType);
       
       if (mounted) {
         setState(() {
-          _capturedImages[pestType]!.add(base64Image);
-          _verificationStatus[pestType] = true;
+          if (downloadUrl != null) {
+            _capturedImages[pestType]!.add(downloadUrl);
+          }
           _isProcessing[pestType] = false;
         });
         
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${_getPestLabel(pestType)} image added from gallery'),
-            backgroundColor: _accentGreen,
-            duration: const Duration(seconds: 1),
-          ),
-        );
+        if (downloadUrl != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${_getPestLabel(pestType)} image uploaded from gallery'),
+              backgroundColor: _accentGreen,
+              duration: const Duration(seconds: 1),
+            ),
+          );
+        }
       }
     }
+  }
+
+  void _removePestImage(String pestType, int index) {
+    setState(() {
+      _capturedImages[pestType]!.removeAt(index);
+    });
   }
 
   String _getPestLabel(String pestType) {
@@ -192,34 +271,111 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
     return pest['label'] as String;
   }
 
-  void _removeImage(String pestType, int index) {
-    setState(() {
-      _capturedImages[pestType]!.removeAt(index);
-      final count = widget.station[pestType] as int? ?? 0;
-      if (count > 0 && _capturedImages[pestType]!.isEmpty) {
-        _verificationStatus[pestType] = false;
+  // ==================== DAMAGE VERIFICATION METHODS ====================
+  Future<void> _captureDamagePhoto() async {
+    final XFile? image = await _picker.pickImage(
+      source: ImageSource.camera,
+      imageQuality: 75,
+    );
+    
+    if (image != null && mounted) {
+      setState(() => _isDamageProcessing = true);
+      
+      final downloadUrl = await _compressAndUploadImage(File(image.path), 'damage');
+      
+      if (mounted) {
+        setState(() {
+          if (downloadUrl != null) {
+            _damagePhotos.add(downloadUrl);
+          }
+          _isDamageProcessing = false;
+        });
+        
+        if (downloadUrl != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Damage photo captured and uploaded'),
+              backgroundColor: _accentGreen,
+              duration: Duration(seconds: 1),
+            ),
+          );
+        }
       }
+    }
+  }
+
+  Future<void> _pickDamagePhotoFromGallery() async {
+    final XFile? image = await _picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 75,
+    );
+    
+    if (image != null && mounted) {
+      setState(() => _isDamageProcessing = true);
+      
+      final downloadUrl = await _compressAndUploadImage(File(image.path), 'damage');
+      
+      if (mounted) {
+        setState(() {
+          if (downloadUrl != null) {
+            _damagePhotos.add(downloadUrl);
+          }
+          _isDamageProcessing = false;
+        });
+        
+        if (downloadUrl != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Damage photo uploaded from gallery'),
+              backgroundColor: _accentGreen,
+              duration: Duration(seconds: 1),
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  void _removeDamagePhoto(int index) {
+    setState(() {
+      _damagePhotos.removeAt(index);
     });
   }
 
+  // ==================== SAVE ====================
   void _saveAndComplete() {
-    final incompleteVerifications = <String>[];
+    final incompletePests = <String>[];
     
     for (var pest in _pestTypes) {
       final key = pest['key'] as String;
       final count = widget.station[key] as int? ?? 0;
       
       if (count > 0 && (_capturedImages[key]?.isEmpty ?? true)) {
-        incompleteVerifications.add(pest['label'] as String);
+        incompletePests.add(pest['label'] as String);
       }
     }
 
-    if (incompleteVerifications.isNotEmpty) {
+    // Check damage verification
+    final damaged = widget.station['damaged'] as int? ?? 0;
+    final hasFAW = _hasFAWPresence();
+    bool damageIncomplete = hasFAW && damaged > 0 && _damagePhotos.isEmpty;
+
+    if (incompletePests.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Please capture images for: ${incompleteVerifications.join(", ")}',
+            'Please capture images for: ${incompletePests.join(", ")}',
           ),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (damageIncomplete) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please capture damage photos for verification'),
           backgroundColor: Colors.red,
         ),
       );
@@ -228,6 +384,7 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
 
     final updatedStation = Map<String, dynamic>.from(widget.station);
     updatedStation['capturedImages'] = _capturedImages;
+    updatedStation['damagePhotos'] = _damagePhotos;
     updatedStation['verificationCompleted'] = true;
     updatedStation['verificationRequired'] = false;
 
@@ -235,6 +392,7 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
     Navigator.pop(context);
   }
 
+  // ==================== UI ====================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -261,8 +419,30 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildHeader(),
-            const SizedBox(height: 20),
+            const SizedBox(height: 24),
+            Text(
+              'Pest Verification',
+              style: GoogleFonts.inter(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: _textDark,
+              ),
+            ),
+            const SizedBox(height: 16),
             ..._buildPestVerificationCards(),
+            if (_hasFAWPresence() && (widget.station['damaged'] as int? ?? 0) > 0) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Damage Verification',
+                style: GoogleFonts.inter(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: _textDark,
+                ),
+              ),
+              const SizedBox(height: 16),
+              _buildDamageVerificationCard(),
+            ],
             const SizedBox(height: 30),
             _buildSaveButton(),
           ],
@@ -272,17 +452,25 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
   }
 
   Widget _buildHeader() {
-    int totalRequired = 0;
-    int totalCaptured = 0;
+    int totalPestRequired = 0;
+    int totalPestVerified = 0;
     
     for (var pest in _pestTypes) {
       final key = pest['key'] as String;
       final count = widget.station[key] as int? ?? 0;
       if (count > 0) {
-        totalRequired++;
-        if (_capturedImages[key]?.isNotEmpty ?? false) totalCaptured++;
+        totalPestRequired++;
+        if (_capturedImages[key]?.isNotEmpty ?? false) totalPestVerified++;
       }
     }
+
+    final damaged = widget.station['damaged'] as int? ?? 0;
+    final hasFAW = _hasFAWPresence();
+    final damageRequired = hasFAW && damaged > 0;
+    final damageVerified = damageRequired ? _damagePhotos.isNotEmpty : true;
+
+    final totalRequired = (damageRequired ? 1 : 0) + totalPestRequired;
+    final totalVerified = (damageVerified ? 1 : 0) + totalPestVerified;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -319,25 +507,26 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
           const SizedBox(height: 12),
           if (totalRequired > 0) ...[
             LinearProgressIndicator(
-              value: totalCaptured / totalRequired,
+              value: totalVerified / totalRequired,
               backgroundColor: _lightGreen,
               valueColor: const AlwaysStoppedAnimation<Color>(_accentGreen),
               borderRadius: BorderRadius.circular(8),
+              minHeight: 6,
             ),
             const SizedBox(height: 8),
             Text(
-              '$totalCaptured of $totalRequired pest types verified',
+              '$totalVerified of $totalRequired items verified',
               style: GoogleFonts.inter(
                 fontSize: 13,
-                color: Colors.grey.shade600,
+                color: _textGrey,
               ),
             ),
           ] else
             Text(
-              'No pests to verify',
+              'No verification required',
               style: GoogleFonts.inter(
                 fontSize: 13,
-                color: Colors.grey.shade600,
+                color: _textGrey,
               ),
             ),
         ],
@@ -345,6 +534,7 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
     );
   }
 
+  // ==================== PEST VERIFICATION CARDS ====================
   List<Widget> _buildPestVerificationCards() {
     final cards = <Widget>[];
     
@@ -360,6 +550,7 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
       cards.add(
         Container(
           margin: const EdgeInsets.only(bottom: 16),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: _cardWhite,
             borderRadius: BorderRadius.circular(16),
@@ -371,170 +562,163 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: (pest['color'] as Color).withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        pest['icon'] as IconData,
-                        color: pest['color'] as Color,
-                        size: 22,
-                      ),
+              Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: (pest['color'] as Color).withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            pest['label'] as String,
-                            style: GoogleFonts.inter(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          Text(
-                            'Count: $count',
-                            style: GoogleFonts.inter(
-                              fontSize: 12,
-                              color: Colors.grey.shade600,
-                            ),
-                          ),
-                        ],
-                      ),
+                    child: Icon(
+                      pest['icon'] as IconData,
+                      color: pest['color'] as Color,
+                      size: 22,
                     ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: hasImages ? _lightGreen : Colors.orange.shade50,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            hasImages ? Icons.check_circle : Icons.warning_amber,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          pest['label'] as String,
+                          style: GoogleFonts.inter(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        Text(
+                          'Count: $count',
+                          style: GoogleFonts.inter(
+                            fontSize: 12,
+                            color: _textGrey,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: hasImages ? _lightGreen : Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          hasImages ? Icons.check_circle : Icons.warning_amber,
+                          color: hasImages ? _accentGreen : Colors.orange,
+                          size: 14,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          hasImages ? 'Verified' : 'Required',
+                          style: GoogleFonts.inter(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
                             color: hasImages ? _accentGreen : Colors.orange,
-                            size: 14,
                           ),
-                          const SizedBox(width: 4),
-                          Text(
-                            hasImages ? 'Verified' : 'Required',
-                            style: GoogleFonts.inter(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: hasImages ? _accentGreen : Colors.orange,
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
               
+              // Image thumbnails
               if (hasImages && _capturedImages[key]!.isNotEmpty) ...[
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: SizedBox(
-                    height: 80,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _capturedImages[key]!.length,
-                      itemBuilder: (context, imgIndex) {
-                        return Stack(
-                          children: [
-                            Container(
-                              width: 80,
-                              height: 80,
-                              margin: const EdgeInsets.only(right: 8),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: _buildImage(_capturedImages[key]![imgIndex]),
-                              ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  height: 80,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _capturedImages[key]!.length,
+                    itemBuilder: (context, imgIndex) {
+                      return Stack(
+                        children: [
+                          Container(
+                            width: 80,
+                            height: 80,
+                            margin: const EdgeInsets.only(right: 8),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
                             ),
-                            Positioned(
-                              top: 4,
-                              right: 12,
-                              child: GestureDetector(
-                                onTap: () => _removeImage(key, imgIndex),
-                                child: Container(
-                                  padding: const EdgeInsets.all(2),
-                                  decoration: const BoxDecoration(
-                                    color: Colors.black54,
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: const Icon(
-                                    Icons.close,
-                                    size: 12,
-                                    color: Colors.white,
-                                  ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: _buildImage(_capturedImages[key]![imgIndex]),
+                            ),
+                          ),
+                          Positioned(
+                            top: 4,
+                            right: 12,
+                            child: GestureDetector(
+                              onTap: () => _removePestImage(key, imgIndex),
+                              child: Container(
+                                padding: const EdgeInsets.all(2),
+                                decoration: const BoxDecoration(
+                                  color: Colors.black54,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.close,
+                                  size: 12,
+                                  color: Colors.white,
                                 ),
                               ),
                             ),
-                          ],
-                        );
-                      },
-                    ),
+                          ),
+                        ],
+                      );
+                    },
                   ),
                 ),
-                const SizedBox(height: 12),
               ],
               
               if (isProcessing)
                 const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: EdgeInsets.symmetric(vertical: 8),
                   child: LinearProgressIndicator(),
                 ),
               
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: isProcessing ? null : () => _capturePestImage(key),
-                        icon: const Icon(Icons.camera_alt, size: 18),
-                        label: const Text('Capture'),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          side: BorderSide(color: _green.withValues(alpha: 0.3)),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: isProcessing ? null : () => _capturePestImage(key),
+                      icon: const Icon(Icons.camera_alt, size: 18),
+                      label: const Text('Capture'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        side: BorderSide(color: _green.withValues(alpha: 0.3)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: isProcessing ? null : () => _pickFromGallery(key),
-                        icon: const Icon(Icons.photo_library, size: 18),
-                        label: const Text('Gallery'),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          side: BorderSide(color: _green.withValues(alpha: 0.3)),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: isProcessing ? null : () => _pickPestImageFromGallery(key),
+                      icon: const Icon(Icons.photo_library, size: 18),
+                      label: const Text('Gallery'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        side: BorderSide(color: _green.withValues(alpha: 0.3)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -545,24 +729,228 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
     return cards;
   }
 
+  // ==================== DAMAGE VERIFICATION CARD ====================
+  Widget _buildDamageVerificationCard() {
+    final damaged = widget.station['damaged'] as int? ?? 0;
+    final hasImages = _damagePhotos.isNotEmpty;
+    final isProcessing = _isDamageProcessing;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _cardWhite,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: hasImages ? _accentGreen : Colors.grey.shade200,
+          width: 1.5,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: _purple.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.image_outlined,
+                  color: _purple,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Plant Damage',
+                      style: GoogleFonts.inter(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      'Count: $damaged',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color: _textGrey,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: hasImages ? _lightGreen : Colors.orange.shade50,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      hasImages ? Icons.check_circle : Icons.warning_amber,
+                      color: hasImages ? _accentGreen : Colors.orange,
+                      size: 14,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      hasImages ? 'Verified' : 'Required',
+                      style: GoogleFonts.inter(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: hasImages ? _accentGreen : Colors.orange,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          
+          // Damage image thumbnails
+          if (hasImages) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 80,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: _damagePhotos.length,
+                itemBuilder: (context, imgIndex) {
+                  return Stack(
+                    children: [
+                      Container(
+                        width: 80,
+                        height: 80,
+                        margin: const EdgeInsets.only(right: 8),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: _buildImage(_damagePhotos[imgIndex]),
+                        ),
+                      ),
+                      Positioned(
+                        top: 4,
+                        right: 12,
+                        child: GestureDetector(
+                          onTap: () => _removeDamagePhoto(imgIndex),
+                          child: Container(
+                            padding: const EdgeInsets.all(2),
+                            decoration: const BoxDecoration(
+                              color: Colors.black54,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.close,
+                              size: 12,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
+          
+          if (isProcessing)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: LinearProgressIndicator(),
+            ),
+          
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: isProcessing ? null : _captureDamagePhoto,
+                  icon: const Icon(Icons.camera_alt, size: 18),
+                  label: const Text('Capture'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    side: BorderSide(color: _purple.withValues(alpha: 0.3)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: isProcessing ? null : _pickDamagePhotoFromGallery,
+                  icon: const Icon(Icons.photo_library, size: 18),
+                  label: const Text('Gallery'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    side: BorderSide(color: _purple.withValues(alpha: 0.3)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildSaveButton() {
+    // Check if all required verifications are complete
+    bool allComplete = true;
+    
+    // Check pests
+    for (var pest in _pestTypes) {
+      final key = pest['key'] as String;
+      final count = widget.station[key] as int? ?? 0;
+      if (count > 0 && (_capturedImages[key]?.isEmpty ?? true)) {
+        allComplete = false;
+        break;
+      }
+    }
+    
+    // Check damage
+    if (allComplete) {
+      final damaged = widget.station['damaged'] as int? ?? 0;
+      final hasFAW = _hasFAWPresence();
+      if (hasFAW && damaged > 0 && _damagePhotos.isEmpty) {
+        allComplete = false;
+      }
+    }
+
     return SizedBox(
       width: double.infinity,
       height: 52,
       child: ElevatedButton(
-        onPressed: _saveAndComplete,
+        onPressed: allComplete ? _saveAndComplete : null,
         style: ElevatedButton.styleFrom(
-          backgroundColor: _accentGreen,
+          backgroundColor: allComplete ? _accentGreen : Colors.grey.shade300,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
         ),
         child: Text(
-          'Complete Verification ✓',
+          allComplete ? 'Complete Verification ✓' : 'Complete All Verifications First',
           style: GoogleFonts.inter(
             fontSize: 16,
             fontWeight: FontWeight.w700,
-            color: Colors.white,
+            color: allComplete ? Colors.white : Colors.grey.shade600,
           ),
         ),
       ),

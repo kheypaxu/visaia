@@ -6,7 +6,6 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:visaia/core/providers/farm_provider.dart';
 import 'package:visaia/screens/report_history/report_details.dart';
-import 'package:visaia/screens/logging_screens/ai_result.dart';
 
 class ReportHistoryScreen extends StatefulWidget {
   const ReportHistoryScreen({super.key});
@@ -72,10 +71,12 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
                 // Sort by timestamp descending
                 final sortedReports = allReports.toList()
                   ..sort((a, b) {
-                    final aTime = (a.data() as Map<String, dynamic>)['timestamp']
-                        as Timestamp?;
-                    final bTime = (b.data() as Map<String, dynamic>)['timestamp']
-                        as Timestamp?;
+                    final aTime =
+                        (a.data() as Map<String, dynamic>)['timestamp']
+                            as Timestamp?;
+                    final bTime =
+                        (b.data() as Map<String, dynamic>)['timestamp']
+                            as Timestamp?;
                     if (aTime == null && bTime == null) return 0;
                     if (aTime == null) return 1;
                     if (bTime == null) return -1;
@@ -86,7 +87,8 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
                 final farmFiltered = activeFarmId != null
                     ? sortedReports.where((doc) {
                         final d = doc.data() as Map<String, dynamic>;
-                        return d['farmId'] == null || d['farmId'] == activeFarmId;
+                        return d['farmId'] == null ||
+                            d['farmId'] == activeFarmId;
                       }).toList()
                     : sortedReports;
 
@@ -122,35 +124,59 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
 
   Widget _buildHeader() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: _forestGreen,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: _forestGreen.withValues(alpha: 0.18),
+            blurRadius: 24,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Icon(Icons.history_rounded, color: Colors.white),
+          ),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Field Reports',
+                  'Report history',
                   style: GoogleFonts.epilogue(
-                    fontSize: 24,
+                    fontSize: 22,
                     fontWeight: FontWeight.w800,
-                    color: _forestGreen,
+                    color: Colors.white,
                     letterSpacing: -0.5,
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 6),
                 Text(
-                  'View all your pest detection reports',
+                  'Track every detection from review to resolution.',
                   style: GoogleFonts.manrope(
-                    fontSize: 14,
-                    color: _textMuted,
+                    fontSize: 13,
+                    height: 1.4,
+                    color: Colors.white.withValues(alpha: 0.7),
                     fontWeight: FontWeight.w500,
                   ),
                 ),
               ],
             ),
           ),
-          // Stats badge
+          const SizedBox(width: 10),
           StreamBuilder<QuerySnapshot>(
             stream: _firestore
                 .collection('reports')
@@ -159,20 +185,20 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
             builder: (context, snapshot) {
               final count = snapshot.data?.docs.length ?? 0;
               return Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
-                  color: _forestGreen.withValues(alpha: 0.08),
+                  color: Colors.white.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: _forestGreen.withValues(alpha: 0.1),
-                  ),
                 ),
                 child: Row(
                   children: [
                     Icon(
                       Icons.article_rounded,
                       size: 16,
-                      color: _forestGreen.withValues(alpha: 0.6),
+                      color: Colors.white.withValues(alpha: 0.7),
                     ),
                     const SizedBox(width: 6),
                     Text(
@@ -180,7 +206,7 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
                       style: GoogleFonts.manrope(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
-                        color: _forestGreen,
+                        color: Colors.white,
                       ),
                     ),
                   ],
@@ -214,7 +240,10 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
                 curve: Curves.easeInOut,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: isSelected ? chipColor : Colors.transparent,
                   borderRadius: BorderRadius.circular(20),
@@ -239,7 +268,9 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
                       filter,
                       style: GoogleFonts.manrope(
                         fontSize: 12,
-                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                        fontWeight: isSelected
+                            ? FontWeight.w700
+                            : FontWeight.w500,
                         color: isSelected ? Colors.white : Colors.grey[600],
                       ),
                     ),
@@ -301,10 +332,7 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
             const SizedBox(height: 8),
             Text(
               'Your pest detection reports will appear here',
-              style: GoogleFonts.manrope(
-                fontSize: 14,
-                color: Colors.grey[400],
-              ),
+              style: GoogleFonts.manrope(fontSize: 14, color: Colors.grey[400]),
             ),
           ],
         ),
@@ -323,10 +351,7 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
           SizedBox(height: 16),
           Text(
             'Loading reports...',
-            style: TextStyle(
-              color: _textMuted,
-              fontSize: 14,
-            ),
+            style: TextStyle(color: _textMuted, fontSize: 14),
           ),
         ],
       ),
@@ -382,10 +407,7 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
             const SizedBox(height: 8),
             Text(
               sub,
-              style: GoogleFonts.manrope(
-                fontSize: 15,
-                color: Colors.grey[500],
-              ),
+              style: GoogleFonts.manrope(fontSize: 15, color: Colors.grey[500]),
               textAlign: TextAlign.center,
             ),
           ],
@@ -425,10 +447,7 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
             const SizedBox(height: 8),
             Text(
               error,
-              style: GoogleFonts.manrope(
-                fontSize: 13,
-                color: Colors.grey[500],
-              ),
+              style: GoogleFonts.manrope(fontSize: 13, color: Colors.grey[500]),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 20),
@@ -442,7 +461,10 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
               ),
             ),
           ],
@@ -454,7 +476,8 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
   // ─── Filter Logic ──────────────────────────────────────────────────────
 
   List<QueryDocumentSnapshot> _filterReports(
-      List<QueryDocumentSnapshot> reports) {
+    List<QueryDocumentSnapshot> reports,
+  ) {
     if (_selectedFilter == 'All') return reports;
     return reports.where((doc) {
       final data = doc.data() as Map<String, dynamic>;
@@ -466,119 +489,16 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
   // ─── Navigation ────────────────────────────────────────────────────────
 
   void _navigateToDetail(String reportId, Map<String, dynamic> data) {
-    final hasFullAIData = data.containsKey('pestName') &&
-        data.containsKey('analysis') &&
-        data.containsKey('treatment');
-
-    if (hasFullAIData) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => AIResultScreen(
-            pestName: data['pestName'] ?? data['detection'] ?? 'Unknown Pest',
-            scientificName: data['scientificName'] ?? 'Unknown Species',
-            severity: data['severity'] ?? data['risk'] ?? 'Medium',
-            confidencePercent: ((data['confidence'] ?? 0.0) * 100).toInt(),
-            detectionStage:
-                data['detectionStage'] ?? data['lifeStage'] ?? 'Unknown',
-            cropAffected: data['cropAffected'] ?? 'Corn',
-            analysis: data['analysis'] ?? 'No analysis available',
-            treatment: data['treatment'] ?? 'No treatment information available',
-            historicalContext:
-                data['historicalContext'] ?? 'No historical context available',
-            annotatedImageUrl: data['annotatedImageUrl'],
-            userId: data['farmerId'] ?? _auth.currentUser?.uid ?? '',
-            latitude: data['location']?['lat'],
-            longitude: data['location']?['lng'],
-            areaName: data['areaName'] ?? data['fieldName'],
-          ),
-        ),
-      );
-      return;
-    }
-
-    final aiResultId = data['aiResultId'] as String?;
-    if (aiResultId != null) {
-      _fetchAndNavigateToAIResult(context, aiResultId, data);
-      return;
-    }
-
+    // Report history always opens its own detail view. Besides presenting the
+    // complete AI result, that screen owns report lifecycle actions such as
+    // marking a validated/pending report as resolved.
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => ReportDetailScreen(
-          reportId: reportId,
-          reportData: data,
-        ),
+        builder: (context) =>
+            ReportDetailScreen(reportId: reportId, reportData: data),
       ),
     );
-  }
-
-  Future<void> _fetchAndNavigateToAIResult(
-    BuildContext context,
-    String aiResultId,
-    Map<String, dynamic> reportData,
-  ) async {
-    try {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const Center(
-          child: CircularProgressIndicator(
-            valueColor: AlwaysStoppedAnimation<Color>(_forestGreen),
-          ),
-        ),
-      );
-
-      final aiDoc = await FirebaseFirestore.instance
-          .collection('ai_results')
-          .doc(aiResultId)
-          .get();
-
-      if (context.mounted) Navigator.pop(context);
-
-      if (aiDoc.exists) {
-        final aiData = aiDoc.data()!;
-        if (context.mounted) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => AIResultScreen(
-                pestName: aiData['pestName'] ?? 'Unknown Pest',
-                scientificName: aiData['scientificName'] ?? 'Unknown Species',
-                severity: aiData['severity'] ?? 'Medium',
-                confidencePercent: ((aiData['confidence'] ?? 0.0) * 100).toInt(),
-                detectionStage: aiData['detectionStage'] ?? 'Unknown',
-                cropAffected: aiData['cropAffected'] ?? 'Corn',
-                analysis: aiData['analysis'] ?? 'No analysis available',
-                treatment: aiData['treatment'] ?? 'No treatment information available',
-                historicalContext:
-                    aiData['historicalContext'] ?? 'No historical context available',
-                annotatedImageUrl: aiData['annotatedImageUrl'],
-                userId: reportData['farmerId'] ?? _auth.currentUser?.uid ?? '',
-                latitude: aiData['location']?['lat'],
-                longitude: aiData['location']?['lng'],
-                areaName: aiData['areaName'] ?? reportData['fieldName'],
-              ),
-            ),
-          );
-          return;
-        }
-      }
-    } catch (e) {
-      if (context.mounted) Navigator.pop(context);
-      if (context.mounted) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ReportDetailScreen(
-              reportId: aiResultId,
-              reportData: reportData,
-            ),
-          ),
-        );
-      }
-    }
   }
 }
 
@@ -608,7 +528,8 @@ class ReportCard extends StatelessWidget {
     final lifeStage =
         data['lifeStage'] ?? data['originalLifeStage'] ?? 'Unknown';
     final confidence = (data['confidence'] ?? 0.0) as num;
-    final areaName = data['areaName'] ?? data['fieldName'] ?? 'Unknown location';
+    final areaName =
+        data['areaName'] ?? data['fieldName'] ?? 'Unknown location';
     final farmName = data['farmName'] ?? '';
 
     final statusColor = _statusColor(status);
@@ -665,10 +586,7 @@ class ReportCard extends StatelessWidget {
                   // ── Risk + Life Stage row ──
                   Row(
                     children: [
-                      _MiniPill(
-                        label: risk.toUpperCase(),
-                        color: riskColor,
-                      ),
+                      _MiniPill(label: risk.toUpperCase(), color: riskColor),
                       const SizedBox(width: 6),
                       _MiniPill(
                         label: lifeStage,
@@ -697,10 +615,7 @@ class ReportCard extends StatelessWidget {
                   const SizedBox(height: 12),
 
                   // ── Divider ──
-                  Divider(
-                    height: 1,
-                    color: Colors.grey.shade100,
-                  ),
+                  Divider(height: 1, color: Colors.grey.shade100),
 
                   const SizedBox(height: 10),
 
@@ -740,6 +655,27 @@ class ReportCard extends StatelessWidget {
                           color: Colors.grey[400],
                           fontWeight: FontWeight.w500,
                         ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Text(
+                        status.toString().toLowerCase() == 'resolved'
+                            ? 'Resolution details'
+                            : 'Open report',
+                        style: GoogleFonts.manrope(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: _forestGreen,
+                        ),
+                      ),
+                      const Spacer(),
+                      Icon(
+                        Icons.arrow_forward_rounded,
+                        size: 16,
+                        color: _forestGreen,
                       ),
                     ],
                   ),
@@ -834,7 +770,9 @@ class _MiniPill extends StatelessWidget {
       decoration: BoxDecoration(
         color: outlined ? Colors.transparent : color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(6),
-        border: outlined ? Border.all(color: color.withValues(alpha: 0.3)) : null,
+        border: outlined
+            ? Border.all(color: color.withValues(alpha: 0.3))
+            : null,
       ),
       child: Text(
         label,
@@ -857,15 +795,12 @@ class _ConfidenceDot extends StatelessWidget {
     final color = value > 0.75
         ? Colors.green
         : value > 0.5
-            ? Colors.orange
-            : Colors.red;
+        ? Colors.orange
+        : Colors.red;
     return Container(
       width: 8,
       height: 8,
-      decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-      ),
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
     );
   }
 }

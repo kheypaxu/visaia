@@ -8,19 +8,17 @@ import 'package:visaia/screens/auth/registration_screen.dart';
 import 'package:visaia/screens/onboarding/get_started_screen.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
+import 'package:visaia/widgets/app_version_gate.dart';
+
+final appNavigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => FarmProvider(),
-      child: const MyApp(),
-    ),
+    ChangeNotifierProvider(create: (_) => FarmProvider(), child: const MyApp()),
   );
 }
 
@@ -30,6 +28,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: appNavigatorKey,
       title: 'VISAAIA - Farm Protection App',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
@@ -37,6 +36,8 @@ class MyApp extends StatelessWidget {
         fontFamily: GoogleFonts.inter().fontFamily,
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
+      builder: (context, child) =>
+          AppVersionGate(navigatorKey: appNavigatorKey, child: child!),
       initialRoute: '/get-started',
       routes: {
         '/get-started': (context) => const GetStartedPage(),

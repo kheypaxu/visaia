@@ -532,6 +532,34 @@ class HomeDashboard extends StatelessWidget {
                 );
               },
             ),
+            const SizedBox(height: 18),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => AllFarmsDataScreen(userId: userId),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.dashboard_customize_outlined),
+                label: const Text('VIEW ALL FARM DATA'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: darkGreen,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  textStyle: GoogleFonts.manrope(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ),
             const SizedBox(height: 40),
 
             // ----- Active Pests Section -----
@@ -711,16 +739,6 @@ class HomeDashboard extends StatelessWidget {
               ]
             ],
           ),
-          const SizedBox(height: 20),
-          Text(
-            "VIEW DETAILS",
-            style: GoogleFonts.manrope(
-              color: textColor,
-              fontSize: 12,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 1.0,
-            ),
-          ),
         ],
       ),
     );
@@ -882,6 +900,303 @@ class HomeDashboard extends StatelessWidget {
                   color: Colors.grey.shade500,
                   fontSize: 11,
                   fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+}
+
+// ======================= ALL FARMS DATA =======================
+
+class AllFarmsDataScreen extends StatelessWidget {
+  final String userId;
+
+  const AllFarmsDataScreen({super.key, required this.userId});
+
+  static const Color _darkGreen = Color(0xFF0D4D33);
+  static const Color _pageBackground = Color(0xFFF7F9F4);
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> get _farmsStream =>
+      FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .collection('farms')
+          .orderBy('createdAt', descending: true)
+          .snapshots();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _pageBackground,
+      appBar: AppBar(
+        backgroundColor: _pageBackground,
+        foregroundColor: _darkGreen,
+        elevation: 0,
+        title: Text(
+          'All Farm Data',
+          style: GoogleFonts.epilogue(fontWeight: FontWeight.w800),
+        ),
+      ),
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: _farmsStream,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return _MessageState(
+              icon: Icons.error_outline_rounded,
+              message: 'Unable to load farm data.',
+            );
+          }
+          if (!snapshot.hasData) {
+            return const Center(
+              child: CircularProgressIndicator(color: _darkGreen),
+            );
+          }
+
+          final farms = snapshot.data!.docs;
+          if (farms.isEmpty) {
+            return const _MessageState(
+              icon: Icons.agriculture_outlined,
+              message: 'No farms found.',
+            );
+          }
+
+          return ListView.separated(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+            itemCount: farms.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 20),
+            itemBuilder: (context, index) {
+              final farm = farms[index];
+              return _FarmDataSection(
+                userId: userId,
+                farmId: farm.id,
+                farmData: farm.data(),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _FarmDataSection extends StatelessWidget {
+  final String userId;
+  final String farmId;
+  final Map<String, dynamic> farmData;
+
+  const _FarmDataSection({
+    required this.userId,
+    required this.farmId,
+    required this.farmData,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final service = MonitoringFirestoreService(userId: userId, farmId: farmId);
+    final name = farmData['name'] as String? ?? 'Unnamed Farm';
+    final acres = (farmData['acres'] as num?)?.toDouble() ?? 0;
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x120D4D33),
+            blurRadius: 18,
+            offset: Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(11),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE1F2D5),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(Icons.agriculture_rounded,
+                    color: AllFarmsDataScreen._darkGreen),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      style: GoogleFonts.epilogue(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: AllFarmsDataScreen._darkGreen,
+                      ),
+                    ),
+                    Text(
+                      '${acres.toStringAsFixed(2)} acres',
+                      style: GoogleFonts.manrope(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: HomeDashboard.textGray,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          StreamBuilder<double>(
+            stream: service.getNetIncome(),
+            builder: (_, incomeSnapshot) {
+              return StreamBuilder<double>(
+                stream: service.getTotalYield(),
+                builder: (_, yieldSnapshot) {
+                  return FutureBuilder<List<FieldModel>>(
+                    future: service.getFields(),
+                    builder: (_, fieldSnapshot) {
+                      return StreamBuilder<List<CycleModel>>(
+                        stream: service.getActiveCycles(),
+                        builder: (_, cycleSnapshot) {
+                          return GridView.count(
+                            crossAxisCount: 2,
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            mainAxisSpacing: 12,
+                            crossAxisSpacing: 12,
+                            childAspectRatio: 1.12,
+                            children: [
+                              _FarmStatCard(
+                                title: 'NET INCOME',
+                                value: incomeSnapshot.hasData
+                                    ? incomeSnapshot.data!.toStringAsFixed(0)
+                                    : '—',
+                                icon: Icons.payments_outlined,
+                                color: AllFarmsDataScreen._darkGreen,
+                                foreground: Colors.white,
+                              ),
+                              _FarmStatCard(
+                                title: 'TOTAL YIELD',
+                                value: yieldSnapshot.hasData
+                                    ? '${yieldSnapshot.data!.toStringAsFixed(1)} kg'
+                                    : '—',
+                                icon: Icons.agriculture_rounded,
+                                color: const Color(0xFFC5E1A5),
+                              ),
+                              _FarmStatCard(
+                                title: 'ACTIVE CYCLES',
+                                value: cycleSnapshot.hasData
+                                    ? '${cycleSnapshot.data!.length}'
+                                    : '—',
+                                icon: Icons.stacked_line_chart_rounded,
+                                color: const Color(0xFFB9E889),
+                              ),
+                              _FarmStatCard(
+                                title: 'FIELD COUNT',
+                                value: fieldSnapshot.hasData
+                                    ? '${fieldSnapshot.data!.length}'
+                                    : '—',
+                                icon: Icons.grid_view_rounded,
+                                color: const Color(0xFFF7E594),
+                              ),
+                            ],
+                          );
+                        },
+                      );
+                    },
+                  );
+                },
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FarmStatCard extends StatelessWidget {
+  final String title;
+  final String value;
+  final IconData icon;
+  final Color color;
+  final Color foreground;
+
+  const _FarmStatCard({
+    required this.title,
+    required this.value,
+    required this.icon,
+    required this.color,
+    this.foreground = const Color(0xFF1A1C18),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Icon(icon, size: 23, color: foreground),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.manrope(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.3,
+                  color: foreground.withOpacity(0.7),
+                ),
+              ),
+              const SizedBox(height: 2),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  value,
+                  style: GoogleFonts.manrope(
+                    fontSize: 25,
+                    fontWeight: FontWeight.w900,
+                    color: foreground,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MessageState extends StatelessWidget {
+  final IconData icon;
+  final String message;
+
+  const _MessageState({required this.icon, required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 54, color: AllFarmsDataScreen._darkGreen),
+          const SizedBox(height: 12),
+          Text(message, style: GoogleFonts.manrope(fontWeight: FontWeight.w700)),
         ],
       ),
     );

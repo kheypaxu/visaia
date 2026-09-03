@@ -53,6 +53,8 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
     final isResolved = status.toLowerCase() == 'resolved';
     final isRejected = status.toLowerCase() == 'rejected';
     final statusColor = _statusColor(status);
+    final resolutionExplanation =
+        data['resolutionExplanation']?.toString().trim() ?? '';
 
     return Scaffold(
       backgroundColor: _cream,
@@ -68,8 +70,11 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
               child: CircleAvatar(
                 backgroundColor: Colors.black.withOpacity(0.3),
                 child: IconButton(
-                  icon: const Icon(Icons.arrow_back_rounded,
-                      color: Colors.white, size: 18),
+                  icon: const Icon(
+                    Icons.arrow_back_rounded,
+                    color: Colors.white,
+                    size: 18,
+                  ),
                   onPressed: () => Navigator.pop(context),
                 ),
               ),
@@ -95,7 +100,9 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
                           style: TextButton.styleFrom(
                             backgroundColor: Colors.white.withOpacity(0.2),
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 14, vertical: 8),
+                              horizontal: 14,
+                              vertical: 8,
+                            ),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(20),
                             ),
@@ -185,6 +192,25 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
                 children: [
                   // Status banner
                   _StatusBanner(status: status, color: statusColor),
+
+                  if (isResolved && resolutionExplanation.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    _InfoCard(
+                      icon: Icons.task_alt_rounded,
+                      title: 'How this issue was resolved',
+                      accentColor: Colors.green,
+                      children: [
+                        Text(
+                          resolutionExplanation,
+                          style: GoogleFonts.manrope(
+                            fontSize: 14,
+                            height: 1.55,
+                            color: Colors.grey[700],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
 
                   const SizedBox(height: 16),
 
@@ -319,136 +345,196 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
 
   // ─── Resolve ────────────────────────────────────────────────────────
 
-  void _showResolveConfirmation() {
-    showModalBottomSheet(
+  Future<void> _showResolveConfirmation() async {
+    final explanationController = TextEditingController();
+    String? validationError;
+    final explanation = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        padding: const EdgeInsets.fromLTRB(24, 12, 24, 36),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 24),
-            Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: Colors.green.withOpacity(0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.check_circle_outline_rounded,
-                color: Colors.green,
-                size: 28,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Mark as Resolved?',
-              style: GoogleFonts.epilogue(
-                fontSize: 19,
-                fontWeight: FontWeight.w800,
-                color: _forestGreen,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Confirm you have successfully treated this pest issue and the crops are healthy again.',
-              style: GoogleFonts.manrope(
-                fontSize: 14,
-                height: 1.5,
-                color: Colors.grey[600],
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            Row(
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: EdgeInsets.fromLTRB(
+            24,
+            12,
+            24,
+            24 + MediaQuery.viewInsetsOf(context).bottom,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 15),
-                      side: BorderSide(color: Colors.grey.shade300),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
+                Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.check_circle_outline_rounded,
+                    color: Colors.green,
+                    size: 28,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Mark as Resolved?',
+                  style: GoogleFonts.epilogue(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w800,
+                    color: _forestGreen,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Describe the action you took and the result you observed. RCPC will see this explanation.',
+                  style: GoogleFonts.manrope(
+                    fontSize: 14,
+                    height: 1.5,
+                    color: Colors.grey[600],
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 18),
+                TextField(
+                  controller: explanationController,
+                  autofocus: true,
+                  minLines: 3,
+                  maxLines: 5,
+                  maxLength: 500,
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: InputDecoration(
+                    labelText: 'Resolution explanation',
+                    hintText:
+                        'Example: Applied the recommended treatment for 7 days and inspected the field...',
+                    alignLabelWithHint: true,
+                    errorText: validationError,
+                    filled: true,
+                    fillColor: _cream,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide.none,
                     ),
-                    child: Text(
-                      'Not Yet',
-                      style: GoogleFonts.manrope(
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey[600],
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: const BorderSide(
+                        color: _forestGreen,
+                        width: 1.5,
                       ),
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.pop(context);
-                      _markAsResolved();
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _forestGreen,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 15),
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 15),
+                          side: BorderSide(color: Colors.grey.shade300),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: Text(
+                          'Not Yet',
+                          style: GoogleFonts.manrope(
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey[600],
+                          ),
+                        ),
                       ),
                     ),
-                    child: Text(
-                      'Yes, Resolved',
-                      style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () {
+                          final value = explanationController.text.trim();
+                          if (value.isEmpty) {
+                            setSheetState(() {
+                              validationError =
+                                  'Please explain how the issue was resolved.';
+                            });
+                            return;
+                          }
+                          Navigator.pop(sheetContext, value);
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _forestGreen,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 15),
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: Text(
+                          'Mark Resolved',
+                          style: GoogleFonts.manrope(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
               ],
             ),
-          ],
+          ),
         ),
       ),
     );
+    explanationController.dispose();
+    if (explanation != null && mounted) {
+      await _markAsResolved(explanation);
+    }
   }
 
-  Future<void> _markAsResolved() async {
+  Future<void> _markAsResolved(String explanation) async {
     setState(() => _isResolving = true);
     try {
       final user = _auth.currentUser;
       if (user == null) throw Exception('User not authenticated');
 
-      await _firestore.collection('reports').doc(widget.reportId).update({
-        'status': 'resolved',
-        'resolvedAt': FieldValue.serverTimestamp(),
-        'resolvedBy': user.uid,
-        'resolvedByUserName': await _getUserName(user.uid),
-      });
-
+      final reportRef = _firestore.collection('reports').doc(widget.reportId);
       final validationsSnap = await _firestore
           .collection('validations')
           .where('reportId', isEqualTo: widget.reportId)
           .get();
+      final batch = _firestore.batch();
+      final resolution = {
+        'status': 'resolved',
+        'resolvedAt': FieldValue.serverTimestamp(),
+        'resolvedBy': user.uid,
+        'resolvedByUserName': await _getUserName(user.uid),
+        'resolutionExplanation': explanation,
+      };
+      batch.update(reportRef, resolution);
 
       for (final doc in validationsSnap.docs) {
-        await doc.reference.update({
+        batch.update(doc.reference, {
           'status': 'resolved',
           'resolvedAt': FieldValue.serverTimestamp(),
+          'resolvedBy': user.uid,
+          'resolutionExplanation': explanation,
         });
       }
+      await batch.commit();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -471,7 +557,10 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
             ),
           ),
         );
-        setState(() => widget.reportData['status'] = 'resolved');
+        setState(() {
+          widget.reportData['status'] = 'resolved';
+          widget.reportData['resolutionExplanation'] = explanation;
+        });
       }
     } catch (e) {
       if (mounted) {
@@ -532,34 +621,37 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
   }
 
   MarkdownStyleSheet _mdStyle() => MarkdownStyleSheet(
-        p: GoogleFonts.manrope(
-            fontSize: 14, height: 1.65, color: Colors.grey[700]),
-        h1: GoogleFonts.epilogue(
-            fontSize: 19,
-            fontWeight: FontWeight.w800,
-            color: _forestGreen),
-        h2: GoogleFonts.epilogue(
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
-            color: _forestGreen),
-        h3: GoogleFonts.epilogue(
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-            color: _forestGreen),
-        strong: GoogleFonts.manrope(
-            fontWeight: FontWeight.w800, color: _forestGreen),
-        listBullet:
-            GoogleFonts.manrope(fontSize: 14, color: Colors.grey[700]),
-        blockquote: GoogleFonts.manrope(
-            fontSize: 14,
-            color: Colors.grey[600],
-            fontStyle: FontStyle.italic),
-        blockquoteDecoration: BoxDecoration(
-          border: Border(
-              left: BorderSide(color: Colors.grey[300]!, width: 3)),
-          color: Colors.grey[50],
-        ),
-      );
+    p: GoogleFonts.manrope(fontSize: 14, height: 1.65, color: Colors.grey[700]),
+    h1: GoogleFonts.epilogue(
+      fontSize: 19,
+      fontWeight: FontWeight.w800,
+      color: _forestGreen,
+    ),
+    h2: GoogleFonts.epilogue(
+      fontSize: 17,
+      fontWeight: FontWeight.w700,
+      color: _forestGreen,
+    ),
+    h3: GoogleFonts.epilogue(
+      fontSize: 15,
+      fontWeight: FontWeight.w700,
+      color: _forestGreen,
+    ),
+    strong: GoogleFonts.manrope(
+      fontWeight: FontWeight.w800,
+      color: _forestGreen,
+    ),
+    listBullet: GoogleFonts.manrope(fontSize: 14, color: Colors.grey[700]),
+    blockquote: GoogleFonts.manrope(
+      fontSize: 14,
+      color: Colors.grey[600],
+      fontStyle: FontStyle.italic,
+    ),
+    blockquoteDecoration: BoxDecoration(
+      border: Border(left: BorderSide(color: Colors.grey[300]!, width: 3)),
+      color: Colors.grey[50],
+    ),
+  );
 }
 
 // ─── Reusable sub-widgets ─────────────────────────────────────────────────────
@@ -698,8 +790,8 @@ class _QuickStatsRow extends StatelessWidget {
           color: confidence > 0.75
               ? Colors.green
               : confidence > 0.5
-                  ? Colors.orange
-                  : Colors.red,
+              ? Colors.orange
+              : Colors.red,
         ),
         const SizedBox(width: 8),
         _StatTile(value: lifeStage, label: 'Life stage', emoji: '🐛'),
@@ -741,9 +833,7 @@ class _StatTile extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 10),
         decoration: BoxDecoration(
-          color: color != null
-              ? color!.withOpacity(0.07)
-              : Colors.white,
+          color: color != null ? color!.withOpacity(0.07) : Colors.white,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: color != null
@@ -766,10 +856,7 @@ class _StatTile extends StatelessWidget {
             const SizedBox(height: 2),
             Text(
               label,
-              style: GoogleFonts.manrope(
-                fontSize: 10,
-                color: Colors.grey[500],
-              ),
+              style: GoogleFonts.manrope(fontSize: 10, color: Colors.grey[500]),
             ),
           ],
         ),
@@ -800,9 +887,10 @@ class _InfoCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-              color: Colors.black.withOpacity(0.04),
-              blurRadius: 8,
-              offset: const Offset(0, 2)),
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
         ],
       ),
       child: Column(
@@ -899,9 +987,10 @@ class _ExpandableCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-              color: Colors.black.withOpacity(0.04),
-              blurRadius: 8,
-              offset: const Offset(0, 2)),
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
         ],
       ),
       child: Theme(
@@ -909,8 +998,7 @@ class _ExpandableCard extends StatelessWidget {
         child: ExpansionTile(
           initiallyExpanded: initiallyExpanded,
           tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          childrenPadding:
-              const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
           expandedCrossAxisAlignment: CrossAxisAlignment.start,
           title: Row(
             children: [
@@ -969,9 +1057,10 @@ class _ResolveCTA extends StatelessWidget {
         border: Border.all(color: Colors.grey.shade200),
         boxShadow: [
           BoxShadow(
-              color: Colors.black.withOpacity(0.04),
-              blurRadius: 8,
-              offset: const Offset(0, 2)),
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
         ],
       ),
       child: Column(
@@ -1007,7 +1096,9 @@ class _ResolveCTA extends StatelessWidget {
                   child: Text(
                     'Not Yet',
                     style: GoogleFonts.manrope(
-                        fontWeight: FontWeight.w600, color: Colors.grey[600]),
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey[600],
+                    ),
                   ),
                 ),
               ),

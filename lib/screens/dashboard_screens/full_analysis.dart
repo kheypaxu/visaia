@@ -38,7 +38,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
   double _totalYield = 0;
   double _totalLosses = 0;
   double _avgMarketPrice = 0;
-  List<_ActiveCropInfo> _activeCrops = [];
+  List<_CompletedCropInfo> _completedCrops = [];
   List<_MonthlyRevenue> _monthlyRevenues = [];
   List<String> _completedCycleIds = [];
   bool _showOneYear = false;
@@ -138,55 +138,15 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
         }
       }
 
-      final activeSnap = await cyclesRef
-          .where('farmId', isEqualTo: widget.activeFarmId)
-          .where('isCompleted', isEqualTo: false)
-          .get();
-
-      List<_ActiveCropInfo> activeCrops = [];
-      for (final doc in activeSnap.docs) {
+      final List<_CompletedCropInfo> completedCrops = [];
+      for (final doc in completedSnap.docs) {
         final data = doc.data();
         final cropVariety = data['cropVariety'] ?? data['cropType'] ?? 'Unknown Crop';
         final fieldName = data['fieldName'] ?? 'Unknown Field';
-        final plantingDate = data['plantingDate'];
-        final harvestDate = data['harvestDate'];
-
-        String stage = 'Active';
-        Color stageBg = const Color(0xFFE1E3E1);
-
-        if (plantingDate is Timestamp && harvestDate is Timestamp) {
-          final planted = plantingDate.toDate();
-          final harvest = harvestDate.toDate();
-          final now = DateTime.now();
-          final totalDays = harvest.difference(planted).inDays;
-          final elapsed = now.difference(planted).inDays;
-
-          if (totalDays > 0) {
-            final progress = (elapsed / totalDays).clamp(0.0, 1.0);
-            if (progress < 0.25) {
-              stage = 'Early Growth';
-              stageBg = const Color(0xFFE1E3E1);
-            } else if (progress < 0.5) {
-              stage = 'Vegetative';
-              stageBg = const Color(0xFFC5E1A5);
-            } else if (progress < 0.75) {
-              stage = 'Mid Stage';
-              stageBg = const Color(0xFFC5E1A5);
-            } else if (progress < 0.95) {
-              stage = '${(progress * 100).toInt()}% Mature';
-              stageBg = const Color(0xFFC5E1A5);
-            } else {
-              stage = 'Ready to Harvest';
-              stageBg = const Color(0xFFA5D6A7);
-            }
-          }
-        }
-
-        activeCrops.add(_ActiveCropInfo(
+        completedCrops.add(_CompletedCropInfo(
+          cycleId: doc.id,
           name: cropVariety,
           plot: fieldName,
-          stage: stage,
-          stageBg: stageBg,
         ));
       }
 
@@ -195,7 +155,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
         _totalYield = totalYield;
         _totalLosses = totalLosses;
         _avgMarketPrice = priceCount > 0 ? totalPriceSum / priceCount : 0;
-        _activeCrops = activeCrops;
+        _completedCrops = completedCrops;
         _completedCycleIds = completedCycleIds;
         _rawMonthlyIncome = monthlyIncome;
         _isLoading = false;
@@ -365,7 +325,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                       const SizedBox(height: 30),
 
                       Text(
-                        'Planted Crops',
+                        'Completed Crops',
                         style: GoogleFonts.epilogue(
                           fontSize: 18,
                           fontWeight: FontWeight.w700,
@@ -374,7 +334,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                       ),
                       const SizedBox(height: 20),
 
-                      if (_activeCrops.isEmpty)
+                      if (_completedCrops.isEmpty)
                         Container(
                           padding: const EdgeInsets.all(40),
                           decoration: BoxDecoration(
@@ -383,7 +343,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                           ),
                           child: Center(
                             child: Text(
-                              'No active crops in this farm',
+                              'No completed crops in this farm',
                               style: GoogleFonts.manrope(
                                 fontSize: 14,
                                 color: textGray,
@@ -392,13 +352,12 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                           ),
                         )
                       else
-                        ..._activeCrops.map(
+                        ..._completedCrops.map(
                           (crop) => _buildCropItem(
                             context,
+                            crop.cycleId,
                             crop.name,
                             crop.plot,
-                            crop.stage,
-                            crop.stageBg,
                           ),
                         ),
 
@@ -557,8 +516,8 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
     );
   }
 
-  Widget _buildCropItem(BuildContext context, String name, String plot,
-      String stage, Color stageBg) {
+  Widget _buildCropItem(
+      BuildContext context, String cycleId, String name, String plot) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(20),
@@ -604,11 +563,11 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 decoration: BoxDecoration(
-                  color: stageBg,
+                  color: const Color(0xFFE8F5E9),
                   borderRadius: BorderRadius.circular(25),
                 ),
                 child: Text(
-                  stage,
+                  'Completed',
                   style: GoogleFonts.manrope(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
@@ -626,6 +585,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                   builder: (context) => CropFinanceScreen(
                     userId: widget.userId,
                     activeFarmId: widget.activeFarmId,
+                    cycleId: cycleId,
                   ),
                 ),
               );
@@ -642,7 +602,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(
-                    'View Income',
+                    'View Full Analysis',
                     style: GoogleFonts.manrope(
                       fontWeight: FontWeight.w900,
                       color: darkGreen,
@@ -875,13 +835,13 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                   _formatCurrency(_grossIncome - _totalLosses)
                 ],
                 ['Completed Cycles', '${_completedCycleIds.length}'],
-                ['Active Crops', '${_activeCrops.length}'],
+                ['Completed Crops', '${_completedCrops.length}'],
               ],
             ),
             pw.SizedBox(height: 24),
 
-            if (_activeCrops.isNotEmpty) ...[
-              pw.Text('Active Crops',
+            if (_completedCrops.isNotEmpty) ...[
+              pw.Text('Completed Crops',
                   style: pw.TextStyle(
                       fontSize: 16, fontWeight: pw.FontWeight.bold)),
               pw.SizedBox(height: 12),
@@ -890,9 +850,9 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                 headerDecoration:
                     const pw.BoxDecoration(color: PdfColors.grey200),
                 cellPadding: const pw.EdgeInsets.all(8),
-                headers: ['Crop', 'Field', 'Stage'],
-                data: _activeCrops
-                    .map((c) => [c.name, c.plot, c.stage])
+                headers: ['Crop', 'Field', 'Status'],
+                data: _completedCrops
+                    .map((c) => [c.name, c.plot, 'Completed'])
                     .toList(),
               ),
             ],
@@ -938,17 +898,15 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
   }
 }
 
-class _ActiveCropInfo {
+class _CompletedCropInfo {
+  final String cycleId;
   final String name;
   final String plot;
-  final String stage;
-  final Color stageBg;
 
-  _ActiveCropInfo({
+  _CompletedCropInfo({
+    required this.cycleId,
     required this.name,
     required this.plot,
-    required this.stage,
-    required this.stageBg,
   });
 }
 
