@@ -5,8 +5,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:visaia/screens/logging_screens/assign_log_modal.dart';
-import 'dart:convert';
+import 'package:visaia/services/firestore_image_service.dart';
 
 // ─── Activity Type Model ──────────────────────────────────────────────────────
 
@@ -242,10 +243,22 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
     setState(() => _pickedImages.removeAt(index));
   }
 
-  Future<String?> _uploadImage(XFile image) async {
+  Future<String?> _uploadImage(XFile image, String cycleId) async {
     try {
-      final bytes = await File(image.path).readAsBytes();
-      return base64Encode(bytes);
+      final bytes = await FlutterImageCompress.compressWithFile(
+            image.path,
+            minWidth: 640,
+            minHeight: 640,
+            quality: 45,
+            format: CompressFormat.jpeg,
+          ) ??
+          await File(image.path).readAsBytes();
+      return FirestoreImageService.upload(
+        bytes: bytes,
+        userId: widget.userId,
+        cycleId: cycleId,
+        category: 'daily_activity',
+      );
     } catch (e) {
       debugPrint('Error converting image: $e');
       return null;
@@ -335,7 +348,7 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
     final imageUrls = <String>[];
 
     for (final image in _pickedImages) {
-      final url = await _uploadImage(image);
+      final url = await _uploadImage(image, cycleId);
       if (url != null) imageUrls.add(url);
     }
 

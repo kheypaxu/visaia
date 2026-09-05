@@ -1,11 +1,11 @@
 import 'dart:io';
-import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:visaia/services/firestore_image_service.dart';
+import 'package:visaia/widgets/database_image.dart';
 
 class PestVerificationScreen extends StatefulWidget {
   final String userId;
@@ -83,76 +83,20 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
   }
 
   Widget _buildImage(String imageData) {
-    try {
-      if (imageData.startsWith('http://') || imageData.startsWith('https://')) {
-        return Image.network(
-          imageData,
-          fit: BoxFit.cover,
-          width: double.infinity,
-          height: double.infinity,
-          loadingBuilder: (context, child, loadingProgress) {
-            if (loadingProgress == null) return child;
-            return Center(
-              child: SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  value: loadingProgress.expectedTotalBytes != null
-                      ? loadingProgress.cumulativeBytesLoaded /
-                          loadingProgress.expectedTotalBytes!
-                      : null,
-                  color: _accentGreen,
-                ),
-              ),
-            );
-          },
-          errorBuilder: (_, __, ___) {
-            return const Center(
-              child: Icon(Icons.broken_image, color: Colors.grey),
-            );
-          },
-        );
-      }
-
-      final pureBase64 = imageData.contains(',')
-          ? imageData.split(',').last
-          : imageData;
-
-      final bytes = base64Decode(pureBase64);
-
-      return Image.memory(
-        bytes,
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-        errorBuilder: (_, __, ___) {
-          return const Center(
-            child: Icon(Icons.broken_image, color: Colors.grey),
-          );
-        },
-      );
-    } catch (e) {
-      return Container(
-        color: Colors.grey.shade200,
-        child: const Center(
-          child: Icon(Icons.broken_image, color: Colors.grey),
-        ),
-      );
-    }
+    return DatabaseImage(source: imageData);
   }
 
   /// Compresses the image to reduce file size while maintaining clarity,
-  /// then uploads it to Firebase Storage and returns the download URL.
+  /// then stores it in its own Firestore document and returns its reference.
   Future<String?> _compressAndUploadImage(File imageFile, String typePrefix) async {
     try {
       Uint8List? compressedBytes;
       try {
         compressedBytes = await FlutterImageCompress.compressWithFile(
           imageFile.path,
-          minWidth: 1024,
-          minHeight: 1024,
-          quality: 70,
+          minWidth: 640,
+          minHeight: 640,
+          quality: 45,
           format: CompressFormat.jpeg,
         );
       } catch (e) {
@@ -162,27 +106,15 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
 
       compressedBytes ??= await imageFile.readAsBytes();
 
-      final fileName = '${typePrefix}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final storagePath =
-          'pest_verifications/${widget.userId}/${widget.cycleId}/station_${widget.stationIndex + 1}/$fileName';
-
-      final storageRef = FirebaseStorage.instance.ref().child(storagePath);
-      final metadata = SettableMetadata(
-        contentType: 'image/jpeg',
-        customMetadata: {
-          'userId': widget.userId,
-          'cycleId': widget.cycleId,
-          'stationIndex': widget.stationIndex.toString(),
-          'type': typePrefix,
-          'uploadedAt': DateTime.now().toIso8601String(),
-        },
+      return FirestoreImageService.upload(
+        bytes: compressedBytes,
+        userId: widget.userId,
+        cycleId: widget.cycleId,
+        category: typePrefix,
+        stationIndex: widget.stationIndex,
       );
-
-      final uploadTask = await storageRef.putData(compressedBytes, metadata);
-      final downloadUrl = await uploadTask.ref.getDownloadURL();
-      return downloadUrl;
     } catch (e) {
-      debugPrint('Error uploading image to Firebase Storage: $e');
+      debugPrint('Error uploading image to Firestore: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -261,8 +193,12 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
   }
 
   void _removePestImage(String pestType, int index) {
+    final reference = _capturedImages[pestType]![index];
     setState(() {
       _capturedImages[pestType]!.removeAt(index);
+    });
+    FirestoreImageService.delete(reference).catchError((Object e) {
+      debugPrint('Could not delete image record: $e');
     });
   }
 
@@ -337,8 +273,12 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
   }
 
   void _removeDamagePhoto(int index) {
+    final reference = _damagePhotos[index];
     setState(() {
       _damagePhotos.removeAt(index);
+    });
+    FirestoreImageService.delete(reference).catchError((Object e) {
+      debugPrint('Could not delete image record: $e');
     });
   }
 

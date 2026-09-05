@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:visaia/widgets/database_image.dart';
 
 class ReportDetailScreen extends StatefulWidget {
   final String reportId;
@@ -313,6 +314,9 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
 
   Widget _buildHeroImage(String? base64, String? networkUrl) {
     if (base64 != null) {
+      if (base64.startsWith('firestore-image://')) {
+        return DatabaseImage(source: base64);
+      }
       try {
         final bytes = base64Decode(
           base64.startsWith('data:image') ? base64.split(',').last : base64,

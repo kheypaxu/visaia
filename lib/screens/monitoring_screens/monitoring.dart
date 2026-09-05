@@ -13,6 +13,7 @@ import 'package:visaia/screens/logging_screens/field_scouting_demo.dart';
 import 'package:visaia/screens/logging_screens/trap_lists.dart';
 import 'package:visaia/screens/logging_screens/trap_guide.dart';
 import 'package:visaia/utils/growth_stage.dart';
+import 'package:visaia/widgets/database_image.dart';
 
 // ==========================================
 // BRAND COLORS
@@ -264,6 +265,24 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
         'damage': [],
       },
     });
+  }
+
+  List<Map<String, dynamic>> _normalizeLoadedStations(dynamic rawStations) {
+    if (rawStations is! List) return [];
+
+    return rawStations.map<Map<String, dynamic>>((rawStation) {
+      final station = Map<String, dynamic>.from(rawStation as Map);
+      final plantsInspected = station['plantsInspected'];
+
+      // Older saved weeks may not contain the fixed 10-plant sample count.
+      if (plantsInspected is! num || plantsInspected.toInt() != 10) {
+        station['plantsInspected'] = 10;
+      } else {
+        station['plantsInspected'] = plantsInspected.toInt();
+      }
+
+      return station;
+    }).toList();
   }
 
   final Map<int, Map<int, String>> _recommendedTaskState = {};
@@ -1084,9 +1103,7 @@ Future<void> _loadCycleData() async {
       }
 
       if (weekData != null && weekData['stations'] != null) {
-        final stations = List<Map<String, dynamic>>.from(
-            (weekData['stations'] as List)
-                .map((s) => Map<String, dynamic>.from(s)));
+        final stations = _normalizeLoadedStations(weekData['stations']);
         final allCompleted = stations.isNotEmpty &&
             stations.every((s) => s['completed'] == true);
         int totalDamaged = stations.fold(0, (sum, item) => sum + (item['damaged'] as int? ?? 0));
@@ -3330,15 +3347,13 @@ Widget _buildRecommendedTaskCard({
                   width: 72,
                   height: 72,
                   margin: const EdgeInsets.all(12),
+                  clipBehavior: Clip.antiAlias,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
                         color: const Color(0xFF90CAF9), width: 1),
-                    image: DecorationImage(
-                      image: NetworkImage(images.first),
-                      fit: BoxFit.cover,
-                    ),
                   ),
+                  child: DatabaseImage(source: images.first),
                 )
               else
                 Container(
@@ -4210,7 +4225,6 @@ Widget _buildCompactScoringGuide(String title, List<Map<String, String>> scale) 
   Widget _buildPlantsInspectedSection({
     required int plantsInspected,
   }) {
-    final displayCount = plantsInspected > 0 ? plantsInspected : 10;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -4234,7 +4248,7 @@ Widget _buildCompactScoringGuide(String title, List<Map<String, String>> scale) 
           ),
           alignment: Alignment.center,
           child: Text(
-            '$displayCount',
+            '$plantsInspected',
             style: GoogleFonts.inter(
               fontSize: 18,
               fontWeight: FontWeight.w800,
