@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:visaia/screens/dashboard_screens/threat_details.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:visaia/services/auth_cache_service.dart';
 
 class AlertsPage extends StatefulWidget {
   const AlertsPage({super.key});
@@ -37,7 +38,9 @@ class _AlertsPageState extends State<AlertsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final String? currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    final String? currentUserId =
+        FirebaseAuth.instance.currentUser?.uid ??
+        AuthCacheService().cachedUid;
 
     if (currentUserId == null) {
       return Scaffold(

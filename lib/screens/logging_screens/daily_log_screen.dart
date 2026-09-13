@@ -352,12 +352,22 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
       if (url != null) imageUrls.add(url);
     }
 
-    final cycleDoc = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(widget.userId)
-        .collection('cycles')
-        .doc(cycleId)
-        .get();
+    DocumentSnapshot<Map<String, dynamic>> cycleDoc;
+    try {
+      cycleDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('cycles')
+          .doc(cycleId)
+          .get();
+    } catch (_) {
+      cycleDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('cycles')
+          .doc(cycleId)
+          .get(const GetOptions(source: Source.cache));
+    }
     
     if (!cycleDoc.exists) {
       throw Exception('Cycle not found');

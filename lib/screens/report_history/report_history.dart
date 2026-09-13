@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:visaia/core/providers/farm_provider.dart';
 import 'package:visaia/screens/report_history/report_details.dart';
+import 'package:visaia/services/auth_cache_service.dart';
 
 class ReportHistoryScreen extends StatefulWidget {
   const ReportHistoryScreen({super.key});
@@ -17,6 +18,7 @@ class ReportHistoryScreen extends StatefulWidget {
 class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final AuthCacheService _cacheService = AuthCacheService();
 
   String _selectedFilter = 'All';
   final List<String> _filterOptions = [
@@ -34,8 +36,8 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final user = _auth.currentUser;
-    if (user == null) {
+    final uid = _auth.currentUser?.uid ?? _cacheService.cachedUid;
+    if (uid == null || uid.isEmpty) {
       return _buildUnauthorizedState();
     }
 
@@ -55,7 +57,7 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
             child: StreamBuilder<QuerySnapshot>(
               stream: _firestore
                   .collection('reports')
-                  .where('farmerId', isEqualTo: user.uid)
+                  .where('farmerId', isEqualTo: uid)
                   .snapshots(),
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
@@ -704,6 +706,8 @@ class ReportCard extends StatelessWidget {
         return Colors.blue;
       case 'pending':
         return Colors.orange;
+      case 'pending_offline_sync':
+        return const Color(0xFFB45309);
       case 'rejected':
         return Colors.red;
       default:
@@ -734,6 +738,10 @@ class _StatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final displayStatus = status == 'pending_offline_sync'
+        ? 'QUEUED SYNC'
+        : status.toUpperCase();
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
@@ -741,7 +749,7 @@ class _StatusBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(
-        status.toUpperCase(),
+        displayStatus,
         style: GoogleFonts.manrope(
           fontSize: 10,
           fontWeight: FontWeight.w800,

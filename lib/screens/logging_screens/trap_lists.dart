@@ -62,12 +62,22 @@ class _TrapSetupScreenState extends State<TrapSetupScreen> {
     setState(() => _isLoadingField = true);
 
     try {
-      final cycleDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.userId)
-          .collection('cycles')
-          .doc(widget.cycleId)
-          .get();
+      DocumentSnapshot<Map<String, dynamic>> cycleDoc;
+      try {
+        cycleDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.userId)
+            .collection('cycles')
+            .doc(widget.cycleId)
+            .get();
+      } catch (_) {
+        cycleDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.userId)
+            .collection('cycles')
+            .doc(widget.cycleId)
+            .get(const GetOptions(source: Source.cache));
+      }
 
       if (!cycleDoc.exists) {
         setState(() {
@@ -88,12 +98,22 @@ class _TrapSetupScreenState extends State<TrapSetupScreen> {
         return;
       }
 
-      final fieldDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.userId)
-          .collection('fields')
-          .doc(fieldId)
-          .get();
+      DocumentSnapshot<Map<String, dynamic>> fieldDoc;
+      try {
+        fieldDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.userId)
+            .collection('fields')
+            .doc(fieldId)
+            .get();
+      } catch (_) {
+        fieldDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.userId)
+            .collection('fields')
+            .doc(fieldId)
+            .get(const GetOptions(source: Source.cache));
+      }
 
       if (!fieldDoc.exists) {
         setState(() {
@@ -481,12 +501,22 @@ Future<void> _addToDailyLog() async {
     final now = DateTime.now();
     
     // Calculate the day number from planting date
-    final cycleDoc = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(widget.userId)
-        .collection('cycles')
-        .doc(widget.cycleId)
-        .get();
+    DocumentSnapshot<Map<String, dynamic>> cycleDoc;
+    try {
+      cycleDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('cycles')
+          .doc(widget.cycleId)
+          .get();
+    } catch (_) {
+      cycleDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('cycles')
+          .doc(widget.cycleId)
+          .get(const GetOptions(source: Source.cache));
+    }
     
     if (!cycleDoc.exists) return;
     

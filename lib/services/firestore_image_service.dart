@@ -49,7 +49,14 @@ class FirestoreImageService {
     }
 
     final path = reference.substring(referencePrefix.length);
-    final snapshot = await FirebaseFirestore.instance.doc(path).get();
+    DocumentSnapshot<Map<String, dynamic>> snapshot;
+    try {
+      snapshot = await FirebaseFirestore.instance.doc(path).get();
+    } catch (_) {
+      snapshot = await FirebaseFirestore.instance
+          .doc(path)
+          .get(const GetOptions(source: Source.cache));
+    }
     final data = snapshot.data()?['data'];
     if (data is! String || data.isEmpty) {
       throw StateError('Image no longer exists');

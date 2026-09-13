@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:visaia/utils/growth_stage.dart';
+import 'package:visaia/services/auth_cache_service.dart';
 
 class StartCroppingCycleScreen extends StatefulWidget {
   final String? farmId;
@@ -17,6 +18,10 @@ class StartCroppingCycleScreen extends StatefulWidget {
 
 class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
   final user = FirebaseAuth.instance.currentUser;
+  String get _effectiveUid =>
+      FirebaseAuth.instance.currentUser?.uid ??
+      AuthCacheService().cachedUid ??
+      '';
   final MapController mapController = MapController();
 
   List<Map<String, dynamic>> fields = [];
@@ -128,12 +133,22 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
   Future<void> _fetchFarm() async {
     // If farmId is provided, use it directly
     if (widget.farmId != null) {
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user!.uid)
-          .collection('farms')
-          .doc(widget.farmId)
-          .get();
+      DocumentSnapshot<Map<String, dynamic>> doc;
+      try {
+        doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(_effectiveUid)
+            .collection('farms')
+            .doc(widget.farmId)
+            .get();
+      } catch (_) {
+        doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(_effectiveUid)
+            .collection('farms')
+            .doc(widget.farmId)
+            .get(const GetOptions(source: Source.cache));
+      }
 
       if (doc.exists) {
         final data = doc.data()!;
@@ -152,12 +167,22 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
     }
 
     // Fallback: get first farm if no farmId provided
-    final snapshot = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user!.uid)
-        .collection('farms')
-        .limit(1)
-        .get();
+    QuerySnapshot<Map<String, dynamic>> snapshot;
+    try {
+      snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(_effectiveUid)
+          .collection('farms')
+          .limit(1)
+          .get();
+    } catch (_) {
+      snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(_effectiveUid)
+          .collection('farms')
+          .limit(1)
+          .get(const GetOptions(source: Source.cache));
+    }
 
     if (snapshot.docs.isNotEmpty) {
       final data = snapshot.docs.first.data();
@@ -176,11 +201,20 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
 
   Future<void> _fetchFields() async {
     // Fetch ALL fields for the user, then filter client-side by farmId
-    final snapshot = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user!.uid)
-        .collection('fields')
-        .get();
+    QuerySnapshot<Map<String, dynamic>> snapshot;
+    try {
+      snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(_effectiveUid)
+          .collection('fields')
+          .get();
+    } catch (_) {
+      snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(_effectiveUid)
+          .collection('fields')
+          .get(const GetOptions(source: Source.cache));
+    }
 
     // Filter fields client-side by farmId
     setState(() {
@@ -209,7 +243,7 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
   }
 
   Future<void> _saveCycle() async {
-    if (user == null || selectedFieldId == null) {
+    if (_effectiveUid.isEmpty || selectedFieldId == null) {
       _showSnackBar('Please select a field first.', isError: true);
       return;
     }
@@ -239,7 +273,7 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
 
       await FirebaseFirestore.instance
           .collection('users')
-          .doc(user!.uid)
+          .doc(_effectiveUid)
           .collection('cycles')
           .add({
         'fieldId': selectedFieldId,

@@ -9,6 +9,7 @@ import 'dart:math' as math;
 import 'package:provider/provider.dart';
 import 'package:visaia/core/providers/farm_provider.dart';
 import 'package:visaia/screens/map/risk_map.dart';
+import 'package:visaia/services/auth_cache_service.dart';
 
 class MapViewScreen extends StatefulWidget {
   const MapViewScreen({super.key});
@@ -44,29 +45,49 @@ class _MapViewScreenState extends State<MapViewScreen> {
 
   Future<void> _fetchFarmAndFields(String? farmId) async {
     try {
-      final userId = FirebaseAuth.instance.currentUser?.uid;
+      final userId = FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid;
       if (userId == null) return;
 
       DocumentSnapshot<Map<String, dynamic>>? farmDoc;
 
       if (farmId != null) {
         // Fetch the specific active farm directly by ID
-        final doc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(userId)
-            .collection('farms')
-            .doc(farmId)
-            .get();
-        if (doc.exists) farmDoc = doc;
+        try {
+          final doc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(userId)
+              .collection('farms')
+              .doc(farmId)
+              .get();
+          if (doc.exists) farmDoc = doc;
+        } catch (_) {
+          final doc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(userId)
+              .collection('farms')
+              .doc(farmId)
+              .get(const GetOptions(source: Source.cache));
+          if (doc.exists) farmDoc = doc;
+        }
       } else {
         // Fallback: fetch first farm
-        final farmsQuery = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(userId)
-            .collection('farms')
-            .limit(1)
-            .get();
-        if (farmsQuery.docs.isNotEmpty) farmDoc = farmsQuery.docs.first;
+        try {
+          final farmsQuery = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(userId)
+              .collection('farms')
+              .limit(1)
+              .get();
+          if (farmsQuery.docs.isNotEmpty) farmDoc = farmsQuery.docs.first;
+        } catch (_) {
+          final farmsQuery = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(userId)
+              .collection('farms')
+              .limit(1)
+              .get(const GetOptions(source: Source.cache));
+          if (farmsQuery.docs.isNotEmpty) farmDoc = farmsQuery.docs.first;
+        }
       }
 
       if (farmDoc == null) {
@@ -98,9 +119,16 @@ class _MapViewScreenState extends State<MapViewScreen> {
           .doc(userId)
           .collection('fields');
 
-      final fieldsSnapshot = farmId != null
-          ? await fieldsQuery.where('farmId', isEqualTo: farmId).get()
-          : await fieldsQuery.get();
+      QuerySnapshot<Map<String, dynamic>> fieldsSnapshot;
+      try {
+        fieldsSnapshot = farmId != null
+            ? await fieldsQuery.where('farmId', isEqualTo: farmId).get()
+            : await fieldsQuery.get();
+      } catch (_) {
+        fieldsSnapshot = farmId != null
+            ? await fieldsQuery.where('farmId', isEqualTo: farmId).get(const GetOptions(source: Source.cache))
+            : await fieldsQuery.get(const GetOptions(source: Source.cache));
+      }
 
       List<FieldData> loadedFields = [];
       for (var doc in fieldsSnapshot.docs) {

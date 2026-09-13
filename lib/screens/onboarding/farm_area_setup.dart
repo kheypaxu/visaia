@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:visaia/utils/geo_utils.dart';
 import 'package:visaia/screens/onboarding/field_area_setup_screen.dart';
+import 'package:visaia/services/auth_cache_service.dart';
 
 enum MapMode { idle, add, drag, delete }
 
@@ -351,15 +352,15 @@ class _FarmAreaSetupState extends State<FarmAreaSetup> {
     if (_points.length < 3 || _nameController.text.isEmpty) return;
 
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid;
+      if (uid == null) return;
 
       final areaSqm = GeoUtils.calculateAreaSqm(_points);
       final acres = GeoUtils.toAcres(areaSqm);
 
       final farmRef = await FirebaseFirestore.instance
           .collection('users')
-          .doc(user.uid)
+          .doc(uid)
           .collection('farms')
           .add({
         'name': _nameController.text,
@@ -375,14 +376,14 @@ class _FarmAreaSetupState extends State<FarmAreaSetup> {
 
       await FirebaseFirestore.instance
           .collection('farmers')
-          .doc(user.uid)
+          .doc(uid)
           .set({
         'activeFarmId': farmRef.id,
       }, SetOptions(merge: true));
 
       await FirebaseFirestore.instance
           .collection('users')
-          .doc(user.uid)
+          .doc(uid)
           .set({'hasFarm': true}, SetOptions(merge: true));
 
       if (mounted) {

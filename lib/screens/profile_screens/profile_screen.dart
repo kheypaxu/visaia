@@ -14,6 +14,7 @@ import 'package:visaia/screens/profile_screens/preferences.dart';
 import 'package:visaia/screens/profile_screens/help_and_support.dart';
 import 'package:visaia/screens/profile_screens/privacy_data_screen.dart';
 import 'package:visaia/screens/onboarding/farm_area_setup.dart';
+import 'package:visaia/services/auth_service.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -302,11 +303,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
         );
       }
 
-      await _auth.signOut();
+      await AuthService().signOut();
 
       if (mounted) {
-        Navigator.pop(context);
-        Navigator.pop(context);
+        Navigator.of(context, rootNavigator: true).pushNamedAndRemoveUntil(
+          '/login',
+          (route) => false,
+        );
       }
     } catch (e) {
       if (mounted) {

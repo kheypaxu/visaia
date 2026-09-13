@@ -14,6 +14,7 @@ import 'package:visaia/screens/logging_screens/trap_lists.dart';
 import 'package:visaia/screens/logging_screens/trap_guide.dart';
 import 'package:visaia/utils/growth_stage.dart';
 import 'package:visaia/widgets/database_image.dart';
+import 'package:visaia/services/auth_cache_service.dart';
 
 // ==========================================
 // BRAND COLORS
@@ -129,7 +130,9 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   @override
   void initState() {
     super.initState();
-    final userId = widget.userId ?? FirebaseAuth.instance.currentUser?.uid;
+    final userId = widget.userId ??
+        FirebaseAuth.instance.currentUser?.uid ??
+        AuthCacheService().cachedUid;
     if (userId == null) {
       setState(() {
         _error = 'User not authenticated';
@@ -997,12 +1000,22 @@ Future<void> _loadCycleData() async {
     if (farmerId.isEmpty) {
       final farmId = cycle['farmId'] as String? ?? '';
       if (farmId.isNotEmpty) {
-        final farmDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(_userId)
-            .collection('farms')
-            .doc(farmId)
-            .get();
+        DocumentSnapshot<Map<String, dynamic>>? farmDoc;
+        try {
+          farmDoc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(_userId)
+              .collection('farms')
+              .doc(farmId)
+              .get();
+        } catch (_) {
+          farmDoc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(_userId)
+              .collection('farms')
+              .doc(farmId)
+              .get(const GetOptions(source: Source.cache));
+        }
         if (farmDoc.exists) {
           farmerId = _userId; // The farm belongs to this user
         }
@@ -1011,19 +1024,35 @@ Future<void> _loadCycleData() async {
 
     // Fetch farmer name from farmers collection
     if (farmerId.isNotEmpty) {
-      final farmerDoc = await FirebaseFirestore.instance
-          .collection('farmers')
-          .doc(farmerId)
-          .get();
+      DocumentSnapshot<Map<String, dynamic>>? farmerDoc;
+      try {
+        farmerDoc = await FirebaseFirestore.instance
+            .collection('farmers')
+            .doc(farmerId)
+            .get();
+      } catch (_) {
+        farmerDoc = await FirebaseFirestore.instance
+            .collection('farmers')
+            .doc(farmerId)
+            .get(const GetOptions(source: Source.cache));
+      }
       if (farmerDoc.exists) {
         final data = farmerDoc.data();
         farmerName = data?['fullName'] as String? ?? data?['name'] as String? ?? '';
       } else {
         // Fallback to users collection
-        final userDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(farmerId)
-            .get();
+        DocumentSnapshot<Map<String, dynamic>>? userDoc;
+        try {
+          userDoc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(farmerId)
+              .get();
+        } catch (_) {
+          userDoc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(farmerId)
+              .get(const GetOptions(source: Source.cache));
+        }
         if (userDoc.exists) {
           final data = userDoc.data();
           farmerName = data?['fullName'] as String? ?? data?['name'] as String? ?? '';
@@ -1033,10 +1062,18 @@ Future<void> _loadCycleData() async {
       // Add a fallback for farmer name if it's still empty after the fetch
       if (farmerName.isEmpty) {
         // Try to get from users collection as a fallback
-        final userDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(_userId)
-            .get();
+        DocumentSnapshot<Map<String, dynamic>>? userDoc;
+        try {
+          userDoc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(_userId)
+              .get();
+        } catch (_) {
+          userDoc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(_userId)
+              .get(const GetOptions(source: Source.cache));
+        }
         if (userDoc.exists) {
           final data = userDoc.data();
           farmerName = data?['fullName'] as String? ?? data?['name'] as String? ?? 'Unknown Farmer';

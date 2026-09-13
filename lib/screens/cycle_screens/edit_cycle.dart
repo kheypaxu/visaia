@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:visaia/services/auth_cache_service.dart';
 import 'dart:ui';
 
 // CONSTANTS - Exact Hex Codes from Design
@@ -53,6 +54,7 @@ class _EditCropCycleScreenState extends State<EditCropCycleScreen> {
   // Firebase
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  String? get _effectiveUid => _auth.currentUser?.uid ?? AuthCacheService().cachedUid;
 
   // Available fields for dropdown
   List<Map<String, dynamic>> _availableFields = [];
@@ -113,16 +115,25 @@ class _EditCropCycleScreenState extends State<EditCropCycleScreen> {
   }
 
   Future<void> _loadAvailableFields() async {
-    final user = _auth.currentUser;
-    if (user == null) return;
+    final uid = _effectiveUid;
+    if (uid == null) return;
 
     setState(() => _isLoadingFields = true);
     try {
-      final snapshot = await _firestore
-          .collection('users')
-          .doc(user.uid)
-          .collection('fields')
-          .get();
+      QuerySnapshot<Map<String, dynamic>> snapshot;
+      try {
+        snapshot = await _firestore
+            .collection('users')
+            .doc(uid)
+            .collection('fields')
+            .get();
+      } catch (_) {
+        snapshot = await _firestore
+            .collection('users')
+            .doc(uid)
+            .collection('fields')
+            .get(const GetOptions(source: Source.cache));
+      }
 
       setState(() {
         _availableFields = snapshot.docs
@@ -141,8 +152,8 @@ class _EditCropCycleScreenState extends State<EditCropCycleScreen> {
   }
 
   Future<void> _loadCycleData() async {
-    final user = _auth.currentUser;
-    if (user == null) {
+    final uid = _effectiveUid;
+    if (uid == null) {
       setState(() {
         _error = 'Please sign in to edit cycles';
         _isLoading = false;
@@ -151,12 +162,22 @@ class _EditCropCycleScreenState extends State<EditCropCycleScreen> {
     }
 
     try {
-      final doc = await _firestore
-          .collection('users')
-          .doc(user.uid)
-          .collection('cycles')
-          .doc(widget.cycleId)
-          .get();
+      DocumentSnapshot<Map<String, dynamic>> doc;
+      try {
+        doc = await _firestore
+            .collection('users')
+            .doc(uid)
+            .collection('cycles')
+            .doc(widget.cycleId)
+            .get();
+      } catch (_) {
+        doc = await _firestore
+            .collection('users')
+            .doc(uid)
+            .collection('cycles')
+            .doc(widget.cycleId)
+            .get(const GetOptions(source: Source.cache));
+      }
 
       if (!doc.exists) {
         setState(() {
@@ -206,18 +227,28 @@ class _EditCropCycleScreenState extends State<EditCropCycleScreen> {
 
   // Same boundary loading logic as CycleDetailsScreen
   Future<void> _loadFieldBoundaries(String fieldId) async {
-    final user = _auth.currentUser;
-    if (user == null) return;
+    final uid = _effectiveUid;
+    if (uid == null) return;
 
     setState(() => _isLoadingMap = true);
 
     try {
-      final doc = await _firestore
-          .collection('users')
-          .doc(user.uid)
-          .collection('fields')
-          .doc(fieldId)
-          .get();
+      DocumentSnapshot<Map<String, dynamic>> doc;
+      try {
+        doc = await _firestore
+            .collection('users')
+            .doc(uid)
+            .collection('fields')
+            .doc(fieldId)
+            .get();
+      } catch (_) {
+        doc = await _firestore
+            .collection('users')
+            .doc(uid)
+            .collection('fields')
+            .doc(fieldId)
+            .get(const GetOptions(source: Source.cache));
+      }
 
       if (doc.exists) {
         final data = doc.data()!;
@@ -340,8 +371,8 @@ class _EditCropCycleScreenState extends State<EditCropCycleScreen> {
   }
 
   Future<void> _saveChanges() async {
-    final user = _auth.currentUser;
-    if (user == null) {
+    final uid = _effectiveUid;
+    if (uid == null) {
       _showSnackBar('Please sign in to save changes');
       return;
     }
@@ -398,7 +429,7 @@ class _EditCropCycleScreenState extends State<EditCropCycleScreen> {
 
       await _firestore
           .collection('users')
-          .doc(user.uid)
+          .doc(uid)
           .collection('cycles')
           .doc(widget.cycleId)
           .update({
@@ -427,15 +458,15 @@ class _EditCropCycleScreenState extends State<EditCropCycleScreen> {
   }
 
   Future<void> _archiveCycle() async {
-    final user = _auth.currentUser;
-    if (user == null) return;
+    final uid = _effectiveUid;
+    if (uid == null) return;
 
     setState(() => _isSaving = true);
 
     try {
       await _firestore
           .collection('users')
-          .doc(user.uid)
+          .doc(uid)
           .collection('cycles')
           .doc(widget.cycleId)
           .update({

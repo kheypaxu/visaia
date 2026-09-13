@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
@@ -9,6 +8,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:provider/provider.dart';
 import 'package:visaia/core/providers/farm_provider.dart';
+import 'package:visaia/services/auth_cache_service.dart';
 
 // ─── Trap Condition Model ─────────────────────────────────────────────────────
 
@@ -108,8 +108,8 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
     setState(() => _isLoading = true);
     
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) {
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid;
+      if (uid == null) {
         setState(() {
           _errorMessage = 'User not authenticated';
           _isLoading = false;
@@ -130,13 +130,24 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
       }
 
       // Fetch cycles for this user that belong to the active farm
-      final cyclesSnapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .collection('cycles')
-          .where('farmId', isEqualTo: activeFarmId)
-          .where('isCompleted', isEqualTo: false)
-          .get();
+      QuerySnapshot<Map<String, dynamic>> cyclesSnapshot;
+      try {
+        cyclesSnapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('cycles')
+            .where('farmId', isEqualTo: activeFarmId)
+            .where('isCompleted', isEqualTo: false)
+            .get();
+      } catch (_) {
+        cyclesSnapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('cycles')
+            .where('farmId', isEqualTo: activeFarmId)
+            .where('isCompleted', isEqualTo: false)
+            .get(const GetOptions(source: Source.cache));
+      }
 
       final cycles = <Map<String, dynamic>>[];
       
@@ -329,8 +340,8 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
     setState(() => _isSaving = true);
 
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) throw Exception('User not authenticated');
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid;
+      if (uid == null) throw Exception('User not authenticated');
 
       // Save inspection to Firestore
       final inspectionData = {
@@ -347,19 +358,29 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
 
       await FirebaseFirestore.instance
           .collection('users')
-          .doc(user.uid)
+          .doc(uid)
           .collection('cycles')
           .doc(_selectedCycleId)
           .collection('trapInspections')
           .add(inspectionData);
 
       // Also add to daily log
-      final cycleDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .collection('cycles')
-          .doc(_selectedCycleId)
-          .get();
+      DocumentSnapshot<Map<String, dynamic>> cycleDoc;
+      try {
+        cycleDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('cycles')
+            .doc(_selectedCycleId)
+            .get();
+      } catch (_) {
+        cycleDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('cycles')
+            .doc(_selectedCycleId)
+            .get(const GetOptions(source: Source.cache));
+      }
       
       final plantingDate = (cycleDoc.data()?['plantingDate'] as Timestamp?)?.toDate();
       if (plantingDate != null) {
@@ -368,7 +389,7 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
           final dayId = 'day_${(dayIndex + 1).toString().padLeft(2, '0')}';
           await FirebaseFirestore.instance
               .collection('users')
-              .doc(user.uid)
+              .doc(uid)
               .collection('cycles')
               .doc(_selectedCycleId)
               .collection('dailyLogs')

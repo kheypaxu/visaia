@@ -1,4 +1,4 @@
-import 'dart:convert';  // Add this import at the top
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -18,6 +18,10 @@ import 'package:visaia/screens/logging_screens/upload_pest.dart';
 import 'package:visaia/screens/logging_screens/inspect_trap_screen.dart';
 import 'package:visaia/screens/cycle_screens/start_cycle.dart';
 import 'package:visaia/screens/dashboard_screens/cycles_screen.dart';
+import 'package:visaia/services/auth_cache_service.dart';
+import 'package:visaia/services/offline_sync_service.dart';
+import 'package:visaia/widgets/offline_banner.dart';
+import 'package:visaia/widgets/offline_queue_sheet.dart';
 
 enum NavItem { reports, home, cycle, map, profile }
 
@@ -198,6 +202,7 @@ class VisaiaAppRoot extends StatefulWidget {
 
 class _VisaiaAppRootState extends State<VisaiaAppRoot> {
   bool? _isFarmSetupComplete;
+  final AuthCacheService _cacheService = AuthCacheService();
 
   @override
   void initState() {
@@ -206,36 +211,52 @@ class _VisaiaAppRootState extends State<VisaiaAppRoot> {
   }
 
   Future<void> _checkFarmSetup() async {
+    await _cacheService.init();
+
+    // If cached status confirms farm setup, immediately mark complete for instant offline entry
+    if (_cacheService.cachedHasFarm == true && _cacheService.cachedHasFields == true) {
+      if (mounted) setState(() => _isFarmSetupComplete = true);
+    }
+
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? _cacheService.cachedUid;
+      if (uid != null) {
         final doc = await FirebaseFirestore.instance
             .collection('users')
-            .doc(user.uid)
+            .doc(uid)
             .get();
 
         if (doc.exists) {
           final hasFarm = doc.data()?['hasFarm'] as bool? ?? false;
           final hasFields = doc.data()?['hasFields'] as bool? ?? false;
-          setState(() => _isFarmSetupComplete = hasFarm && hasFields);
-        } else {
-          setState(() => _isFarmSetupComplete = false);
+          await _cacheService.updateFarmData(hasFarm: hasFarm, hasFields: hasFields);
+          if (mounted) setState(() => _isFarmSetupComplete = hasFarm && hasFields);
+        } else if (_cacheService.cachedHasFarm != true) {
+          if (mounted) setState(() => _isFarmSetupComplete = false);
         }
       } else {
-        setState(() => _isFarmSetupComplete = false);
+        if (_cacheService.cachedHasFarm != true) {
+          if (mounted) setState(() => _isFarmSetupComplete = false);
+        }
       }
     } catch (e) {
-      setState(() => _isFarmSetupComplete = false);
+      debugPrint('Farm setup check offline fallback: $e');
+      if (_cacheService.cachedHasFarm == true) {
+        if (mounted) setState(() => _isFarmSetupComplete = true);
+      } else {
+        if (mounted) setState(() => _isFarmSetupComplete = false);
+      }
     }
   }
 
   Future<void> _completeFarmSetup() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? _cacheService.cachedUid;
+    if (uid != null) {
       await FirebaseFirestore.instance
           .collection('users')
-          .doc(user.uid)
+          .doc(uid)
           .set({'hasFarm': true, 'hasFields': true}, SetOptions(merge: true));
+      await _cacheService.updateFarmData(hasFarm: true, hasFields: true);
     }
 
     if (mounted) {
@@ -243,7 +264,7 @@ class _VisaiaAppRootState extends State<VisaiaAppRoot> {
       await context.read<FarmProvider>().init();
     }
 
-    setState(() => _isFarmSetupComplete = true);
+    if (mounted) setState(() => _isFarmSetupComplete = true);
   }
 
   @override
@@ -278,8 +299,14 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
   late AnimationController _menuController;
   bool _isMenuOpen = false;
 
-  final userId = FirebaseAuth.instance.currentUser?.uid ?? '';
+  final AuthCacheService _cacheService = AuthCacheService();
+  final OfflineSyncService _syncService = OfflineSyncService();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  String get userId =>
+      FirebaseAuth.instance.currentUser?.uid ??
+      _cacheService.cachedUid ??
+      '';
   
   // Store profile image data
   String? _profileImageBase64;
@@ -318,8 +345,15 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
     });
   }
 
-  // Load profile image from Firestore
+  // Load profile image from Firestore or local cache
   Future<void> _loadProfileImage() async {
+    await _cacheService.init();
+    if (_cacheService.cachedProfileImage != null && mounted) {
+      setState(() {
+        _profileImageBase64 = _cacheService.cachedProfileImage;
+      });
+    }
+
     if (userId.isEmpty) return;
     
     try {
@@ -331,13 +365,17 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
       if (doc.exists && mounted) {
         final data = doc.data();
         if (data != null && data.containsKey('profileImage')) {
+          final img = data['profileImage'] as String?;
           setState(() {
-            _profileImageBase64 = data['profileImage'];
+            _profileImageBase64 = img;
           });
+          if (img != null) {
+            await _cacheService.updateProfile(profileImage: img);
+          }
         }
       }
     } catch (e) {
-      debugPrint('Error loading profile image: $e');
+      debugPrint('Error loading profile image (using cache): $e');
     }
   }
 
@@ -392,15 +430,18 @@ Widget build(BuildContext context) {
   // Get user initials for fallback avatar
   final user = FirebaseAuth.instance.currentUser;
   String initials = '?';
-  if (user?.displayName != null && user!.displayName!.isNotEmpty) {
-    final parts = user.displayName!.split(' ');
+  final displayName = user?.displayName ?? _cacheService.cachedName;
+  final email = user?.email ?? _cacheService.cachedEmail;
+
+  if (displayName != null && displayName.isNotEmpty) {
+    final parts = displayName.split(' ');
     if (parts.length >= 2) {
       initials = '${parts[0][0]}${parts[1][0]}';
     } else {
       initials = parts[0][0].toUpperCase();
     }
-  } else if (user?.email != null && user!.email!.isNotEmpty) {
-    initials = user.email![0].toUpperCase();
+  } else if (email != null && email.isNotEmpty) {
+    initials = email[0].toUpperCase();
   }
 
   return Scaffold(
@@ -412,13 +453,55 @@ Widget build(BuildContext context) {
             elevation: 0,
             scrolledUnderElevation: 0,
             centerTitle: false,
-            automaticallyImplyLeading: false, // ← This removes the back button
+            automaticallyImplyLeading: false,
             title: Text('VISAIA',
                 style: GoogleFonts.epilogue(
                     color: const Color(0xFF0C503C),
                     fontWeight: FontWeight.w800,
                     fontSize: 22)),
             actions: [
+              // Pending sync queue button
+              ValueListenableBuilder<int>(
+                valueListenable: _syncService.pendingSyncCount,
+                builder: (context, pendingCount, _) {
+                  if (pendingCount == 0) return const SizedBox.shrink();
+                  return GestureDetector(
+                    onTap: () {
+                      showModalBottomSheet(
+                        context: context,
+                        backgroundColor: Colors.transparent,
+                        isScrollControlled: true,
+                        builder: (_) => const OfflineQueueSheet(),
+                      );
+                    },
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 6, top: 12, bottom: 12),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEF3C7),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFF59E0B)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.cloud_upload_outlined,
+                              size: 14, color: Color(0xFFB45309)),
+                          const SizedBox(width: 4),
+                          Text(
+                            '$pendingCount',
+                            style: GoogleFonts.inter(
+                              color: const Color(0xFFB45309),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
               GestureDetector(
                 onTap: () {
                   Navigator.push(context,
@@ -472,36 +555,43 @@ Widget build(BuildContext context) {
               const SizedBox(width: 16),
             ],
           ),
-    body: Stack(
+    body: Column(
       children: [
-        IndexedStack(
-          index: _getCurrentStackIndex(),
-          children: [
-            HomeDashboard(
-              key: ValueKey('home_$activeFarmId'),
-              userId: userId,
-              activeFarmId: activeFarmId,
-            ),
-            CroppingCyclesScreen(
-              key: ValueKey('cycles_$activeFarmId'),
-            ),
-            MapViewScreen(
-              key: ValueKey('map_$activeFarmId'),
-            ),
-            ReportHistoryScreen(),
-            ProfileScreen(),
-          ],
-        ),
-        if (_isMenuOpen || _menuController.isAnimating)
-          IgnorePointer(
-            ignoring: !_isMenuOpen,
-            child: _buildCircularMenu(bottomPadding, activeFarmId),
+        const OfflineBanner(),
+        Expanded(
+          child: Stack(
+            children: [
+              IndexedStack(
+                index: _getCurrentStackIndex(),
+                children: [
+                  HomeDashboard(
+                    key: ValueKey('home_$activeFarmId'),
+                    userId: userId,
+                    activeFarmId: activeFarmId,
+                  ),
+                  CroppingCyclesScreen(
+                    key: ValueKey('cycles_$activeFarmId'),
+                  ),
+                  MapViewScreen(
+                    key: ValueKey('map_$activeFarmId'),
+                  ),
+                  ReportHistoryScreen(),
+                  ProfileScreen(),
+                ],
+              ),
+              if (_isMenuOpen || _menuController.isAnimating)
+                IgnorePointer(
+                  ignoring: !_isMenuOpen,
+                  child: _buildCircularMenu(bottomPadding, activeFarmId),
+                ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: bottomPadding,
+                child: _buildNavBar(),
+              ),
+            ],
           ),
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: bottomPadding,
-          child: _buildNavBar(),
         ),
       ],
     ),

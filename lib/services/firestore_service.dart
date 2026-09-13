@@ -8,26 +8,33 @@ class MonitoringFirestoreService {
       : _db = db ?? FirebaseFirestore.instance,
         _userId = userId;
 
+  Future<DocumentSnapshot<Map<String, dynamic>>> _getWithCacheFallback(
+      DocumentReference<Map<String, dynamic>> ref) async {
+    try {
+      return await ref.get();
+    } catch (_) {
+      return await ref.get(const GetOptions(source: Source.cache));
+    }
+  }
+
   Future<Map<String, dynamic>?> getCycle(String cycleId) async {
-    final doc = await _db
+    final doc = await _getWithCacheFallback(_db
         .collection('users')
         .doc(_userId)
         .collection('cycles')
-        .doc(cycleId)
-        .get();
+        .doc(cycleId));
     return doc.exists ? doc.data() : null;
   }
 
   Future<Map<String, dynamic>?> getWeek(
       String cycleId, String weekId) async {
-    final doc = await _db
+    final doc = await _getWithCacheFallback(_db
         .collection('users')
         .doc(_userId)
         .collection('cycles')
         .doc(cycleId)
         .collection('weeks')
-        .doc(weekId)
-        .get();
+        .doc(weekId));
     return doc.exists ? doc.data() : null;
   }
 
@@ -45,14 +52,13 @@ class MonitoringFirestoreService {
 
   Future<Map<String, dynamic>?> getDailyLog(
       String cycleId, String dayId) async {
-    final doc = await _db
+    final doc = await _getWithCacheFallback(_db
         .collection('users')
         .doc(_userId)
         .collection('cycles')
         .doc(cycleId)
         .collection('dailyLogs')
-        .doc(dayId)
-        .get();
+        .doc(dayId));
     return doc.exists ? doc.data() : null;
   }
 

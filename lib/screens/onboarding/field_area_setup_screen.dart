@@ -6,6 +6,7 @@ import 'field_creation.dart';
 import 'package:visaia/screens/onboarding/welcome_screen.dart';
 import 'package:visaia/screens/root_screen.dart';
 import 'package:visaia/services/farm_service.dart';
+import 'package:visaia/services/auth_cache_service.dart';
 
 class FieldAreaSetupScreen extends StatefulWidget {
   final String farmId;
@@ -110,12 +111,20 @@ class _FieldAreaSetupState extends State<FieldAreaSetupScreen> {
 
   Future<void> _loadUserData() async {
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
-        final doc = await FirebaseFirestore.instance
-            .collection('farmers')
-            .doc(user.uid)
-            .get();
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid;
+      if (uid != null) {
+        DocumentSnapshot<Map<String, dynamic>> doc;
+        try {
+          doc = await FirebaseFirestore.instance
+              .collection('farmers')
+              .doc(uid)
+              .get();
+        } catch (_) {
+          doc = await FirebaseFirestore.instance
+              .collection('farmers')
+              .doc(uid)
+              .get(const GetOptions(source: Source.cache));
+        }
         
         if (doc.exists && mounted) {
           final data = doc.data();
@@ -127,8 +136,10 @@ class _FieldAreaSetupState extends State<FieldAreaSetupScreen> {
               _isLoadingUser = false;
             });
           } else {
-            final firstName = user.displayName?.split(' ').first ?? 
-                             user.email?.split('@').first ?? 
+            final cachedName = AuthCacheService().cachedName;
+            final firstName = cachedName?.split(' ').first ??
+                             FirebaseAuth.instance.currentUser?.displayName?.split(' ').first ?? 
+                             FirebaseAuth.instance.currentUser?.email?.split('@').first ?? 
                              'User';
             setState(() {
               _userFirstName = firstName;
@@ -136,8 +147,10 @@ class _FieldAreaSetupState extends State<FieldAreaSetupScreen> {
             });
           }
         } else {
-          final firstName = user.displayName?.split(' ').first ?? 
-                           user.email?.split('@').first ?? 
+          final cachedName = AuthCacheService().cachedName;
+          final firstName = cachedName?.split(' ').first ??
+                           FirebaseAuth.instance.currentUser?.displayName?.split(' ').first ?? 
+                           FirebaseAuth.instance.currentUser?.email?.split('@').first ?? 
                            'User';
           setState(() {
             _userFirstName = firstName;
@@ -161,15 +174,25 @@ class _FieldAreaSetupState extends State<FieldAreaSetupScreen> {
 
   Future<void> _loadExistingFields() async {
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid;
+      if (uid == null) return;
 
-      final snapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .collection('fields')
-          .where('farmId', isEqualTo: widget.farmId)
-          .get();
+      QuerySnapshot<Map<String, dynamic>> snapshot;
+      try {
+        snapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('fields')
+            .where('farmId', isEqualTo: widget.farmId)
+            .get();
+      } catch (_) {
+        snapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('fields')
+            .where('farmId', isEqualTo: widget.farmId)
+            .get(const GetOptions(source: Source.cache));
+      }
 
       if (mounted) {
         setState(() {
@@ -630,11 +653,11 @@ class _FieldAreaSetupState extends State<FieldAreaSetupScreen> {
                           );
 
                           // 2. Update user document
-                          final user = FirebaseAuth.instance.currentUser;
-                          if (user != null) {
+                          final uid = FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid;
+                          if (uid != null) {
                             await FirebaseFirestore.instance
                                 .collection('users')
-                                .doc(user.uid)
+                                .doc(uid)
                                 .set({
                               'hasFields': true,
                             }, SetOptions(merge: true));

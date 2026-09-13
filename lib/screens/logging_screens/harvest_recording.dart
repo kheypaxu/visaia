@@ -62,12 +62,22 @@ class _HarvestRecordingScreenState extends State<HarvestRecordingScreen> {
 
   Future<void> _loadCycleData() async {
     try {
-      final cycleDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.userId)
-          .collection('cycles')
-          .doc(widget.cycleId)
-          .get();
+      DocumentSnapshot<Map<String, dynamic>> cycleDoc;
+      try {
+        cycleDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.userId)
+            .collection('cycles')
+            .doc(widget.cycleId)
+            .get();
+      } catch (_) {
+        cycleDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.userId)
+            .collection('cycles')
+            .doc(widget.cycleId)
+            .get(const GetOptions(source: Source.cache));
+      }
       
       if (cycleDoc.exists) {
         final data = cycleDoc.data();

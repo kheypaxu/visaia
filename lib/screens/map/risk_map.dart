@@ -6,6 +6,7 @@ import 'dart:ui';
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:visaia/services/auth_cache_service.dart';
 
 enum PestLifeStage {
   all,
@@ -93,15 +94,24 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
 
   Future<void> _loadReports() async {
     try {
-      final userId = FirebaseAuth.instance.currentUser?.uid;
+      final userId = FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid;
       if (userId == null) return;
 
       // Use farmerId if your documents have that field
-      final reportsQuery = await FirebaseFirestore.instance
-          .collection('reports')
-          .where('farmerId', isEqualTo: userId)   // <- changed from userId
-          .limit(200)
-          .get();
+      QuerySnapshot<Map<String, dynamic>> reportsQuery;
+      try {
+        reportsQuery = await FirebaseFirestore.instance
+            .collection('reports')
+            .where('farmerId', isEqualTo: userId)
+            .limit(200)
+            .get();
+      } catch (_) {
+        reportsQuery = await FirebaseFirestore.instance
+            .collection('reports')
+            .where('farmerId', isEqualTo: userId)
+            .limit(200)
+            .get(const GetOptions(source: Source.cache));
+      }
 
       List<ReportData> loadedReports = [];
 
@@ -202,7 +212,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
     });
 
     try {
-      final userId = FirebaseAuth.instance.currentUser?.uid;
+      final userId = FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid;
       debugPrint("CURRENT USER ID: $userId");
       
       if (userId == null) {
@@ -221,12 +231,21 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       }
 
       // Fetch farms
-      final farmsQuery = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(userId)
-          .collection('farms')
-          .get()
-          .timeout(const Duration(seconds: 10));
+      QuerySnapshot<Map<String, dynamic>> farmsQuery;
+      try {
+        farmsQuery = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userId)
+            .collection('farms')
+            .get()
+            .timeout(const Duration(seconds: 10));
+      } catch (_) {
+        farmsQuery = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userId)
+            .collection('farms')
+            .get(const GetOptions(source: Source.cache));
+      }
 
       FarmData? loadedFarm;
       
@@ -412,17 +431,27 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
 
   Future<void> _loadRiskData() async {
     try {
-      final userId = FirebaseAuth.instance.currentUser?.uid;
+      final userId = FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid;
       if (userId == null) return;
 
       // Fetch risk points with limit
-      final riskQuery = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(userId)
-          .collection('risk_points')
-          .limit(maxRiskPointsRender) // Apply limit
-          .get()
-          .timeout(const Duration(seconds: 10));
+      QuerySnapshot<Map<String, dynamic>> riskQuery;
+      try {
+        riskQuery = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userId)
+            .collection('risk_points')
+            .limit(maxRiskPointsRender)
+            .get()
+            .timeout(const Duration(seconds: 10));
+      } catch (_) {
+        riskQuery = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userId)
+            .collection('risk_points')
+            .limit(maxRiskPointsRender)
+            .get(const GetOptions(source: Source.cache));
+      }
 
       List<RiskPoint> loadedPoints = [];
       for (var doc in riskQuery.docs) {

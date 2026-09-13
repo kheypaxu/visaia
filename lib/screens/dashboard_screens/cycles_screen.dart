@@ -10,6 +10,7 @@ import 'package:visaia/screens/cycle_screens/record_previous_cycle.dart';
 import 'package:visaia/screens/cycle_screens/cycle_details.dart';
 import 'package:visaia/screens/cycle_screens/completed_cycle_details.dart';
 import 'package:visaia/screens/cycle_screens/edit_cycle.dart';
+import 'package:visaia/services/auth_cache_service.dart';
 
 class CroppingCyclesScreen extends StatefulWidget {
   const CroppingCyclesScreen({super.key});
@@ -27,7 +28,10 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
   bool isCompletedView = false;
   String searchQuery = '';
 
-  final user = FirebaseAuth.instance.currentUser;
+  String get _effectiveUid =>
+      FirebaseAuth.instance.currentUser?.uid ??
+      AuthCacheService().cachedUid ??
+      '';
 
   Map<String, dynamic> _getCycleStatus(CycleModel cycle) {
     if (cycle.progress >= 0.8) {
@@ -79,7 +83,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('users')
-          .doc(user!.uid)
+          .doc(_effectiveUid)
           .collection('cycles')
           .where('farmId', isEqualTo: farmId)
           .snapshots(),
@@ -180,14 +184,14 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
   }
 
   Widget _buildCycleList(String? farmId) {
-    if (user == null) {
+    if (_effectiveUid.isEmpty) {
       return _buildEmptyState('Please sign in to view cycles');
     }
 
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('users')
-          .doc(user!.uid)
+          .doc(_effectiveUid)
           .collection('cycles')
           .where('farmId', isEqualTo: farmId)
           .orderBy('createdAt', descending: true)
@@ -263,7 +267,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
           context,
           MaterialPageRoute(
             builder: (context) =>
-                CycleDetailsScreen(cycleId: cycle.id, uid: user!.uid),
+                CycleDetailsScreen(cycleId: cycle.id, uid: _effectiveUid),
           ),
         );
       },
@@ -281,7 +285,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
           context,
           MaterialPageRoute(
             builder: (context) =>
-                CompletedCycleScreen(cycleId: cycle.id, userId: user!.uid),
+                CompletedCycleScreen(cycleId: cycle.id, userId: _effectiveUid),
           ),
         );
       },
@@ -417,7 +421,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('users')
-          .doc(user?.uid)
+          .doc(_effectiveUid)
           .collection('cycles')
           .where('farmId', isEqualTo: farmId)
           .snapshots(),
@@ -595,7 +599,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
               context,
               MaterialPageRoute(
                 builder: (context) =>
-                    RecordCycleScreen(userId: user!.uid),
+                    RecordCycleScreen(userId: _effectiveUid),
               ),
             ).then((_) => setState(() {}));
           },
@@ -781,7 +785,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
     try {
       await FirebaseFirestore.instance
           .collection('users')
-          .doc(user!.uid)
+          .doc(_effectiveUid)
           .collection('cycles')
           .doc(cycleId)
           .update({'isCompleted': true});
@@ -818,7 +822,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
     try {
       await FirebaseFirestore.instance
           .collection('users')
-          .doc(user!.uid)
+          .doc(_effectiveUid)
           .collection('cycles')
           .doc(cycleId)
           .delete();

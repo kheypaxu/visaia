@@ -4,8 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:visaia/services/api_service.dart';
 import 'package:visaia/screens/logging_screens/ai_result.dart';
-import 'package:geolocator/geolocator.dart';  // Add this
-import 'package:geocoding/geocoding.dart';  
+import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
+import 'package:visaia/services/auth_cache_service.dart';
+import 'package:visaia/services/connectivity_service.dart';
+import 'package:visaia/services/offline_sync_service.dart';
 
 /// Full-screen cinematic loading overlay shown while the AI analyzes the image.
 /// Push this as a transparent route over UploadPestScreen, then it will
@@ -126,6 +129,14 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
   }
 
   Future<void> _startAnalysis() async {
+    final connectivity = ConnectivityService();
+    final isOnline = connectivity.isOnline;
+
+    if (!isOnline) {
+      await _handleOfflinePestReport();
+      return;
+    }
+
     try {
       final result = await ApiService.sendImage(widget.imageFile);
       if (!mounted) return;
@@ -171,11 +182,84 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
         ),
       );
     } catch (e) {
+      debugPrint('Online AI analysis failed ($e), saving to offline queue.');
+      await _handleOfflinePestReport();
+    }
+  }
+
+  Future<void> _handleOfflinePestReport() async {
+    try {
+      final locationData = await _getCurrentLocation();
+      final cacheService = AuthCacheService();
+
+      await OfflineSyncService().enqueuePestReport(
+        imageFile: widget.imageFile,
+        userId: widget.userId,
+        farmId: cacheService.cachedActiveFarmId,
+        latitude: locationData.latitude,
+        longitude: locationData.longitude,
+        areaName: locationData.areaName,
+        farmerName: cacheService.cachedName,
+      );
+
       if (!mounted) return;
-      Navigator.pop(context); // back to upload screen
+      Navigator.pop(context); // close analyzing overlay
+
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEAF3DE),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.cloud_off_rounded,
+                    color: Color(0xFF1A5C30), size: 22),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Saved to Offline Queue',
+                  style: GoogleFonts.inter(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                    color: const Color(0xFF1A1C1E),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: Text(
+            'Your pest observation has been saved locally.\n\nVISAAIA will automatically send the photo for AI identification and treatment recommendations once your network is restored.',
+            style: GoogleFonts.inter(
+              fontSize: 13,
+              height: 1.45,
+              color: const Color(0xFF424242),
+            ),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF1A5C30),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+              ),
+              child: const Text('Got it'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Analysis failed: $e'),
+          content: Text('Failed to queue offline report: $e'),
           backgroundColor: Colors.red.shade700,
         ),
       );

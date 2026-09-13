@@ -49,12 +49,21 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
 
   Future<void> _loadData() async {
     try {
-      // Fetch cycles
-      final cyclesSnapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.userId)
-          .collection('cycles')
-          .get();
+      // Fetch cycles with offline cache fallback
+      QuerySnapshot<Map<String, dynamic>> cyclesSnapshot;
+      try {
+        cyclesSnapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.userId)
+            .collection('cycles')
+            .get();
+      } catch (_) {
+        cyclesSnapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.userId)
+            .collection('cycles')
+            .get(const GetOptions(source: Source.cache));
+      }
 
       cycles = cyclesSnapshot.docs.map((doc) {
         return {

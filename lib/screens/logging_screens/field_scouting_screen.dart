@@ -114,12 +114,22 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
     if (_selectedCycleId == null) return;
     
     try {
-      final cycleDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.userId)
-          .collection('cycles')
-          .doc(_selectedCycleId)
-          .get();
+      DocumentSnapshot<Map<String, dynamic>> cycleDoc;
+      try {
+        cycleDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.userId)
+            .collection('cycles')
+            .doc(_selectedCycleId)
+            .get();
+      } catch (_) {
+        cycleDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.userId)
+            .collection('cycles')
+            .doc(_selectedCycleId)
+            .get(const GetOptions(source: Source.cache));
+      }
       
       if (cycleDoc.exists) {
         final data = cycleDoc.data();
@@ -148,12 +158,21 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
 
   Future<List<Map<String, dynamic>>> _fetchUserCycles() async {
     try {
-      final cyclesSnapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.userId)
-          .collection('cycles')
-          .orderBy('createdAt', descending: true)
-          .get();
+      QuerySnapshot<Map<String, dynamic>> cyclesSnapshot;
+      try {
+        cyclesSnapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.userId)
+            .collection('cycles')
+            .orderBy('createdAt', descending: true)
+            .get();
+      } catch (_) {
+        cyclesSnapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.userId)
+            .collection('cycles')
+            .get(const GetOptions(source: Source.cache));
+      }
       
       if (cyclesSnapshot.docs.isEmpty) {
         return [];

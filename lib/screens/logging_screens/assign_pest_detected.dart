@@ -128,12 +128,21 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
 
   Future<void> _fetchCycles() async {
     try {
-      // Get all cycles (no filter, no orderBy to avoid missing field errors)
-      final snapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.userId)
-          .collection('cycles')
-          .get();
+      // Get all cycles (with offline cache fallback)
+      QuerySnapshot<Map<String, dynamic>> snapshot;
+      try {
+        snapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.userId)
+            .collection('cycles')
+            .get();
+      } catch (_) {
+        snapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.userId)
+            .collection('cycles')
+            .get(const GetOptions(source: Source.cache));
+      }
 
       print('✓ Fetched ${snapshot.docs.length} cycles for userId: ${widget.userId}');
 
@@ -191,12 +200,22 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
     print('  Stage: ${widget.detectedStage}');
 
     try {
-      final cycleDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.userId)
-          .collection('cycles')
-          .doc(_selectedCycleId)
-          .get();
+      DocumentSnapshot<Map<String, dynamic>> cycleDoc;
+      try {
+        cycleDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.userId)
+            .collection('cycles')
+            .doc(_selectedCycleId)
+            .get();
+      } catch (_) {
+        cycleDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.userId)
+            .collection('cycles')
+            .doc(_selectedCycleId)
+            .get(const GetOptions(source: Source.cache));
+      }
 
       final plantingDate = (cycleDoc.data()?['plantingDate'] as Timestamp?)?.toDate();
       if (plantingDate == null) throw Exception('Invalid cycle planting date');
@@ -230,7 +249,12 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
           .collection('weeks')
           .doc(weekId);
 
-      final weekSnap = await weekRef.get();
+      DocumentSnapshot<Map<String, dynamic>> weekSnap;
+      try {
+        weekSnap = await weekRef.get();
+      } catch (_) {
+        weekSnap = await weekRef.get(const GetOptions(source: Source.cache));
+      }
 
       List<Map<String, dynamic>> stations;
         if (weekSnap.exists && weekSnap.data()?['stations'] != null) {
