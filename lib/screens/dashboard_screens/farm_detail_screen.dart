@@ -204,10 +204,10 @@ class _FarmDetailScreenState extends State<FarmDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final farmName = widget.farmData['name'] as String? ?? 'Farm 1';
+    final farmName = widget.farmData['name'] as String? ?? 'Farm';
     final location = widget.farmData['address'] as String? ??
         widget.farmData['location'] as String? ??
-        'Tuy-an, Cabatuan';
+        'Location not set';
 
     final service = MonitoringFirestoreService(
       userId: widget.userId,
@@ -272,30 +272,87 @@ class _FarmDetailScreenState extends State<FarmDetailScreen> {
                   stream: service.getActiveCycles(),
                   builder: (context, cycleSnap) {
                     final cycles = cycleSnap.data ?? [];
-                    final hasActiveCycle = cycles.isNotEmpty;
-                    final activeCycle = hasActiveCycle ? cycles.first : null;
 
-                    String stageText = 'Harvesting';
-                    String weekText = 'Week 42';
-                    String cropText = 'Hybrid Sweet Corn';
-                    double progress = 0.85;
+                    if (cycles.isEmpty) {
+                      return Container(
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          color: _cardBg,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  'ACTIVE CYCLE',
+                                  style: GoogleFonts.manrope(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w800,
+                                    color: _textMuted,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 5,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.shade200,
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: Text(
+                                    'No Active Cycle',
+                                    style: GoogleFonts.manrope(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w700,
+                                      color: _textMuted,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 14),
+                            Text(
+                              'No cycle currently running',
+                              style: GoogleFonts.manrope(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: _textBlack,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Start a new crop cycle to track progress and harvest stages.',
+                              style: GoogleFonts.manrope(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: _textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
 
-                    if (activeCycle != null) {
-                      cropText = activeCycle.cropVariety.isNotEmpty
-                          ? activeCycle.cropVariety
-                          : activeCycle.cycleName;
-                      if (activeCycle.plantingDate != null) {
-                        final days = DateTime.now()
-                            .difference(activeCycle.plantingDate!)
-                            .inDays;
-                        final w = (days / 7).floor() + 1;
-                        weekText = 'Week $w';
-                        progress = (w / 12).clamp(0.1, 1.0);
-                      }
-                      if (activeCycle.statusText != null &&
-                          activeCycle.statusText!.isNotEmpty) {
-                        stageText = activeCycle.statusText!;
-                      }
+                    final activeCycle = cycles.first;
+                    String stageText = activeCycle.statusText ?? 'Active';
+                    String weekText = 'Ongoing';
+                    String cropText = activeCycle.cropVariety.isNotEmpty
+                        ? activeCycle.cropVariety
+                        : activeCycle.cycleName;
+                    double progress = 0.1;
+
+                    if (activeCycle.plantingDate != null) {
+                      final days = DateTime.now()
+                          .difference(activeCycle.plantingDate!)
+                          .inDays;
+                      final w = (days / 7).floor() + 1;
+                      weekText = 'Week $w';
+                      progress = (w / 12).clamp(0.05, 1.0);
                     }
 
                     return Container(
@@ -414,18 +471,17 @@ class _FarmDetailScreenState extends State<FarmDetailScreen> {
                 FutureBuilder<List<FieldModel>>(
                   future: service.getFields(),
                   builder: (context, fieldSnap) {
-                    final fieldsCount = fieldSnap.data?.length ?? 4;
+                    final fieldsCount = fieldSnap.data?.length ?? 0;
 
                     return StreamBuilder<double>(
                       stream: service.getNetIncome(),
                       builder: (context, incomeSnap) {
-                        final netIncome = incomeSnap.data ?? 142000.0;
-                        final displayIncome = netIncome > 0 ? netIncome : 142000.0;
+                        final netIncome = incomeSnap.data ?? 0.0;
 
                         return StreamBuilder<List<CycleModel>>(
                           stream: service.getActiveCycles(),
                           builder: (context, activeCycleSnap) {
-                            final activeCyclesCount = activeCycleSnap.data?.length ?? 2;
+                            final activeCyclesCount = activeCycleSnap.data?.length ?? 0;
 
                             return Row(
                               children: [
@@ -516,7 +572,7 @@ class _FarmDetailScreenState extends State<FarmDetailScreen> {
                                         ),
                                         const SizedBox(height: 12),
                                         Text(
-                                          '₱${_formatK(displayIncome)}',
+                                          '₱${_formatK(netIncome)}',
                                           style: GoogleFonts.manrope(
                                             fontSize: 24,
                                             fontWeight: FontWeight.w800,
@@ -525,11 +581,13 @@ class _FarmDetailScreenState extends State<FarmDetailScreen> {
                                         ),
                                         const SizedBox(height: 6),
                                         Text(
-                                          '↗ +12% YTD',
+                                          netIncome > 0
+                                              ? 'From completed cycles'
+                                              : 'No completed cycles yet',
                                           style: GoogleFonts.manrope(
-                                            fontSize: 13,
-                                            fontWeight: FontWeight.w700,
-                                            color: _forestGreen,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                            color: _textMuted,
                                           ),
                                         ),
                                       ],
@@ -550,8 +608,7 @@ class _FarmDetailScreenState extends State<FarmDetailScreen> {
                 StreamBuilder<double>(
                   stream: service.getTotalYield(),
                   builder: (context, yieldSnap) {
-                    final yieldVal = yieldSnap.data ?? 4250.0;
-                    final displayYield = yieldVal > 0 ? yieldVal : 4250.0;
+                    final yieldVal = yieldSnap.data ?? 0.0;
 
                     return Container(
                       padding: const EdgeInsets.all(20),
@@ -605,7 +662,7 @@ class _FarmDetailScreenState extends State<FarmDetailScreen> {
                             textBaseline: TextBaseline.alphabetic,
                             children: [
                               Text(
-                                _formatYield(displayYield),
+                                _formatYield(yieldVal),
                                 style: GoogleFonts.manrope(
                                   fontSize: 26,
                                   fontWeight: FontWeight.w900,
@@ -625,7 +682,7 @@ class _FarmDetailScreenState extends State<FarmDetailScreen> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            'Estimated final harvest weight',
+                            yieldVal > 0 ? 'Total harvested yield' : 'No harvest records yet',
                             style: GoogleFonts.manrope(
                               fontSize: 13,
                               fontWeight: FontWeight.w500,

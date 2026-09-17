@@ -5,8 +5,10 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:visaia/screens/logging_screens/assign_log_modal.dart';
+import 'package:visaia/services/auth_cache_service.dart';
 import 'package:visaia/services/firestore_image_service.dart';
 
 // ─── Activity Type Model ──────────────────────────────────────────────────────
@@ -71,6 +73,14 @@ extension ActivityTypeExt on ActivityType {
   }
 }
 
+// ─── Daily Log Status Enum ───────────────────────────────────────────────────
+
+enum DailyLogStatus {
+  completed,
+  inProgress,
+  scheduled,
+}
+
 // ─── Daily Log Form Screen ────────────────────────────────────────────────────
 
 class DailyLogFormScreen extends StatefulWidget {
@@ -100,12 +110,11 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
   ActivityType? _selectedActivity;
   final TextEditingController _notesController = TextEditingController();
   List<XFile> _pickedImages = [];
-  bool _isCompleted = false;
+  DailyLogStatus _status = DailyLogStatus.completed;
   bool _isSaving = false;
   
   // Schedule state
-  bool _isScheduled = false;
-  TimeOfDay? _scheduledTime;
+  TimeOfDay? _scheduledTime = const TimeOfDay(hour: 8, minute: 0);
   DateTime? _scheduledDate;
 
   late AnimationController _fadeController;
@@ -118,7 +127,6 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
   static const _darkGreen = Color(0xFF0C503C);
   static const _bgColor = Color(0xFFF4F8F5);
   static const _mutedText = Color(0xFF9E9E9E);
-  static const _borderColor = Color(0xFFDDEEE4);
 
   @override
   void initState() {
@@ -243,6 +251,13 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
     setState(() => _pickedImages.removeAt(index));
   }
 
+  String get _effectiveUid {
+    if (widget.userId.isNotEmpty) return widget.userId;
+    return FirebaseAuth.instance.currentUser?.uid ??
+        AuthCacheService().cachedUid ??
+        '';
+  }
+
   Future<String?> _uploadImage(XFile image, String cycleId) async {
     try {
       final bytes = await FlutterImageCompress.compressWithFile(
@@ -255,7 +270,7 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
           await File(image.path).readAsBytes();
       return FirestoreImageService.upload(
         bytes: bytes,
-        userId: widget.userId,
+        userId: _effectiveUid,
         cycleId: cycleId,
         category: 'daily_activity',
       );
@@ -282,7 +297,7 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
       'alertType': 'scheduled_activity',
       'title': 'Upcoming Activity: ${_selectedActivity!.label}',
       'message': 'You have a scheduled ${_selectedActivity!.label} activity for ${DateFormat('MMM d, yyyy').format(scheduledDateTime)} at ${_scheduledTime!.format(context)}.\n\nActivity: ${_notesController.text.isNotEmpty ? _notesController.text : 'No additional notes'}',
-      'farmerId': widget.userId,
+      'farmerId': _effectiveUid,
       'createdAt': FieldValue.serverTimestamp(),
       'status': 'unread',
       'source': 'daily_log',
@@ -303,9 +318,9 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
       return;
     }
 
-    if (!_isCompleted && (_scheduledDate == null || _scheduledTime == null)) {
+    if (_status == DailyLogStatus.scheduled && (_scheduledDate == null || _scheduledTime == null)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please set a schedule time for this activity')),
+        const SnackBar(content: Text('Please set both a date and time for the scheduled activity')),
       );
       return;
     }
@@ -314,17 +329,19 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
       setState(() => _isSaving = true);
       try {
         final activityId = await _saveToCycle(widget.cycleId);
-        if (_isScheduled && activityId != null) {
+        if (_status == DailyLogStatus.scheduled && activityId != null) {
           await _createScheduledActivityNotification(widget.cycleId, activityId);
         }
         if (mounted) {
+          String message = 'Activity saved successfully!';
+          if (_status == DailyLogStatus.scheduled) {
+            message = 'Activity scheduled! You\'ll be notified when it\'s time.';
+          } else if (_status == DailyLogStatus.inProgress) {
+            message = 'Activity recorded as in progress!';
+          }
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(
-                _isCompleted 
-                  ? 'Activity saved successfully!' 
-                  : 'Activity scheduled! You\'ll be notified when it\'s time.',
-              ),
+              content: Text(message),
               backgroundColor: const Color(0xFF1A5C30),
             ),
           );
@@ -345,6 +362,11 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
   }
 
   Future<String?> _saveToCycle(String cycleId) async {
+    final uid = _effectiveUid;
+    if (uid.isEmpty) {
+      throw Exception('Please sign in to save activities');
+    }
+
     final imageUrls = <String>[];
 
     for (final image in _pickedImages) {
@@ -356,53 +378,62 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
     try {
       cycleDoc = await FirebaseFirestore.instance
           .collection('users')
-          .doc(widget.userId)
+          .doc(uid)
           .collection('cycles')
           .doc(cycleId)
           .get();
     } catch (_) {
       cycleDoc = await FirebaseFirestore.instance
           .collection('users')
-          .doc(widget.userId)
+          .doc(uid)
           .collection('cycles')
           .doc(cycleId)
           .get(const GetOptions(source: Source.cache));
     }
     
-    if (!cycleDoc.exists) {
-      throw Exception('Cycle not found');
+    DateTime? plantingDate;
+    if (cycleDoc.exists) {
+      final data = cycleDoc.data();
+      final pTimestamp = data?['plantingDate'];
+      if (pTimestamp is Timestamp) {
+        plantingDate = pTimestamp.toDate();
+      }
     }
-    
-    final plantingDate = (cycleDoc.data()?['plantingDate'] as Timestamp?)?.toDate();
-    final harvestDate = (cycleDoc.data()?['harvestDate'] as Timestamp?)?.toDate();
-    
-    if (plantingDate == null || harvestDate == null) {
-      throw Exception('Planting or harvest date not found');
-    }
-    
-    if (_selectedDate.isBefore(plantingDate) || _selectedDate.isAfter(harvestDate)) {
-      throw Exception('Activity date must be between ${DateFormat('MMM d').format(plantingDate)} and ${DateFormat('MMM d').format(harvestDate)}');
-    }
-    
-    final daysSincePlanting = _selectedDate.difference(plantingDate).inDays;
-    final dayNumber = daysSincePlanting + 1;
-    final dayId = 'day_${dayNumber.toString().padLeft(2, '0')}';
 
+    int dayNumber = 1;
+    if (plantingDate != null) {
+      final pDate = DateTime(plantingDate.year, plantingDate.month, plantingDate.day);
+      final sDate = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day);
+      final diff = sDate.difference(pDate).inDays;
+      dayNumber = diff >= 0 ? diff + 1 : 1;
+    } else if (widget.currentDayIndex != null) {
+      dayNumber = widget.currentDayIndex!;
+    }
+    
+    final dayId = 'day_${dayNumber.toString().padLeft(2, '0')}';
     final activityId = DateTime.now().millisecondsSinceEpoch.toString();
+
+    final isCompleted = _status == DailyLogStatus.completed;
+    final isScheduled = _status == DailyLogStatus.scheduled;
+    final statusString = _status == DailyLogStatus.completed
+        ? 'completed'
+        : (_status == DailyLogStatus.inProgress ? 'in_progress' : 'scheduled');
+
     final activityData = {
       'id': activityId,
       'type': _selectedActivity!.label,
       'icon': _selectedActivity!.icon.codePoint,
       'notes': _notesController.text,
       'images': imageUrls,
-      'completed': _isCompleted,
+      'status': statusString,
+      'completed': isCompleted,
       'timestamp': FieldValue.serverTimestamp(),
       'date': Timestamp.fromDate(_selectedDate),
       'dayNumber': dayNumber,
       'cycleId': cycleId,
-      'userId': widget.userId,
-      'isScheduled': _isScheduled,
-      'scheduledFor': _isScheduled && _scheduledDate != null && _scheduledTime != null
+      'userId': uid,
+      'isScheduled': isScheduled,
+      'scheduledFor': isScheduled && _scheduledDate != null && _scheduledTime != null
           ? Timestamp.fromDate(DateTime(
               _scheduledDate!.year,
               _scheduledDate!.month,
@@ -415,7 +446,7 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
 
     await FirebaseFirestore.instance
         .collection('users')
-        .doc(widget.userId)
+        .doc(uid)
         .collection('cycles')
         .doc(cycleId)
         .collection('dailyLogs')
@@ -429,7 +460,7 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
   Future<void> _openAssignModal() async {
     showAssignLogSheet(
       context,
-      userId: widget.userId,
+      userId: _effectiveUid,
       cycleId: widget.cycleId,
       onCycleSelected: (cycleId) async {
         if (cycleId.isEmpty) {
@@ -442,17 +473,19 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
         setState(() => _isSaving = true);
         try {
           final activityId = await _saveToCycle(cycleId);
-          if (_isScheduled && activityId != null) {
+          if (_status == DailyLogStatus.scheduled && activityId != null) {
             await _createScheduledActivityNotification(cycleId, activityId);
           }
           if (mounted) {
+            String message = 'Activity saved successfully!';
+            if (_status == DailyLogStatus.scheduled) {
+              message = 'Activity scheduled! You\'ll be notified when it\'s time.';
+            } else if (_status == DailyLogStatus.inProgress) {
+              message = 'Activity recorded as in progress!';
+            }
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text(
-                  _isCompleted 
-                    ? 'Activity saved successfully!' 
-                    : 'Activity scheduled! You\'ll be notified when it\'s time.',
-                ),
+                content: Text(message),
                 backgroundColor: const Color(0xFF1A5C30),
               ),
             );
@@ -606,72 +639,50 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
                       ),
                     ),
 
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 16),
 
-                    // ── Status (Progress) ──────────────────────────────────
+                    // ── Status (3 Options: Completed, In Progress, Scheduled) ─
                     _SectionLabel(label: 'Status'),
                     const SizedBox(height: 8),
-                    _FormCard(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                      child: Row(
-                        children: [
-                          GestureDetector(
-                            onTap: () => setState(() => _isCompleted = !_isCompleted),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  _isCompleted
-                                      ? Icons.check_circle_rounded
-                                      : Icons.radio_button_unchecked_rounded,
-                                  color: _isCompleted ? _green : _mutedText,
-                                  size: 22,
-                                ),
-                                const SizedBox(width: 10),
-                                Text(
-                                  _isCompleted ? 'Completed' : 'In Progress',
-                                  style: GoogleFonts.inter(
-                                    color: _isCompleted ? _green : _mutedText,
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 14,
-                                  ),
-                                ),
-                              ],
-                            ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _StatusOptionCard(
+                            label: 'Completed',
+                            subtitle: 'Done',
+                            icon: Icons.check_circle_rounded,
+                            isSelected: _status == DailyLogStatus.completed,
+                            selectedColor: const Color(0xFF1A5C30),
+                            onTap: () => setState(() => _status = DailyLogStatus.completed),
                           ),
-                          if (!_isCompleted) ...[
-                            const SizedBox(width: 16),
-                            const VerticalDivider(color: _borderColor, thickness: 1, width: 1),
-                            const SizedBox(width: 16),
-                            GestureDetector(
-                              onTap: () => setState(() => _isScheduled = !_isScheduled),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    _isScheduled 
-                                        ? Icons.check_box_rounded 
-                                        : Icons.check_box_outline_blank_rounded,
-                                    color: _isScheduled ? _green : _mutedText,
-                                    size: 20,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    'Schedule',
-                                    style: GoogleFonts.inter(
-                                      color: _isScheduled ? _green : _mutedText,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _StatusOptionCard(
+                            label: 'In Progress',
+                            subtitle: 'Ongoing',
+                            icon: Icons.timelapse_rounded,
+                            isSelected: _status == DailyLogStatus.inProgress,
+                            selectedColor: const Color(0xFFE65100),
+                            onTap: () => setState(() => _status = DailyLogStatus.inProgress),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _StatusOptionCard(
+                            label: 'Scheduled',
+                            subtitle: 'For Later',
+                            icon: Icons.calendar_month_rounded,
+                            isSelected: _status == DailyLogStatus.scheduled,
+                            selectedColor: const Color(0xFF0C503C),
+                            onTap: () => setState(() => _status = DailyLogStatus.scheduled),
+                          ),
+                        ),
+                      ],
                     ),
 
-                    // ── Schedule Section (only when in progress and scheduled) ──
-                    if (!_isCompleted && _isScheduled) ...[
+                    // ── Schedule Section (only when Scheduled is chosen) ──
+                    if (_status == DailyLogStatus.scheduled) ...[
                       const SizedBox(height: 12),
                       _buildScheduleSection(),
                     ],
@@ -740,7 +751,7 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
           ),
         ),
 
-        // ── Next Button ───────────────────────────────────────────────────
+        // ── Next / Save Button ─────────────────────────────────────────────
         bottomNavigationBar: Container(
           color: _bgColor,
           padding: EdgeInsets.fromLTRB(16, 12, 16, bottomPadding + 16),
@@ -780,11 +791,22 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
                     : Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.check_rounded,
-                              color: Colors.white, size: 18),
+                          Icon(
+                            _status == DailyLogStatus.completed
+                                ? Icons.check_rounded
+                                : (_status == DailyLogStatus.inProgress
+                                    ? Icons.pending_actions_rounded
+                                    : Icons.alarm_add_rounded),
+                            color: Colors.white,
+                            size: 18,
+                          ),
                           const SizedBox(width: 8),
                           Text(
-                            _isCompleted ? 'Save Activity' : 'Schedule Activity',
+                            _status == DailyLogStatus.completed
+                                ? 'Save Completed Log'
+                                : (_status == DailyLogStatus.inProgress
+                                    ? 'Save In Progress'
+                                    : 'Schedule Activity'),
                             style: GoogleFonts.inter(
                               color: Colors.white,
                               fontWeight: FontWeight.w700,
@@ -1150,3 +1172,92 @@ class _ImagePickerSection extends StatelessWidget {
     );
   }
 }
+
+// ── Status Option Card ────────────────────────────────────────────────────────
+
+class _StatusOptionCard extends StatelessWidget {
+  final String label;
+  final String subtitle;
+  final IconData icon;
+  final bool isSelected;
+  final Color selectedColor;
+  final VoidCallback onTap;
+
+  const _StatusOptionCard({
+    required this.label,
+    required this.subtitle,
+    required this.icon,
+    required this.isSelected,
+    required this.selectedColor,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? selectedColor : Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isSelected ? selectedColor : const Color(0xFFDDEEE4),
+            width: isSelected ? 1.8 : 1.2,
+          ),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: selectedColor.withOpacity(0.28),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
+                  ),
+                ]
+              : const [
+                  BoxShadow(
+                    color: Color(0x08000000),
+                    blurRadius: 4,
+                    offset: Offset(0, 1),
+                  ),
+                ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              color: isSelected ? Colors.white : selectedColor,
+              size: 22,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: GoogleFonts.inter(
+                color: isSelected ? Colors.white : const Color(0xFF0C503C),
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(
+                color: isSelected
+                    ? Colors.white.withOpacity(0.85)
+                    : const Color(0xFF9E9E9E),
+                fontSize: 10,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+

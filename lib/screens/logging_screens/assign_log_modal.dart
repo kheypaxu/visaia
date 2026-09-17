@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:visaia/services/auth_cache_service.dart';
 
 void showAssignLogSheet(
   BuildContext context, {
@@ -37,386 +39,388 @@ class AssignLogSheetContent extends StatefulWidget {
 }
 
 class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
-  String? selectedCycle;
-  List<Map<String, dynamic>> cycles = [];
+  String? _selectedCycleId;
+  List<Map<String, dynamic>> _cycles = [];
   bool _isLoading = true;
+
+  static const Color _green = Color(0xFF1A5C30);
+  static const Color _darkGreen = Color(0xFF0C503C);
+  static const Color _textGray = Color(0xFF616161);
 
   @override
   void initState() {
     super.initState();
-    _loadData();
+    _loadCycles();
   }
 
-  Future<void> _loadData() async {
+  String get _effectiveUid {
+    if (widget.userId.isNotEmpty) return widget.userId;
+    return FirebaseAuth.instance.currentUser?.uid ??
+        AuthCacheService().cachedUid ??
+        '';
+  }
+
+  Future<void> _loadCycles() async {
+    final uid = _effectiveUid;
+    if (uid.isEmpty) {
+      setState(() => _isLoading = false);
+      return;
+    }
+
     try {
-      // Fetch cycles with offline cache fallback
-      QuerySnapshot<Map<String, dynamic>> cyclesSnapshot;
+      QuerySnapshot<Map<String, dynamic>> snapshot;
       try {
-        cyclesSnapshot = await FirebaseFirestore.instance
+        snapshot = await FirebaseFirestore.instance
             .collection('users')
-            .doc(widget.userId)
+            .doc(uid)
             .collection('cycles')
             .get();
       } catch (_) {
-        cyclesSnapshot = await FirebaseFirestore.instance
+        snapshot = await FirebaseFirestore.instance
             .collection('users')
-            .doc(widget.userId)
+            .doc(uid)
             .collection('cycles')
             .get(const GetOptions(source: Source.cache));
       }
 
-      cycles = cyclesSnapshot.docs.map((doc) {
+      // Filter active (non-completed) cycles safely
+      final activeCycles = snapshot.docs.where((doc) {
+        final data = doc.data();
+        final isCompleted = data['isCompleted'] == true;
+        final isPrevious = data['isPreviousCycle'] == true;
+        final statusCompleted = data['status'] == 'completed';
+        return !isCompleted && !isPrevious && !statusCompleted;
+      }).map((doc) {
+        final data = doc.data();
         return {
           'id': doc.id,
-          'name': doc['cycleName'] ?? 'Unknown Cycle',
-          'fieldName': doc['fieldName'] ?? '',
+          'name': data['cycleName'] ?? data['name'] ?? 'Untitled Cycle',
+          'fieldName': data['fieldName'] ?? 'Main Field',
+          'cropVariety': data['cropVariety'] ?? '',
+          'farmId': data['farmId'] ?? '',
         };
       }).toList();
 
-      // Only pre-select if widget.cycleId is not empty AND exists in cycles
+      // Determine pre-selected cycle
       String? preSelected;
-      if (widget.cycleId.isNotEmpty) {
-        final exists = cycles.any((c) => c['id'] == widget.cycleId);
-        if (exists) {
-          preSelected = widget.cycleId;
-        }
+      if (widget.cycleId.isNotEmpty &&
+          activeCycles.any((c) => c['id'] == widget.cycleId)) {
+        preSelected = widget.cycleId;
+      } else if (activeCycles.length == 1) {
+        preSelected = activeCycles.first['id'] as String;
       }
-      
-      setState(() {
-        selectedCycle = preSelected;
-        _isLoading = false;
-      });
+
+      if (mounted) {
+        setState(() {
+          _cycles = activeCycles;
+          _selectedCycleId = preSelected;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
-      debugPrint('Error loading data: $e');
-      setState(() => _isLoading = false);
+      debugPrint('Error loading cycles for assign log modal: $e');
+      if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  IconData _getCropIcon(String variety) {
+    final lower = variety.toLowerCase();
+    if (lower.contains('corn') || lower.contains('maize')) return Icons.eco_rounded;
+    if (lower.contains('rice')) return Icons.rice_bowl_rounded;
+    if (lower.contains('wheat') || lower.contains('grain')) return Icons.grain_rounded;
+    if (lower.contains('soy')) return Icons.spa_rounded;
+    return Icons.agriculture_rounded;
   }
 
   @override
   Widget build(BuildContext context) {
-    final screenHeight = MediaQuery.of(context).size.height;
-    final topPadding = MediaQuery.of(context).padding.top;
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    final maxHeight = MediaQuery.of(context).size.height * 0.85;
 
     return Container(
-      height: screenHeight * 0.95,
+      constraints: BoxConstraints(maxHeight: maxHeight),
       decoration: const BoxDecoration(
-        color: Color(0xFFF9FBF7),
+        color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
+      padding: EdgeInsets.fromLTRB(20, 12, 20, bottomPadding + 16),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Drag Handle
-          Padding(
-            padding: EdgeInsets.only(top: topPadding > 0 ? 12 : 20, bottom: 8),
+          Center(
             child: Container(
-              width: 48,
-              height: 5,
+              width: 40,
+              height: 4,
               decoration: BoxDecoration(
-                color: const Color(0xFF162B0D).withOpacity(0.15),
-                borderRadius: BorderRadius.circular(10),
+                color: const Color(0xFFE0E0E0),
+                borderRadius: BorderRadius.circular(2),
               ),
             ),
           ),
+          const SizedBox(height: 18),
 
-          // Scrollable Content Area
-          Expanded(
-            child: SingleChildScrollView(
-              physics: const BouncingScrollPhysics(),
-              padding: const EdgeInsets.symmetric(horizontal: 28.0),
-              child: _isLoading
-                  ? const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 40),
-                      child: CircularProgressIndicator(color: Color(0xFF162B0D)),
-                    )
-                  : cycles.isEmpty
-                      ? _buildEmptyState()
-                      : Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const SizedBox(height: 24),
-
-                            // ── Header ──
-                            Text(
-                              'Assign Log',
-                              style: GoogleFonts.epilogue(
-                                fontSize: 32,
-                                fontWeight: FontWeight.w700,
-                                color: const Color(0xFF162B0D),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              'Select where this record belongs',
-                              style: GoogleFonts.manrope(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w400,
-                                color: const Color(0xFF8E9A88),
-                              ),
-                            ),
-                            const SizedBox(height: 40),
-
-                            // ── Report Card ──
-                            _buildReportCard(),
-                            const SizedBox(height: 44),
-
-                            // ── Active Cropping Cycle Dropdown ──
-                            _buildDropdownLabel('ACTIVE CROPPING CYCLE'),
-                            const SizedBox(height: 12),
-                            _buildDropdown(
-                              value: selectedCycle,
-                              hint: 'Select active cycle',
-                              items: cycles
-                                  .map((c) => {'id': c['id'], 'name': c['name']})
-                                  .toList(),
-                              onChanged: (val) => setState(() => selectedCycle = val),
-                            ),
-                            const SizedBox(height: 100),
-                          ],
-                        ),
-            ),
+          // Header
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: _green.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.assignment_turned_in_rounded, color: _green, size: 22),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Assign to Cycle',
+                      style: GoogleFonts.inter(
+                        fontSize: 19,
+                        fontWeight: FontWeight.w800,
+                        color: _darkGreen,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Choose an active cropping cycle for this log',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color: _textGray,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close_rounded, color: Colors.grey),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ],
           ),
+          const SizedBox(height: 16),
+          const Divider(height: 1, color: Color(0xFFEEEEEE)),
+          const SizedBox(height: 16),
 
-          // ── Pinned Save Button at very bottom ──
-          if (!_isLoading && cycles.isNotEmpty)
-            Container(
-              width: double.infinity,
-              color: const Color(0xFFF9FBF7),
-              padding: EdgeInsets.fromLTRB(28, 16, 28, 24 + MediaQuery.of(context).padding.bottom),
-              child: _buildSaveButton(),
+          // Body Content
+          if (_isLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 40),
+              child: Center(
+                child: CircularProgressIndicator(color: _green),
+              ),
+            )
+          else if (_cycles.isEmpty)
+            _buildEmptyState()
+          else
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'ACTIVE CROPPING CYCLES (${_cycles.length})',
+                      style: GoogleFonts.inter(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.8,
+                        color: _textGray,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: _cycles.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 10),
+                      itemBuilder: (context, index) {
+                        final cycle = _cycles[index];
+                        final cycleId = cycle['id'] as String;
+                        final isSelected = _selectedCycleId == cycleId;
+                        final cycleName = cycle['name'] as String;
+                        final fieldName = cycle['fieldName'] as String;
+                        final cropVariety = cycle['cropVariety'] as String;
+
+                        return GestureDetector(
+                          onTap: () => setState(() => _selectedCycleId = cycleId),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 180),
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                            decoration: BoxDecoration(
+                              color: isSelected ? const Color(0xFFF1F8F4) : const Color(0xFFFAFAFA),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: isSelected ? _green : const Color(0xFFE8E8E8),
+                                width: isSelected ? 1.8 : 1.0,
+                              ),
+                              boxShadow: isSelected
+                                  ? [
+                                      BoxShadow(
+                                        color: _green.withValues(alpha: 0.1),
+                                        blurRadius: 8,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                    ]
+                                  : null,
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: isSelected ? _green : const Color(0xFFEFEFEF),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Icon(
+                                    _getCropIcon(cropVariety),
+                                    color: isSelected ? Colors.white : const Color(0xFF757575),
+                                    size: 20,
+                                  ),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        cycleName,
+                                        style: GoogleFonts.inter(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w700,
+                                          color: isSelected ? _darkGreen : const Color(0xFF212121),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 3),
+                                      Text(
+                                        cropVariety.isNotEmpty
+                                            ? '$fieldName • $cropVariety'
+                                            : fieldName,
+                                        style: GoogleFonts.inter(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w500,
+                                          color: isSelected
+                                              ? _green.withValues(alpha: 0.8)
+                                              : _textGray,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Icon(
+                                  isSelected
+                                      ? Icons.check_circle_rounded
+                                      : Icons.radio_button_unchecked_rounded,
+                                  color: isSelected ? _green : const Color(0xFFBDBDBD),
+                                  size: 22,
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 20),
+                  ],
+                ),
+              ),
             ),
+
+          // Pinned Action Button
+          if (!_isLoading && _cycles.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: ElevatedButton.icon(
+                onPressed: _selectedCycleId != null
+                    ? () {
+                        widget.onCycleSelected(_selectedCycleId!);
+                        Navigator.pop(context);
+                      }
+                    : null,
+                icon: const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+                label: Text(
+                  'Confirm & Save Log',
+                  style: GoogleFonts.inter(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _green,
+                  disabledBackgroundColor: const Color(0xFFCCCCCC),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  elevation: 0,
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 
   Widget _buildEmptyState() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        const SizedBox(height: 100),
-        const Icon(Icons.agriculture_outlined, size: 80, color: Color(0xFFBDBDBD)),
-        const SizedBox(height: 20),
-        Text(
-          'No Cropping Cycles Found',
-          style: GoogleFonts.manrope(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-            color: const Color(0xFF162B0D),
-          ),
-        ),
-        const SizedBox(height: 10),
-        Text(
-          'Please create a cropping cycle first',
-          style: GoogleFonts.manrope(
-            fontSize: 14,
-            color: const Color(0xFF8E9A88),
-          ),
-        ),
-        const SizedBox(height: 30),
-        ElevatedButton(
-          onPressed: () => Navigator.pop(context),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF162B0D),
-            padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(30),
-            ),
-          ),
-          child: const Text('Close'),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildReportCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFE2E8DE), width: 1),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF162B0D).withOpacity(0.05),
-            blurRadius: 20,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 24.0, horizontal: 8.0),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 52,
-            height: 52,
+            width: 64,
+            height: 64,
             decoration: BoxDecoration(
-              color: const Color(0xFFC6F097),
-              borderRadius: BorderRadius.circular(14),
+              color: const Color(0xFFE8F5E9),
+              shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.description_outlined, size: 26, color: Color(0xFF162B0D)),
+            child: const Icon(Icons.agriculture_rounded, size: 32, color: _green),
           ),
-          const SizedBox(width: 18),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFC6F097),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    'NEW DRAFT',
-                    style: GoogleFonts.manrope(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: const Color(0xFF162B0D),
-                      letterSpacing: 0.6,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Text(
-                  'Daily Activity Log',
-                  style: GoogleFonts.manrope(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w700,
-                    color: const Color(0xFF162B0D),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Recorded: Today',
-                  style: GoogleFonts.manrope(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w400,
-                    color: const Color(0xFF8E9A88),
-                  ),
-                ),
-              ],
+          const SizedBox(height: 16),
+          Text(
+            'No Active Cropping Cycles',
+            style: GoogleFonts.inter(
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
+              color: _darkGreen,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'You do not have any active cropping cycles. Please start a cycle first to record daily activities.',
+            style: GoogleFonts.inter(
+              fontSize: 13,
+              color: _textGray,
+              height: 1.4,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: OutlinedButton(
+              onPressed: () => Navigator.pop(context),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Color(0xFFCCCCCC)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+              child: Text(
+                'Close',
+                style: GoogleFonts.inter(color: const Color(0xFF424242), fontWeight: FontWeight.w600),
+              ),
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildDropdownLabel(String text) {
-    return Text(
-      text,
-      style: GoogleFonts.manrope(
-        fontSize: 12,
-        fontWeight: FontWeight.w700,
-        color: const Color(0xFF162B0D),
-        letterSpacing: 1.2,
-      ),
-    );
-  }
-
-  Widget _buildDropdown({
-    required String? value,
-    required String hint,
-    required List<Map<String, dynamic>> items,
-    required ValueChanged<String?> onChanged,
-  }) {
-    // Validate that the value exists in items to avoid the "exactly one item" error
-    final isValidValue = value != null && items.any((item) => item['id'] == value);
-    final effectiveValue = isValidValue ? value : null;
-    
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFFF2F4F0),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: effectiveValue != null
-              ? const Color(0xFF162B0D).withOpacity(0.3)
-              : const Color(0xFFE2E8DE),
-          width: 1.5,
-        ),
-      ),
-      child: DropdownButtonFormField<String>(
-        value: effectiveValue,  // Use validated value
-        hint: Text(hint,
-            style: GoogleFonts.manrope(
-                fontSize: 15,
-                fontWeight: FontWeight.w400,
-                color: const Color(0xFF8E9A88))),
-        icon: const Icon(Icons.keyboard_arrow_down_rounded,
-            color: Color(0xFF162B0D), size: 24),
-        isExpanded: true,
-        decoration: const InputDecoration(
-          border: InputBorder.none,
-          contentPadding: EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-        ),
-        dropdownColor: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        style: GoogleFonts.manrope(
-            fontSize: 15,
-            fontWeight: FontWeight.w500,
-            color: const Color(0xFF162B0D)),
-        items: items
-            .map<DropdownMenuItem<String>>((item) {
-              return DropdownMenuItem<String>(
-                value: item['id'] as String,
-                child: Text(item['name'] as String),
-              );
-            })
-            .toList(),
-        onChanged: onChanged,
-      ),
-    );
-  }
-
-  Widget _buildSaveButton() {
-    final isEnabled = selectedCycle != null && selectedCycle!.isNotEmpty;
-    
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: isEnabled
-            ? () {
-                widget.onCycleSelected(selectedCycle!);
-                Navigator.pop(context);
-              }
-            : null,
-        borderRadius: BorderRadius.circular(50),
-        child: Container(
-          width: double.infinity,
-          height: 64,
-          decoration: BoxDecoration(
-            color: isEnabled
-                ? const Color(0xFF162B0D)
-                : const Color(0xFFBDBDBD),
-            borderRadius: BorderRadius.circular(50),
-            boxShadow: isEnabled
-                ? [
-                    BoxShadow(
-                      color: const Color(0xFF162B0D).withOpacity(0.25),
-                      blurRadius: 20,
-                      offset: const Offset(0, 8),
-                    ),
-                  ]
-                : null,
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.save_outlined, color: Colors.white, size: 22),
-              const SizedBox(width: 12),
-              Text(
-                'Continue',
-                style: GoogleFonts.manrope(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                  letterSpacing: 0.3,
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

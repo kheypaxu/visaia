@@ -26,13 +26,17 @@ class _AllFarmsDataScreenState extends State<AllFarmsDataScreen> {
   bool _isExporting = false;
 
 
-  Stream<QuerySnapshot<Map<String, dynamic>>> get _farmsStream =>
-      FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.userId)
-          .collection('farms')
-          .orderBy('createdAt', descending: true)
-          .snapshots();
+  Stream<QuerySnapshot<Map<String, dynamic>>> get _farmsStream {
+    if (widget.userId.isEmpty) {
+      return const Stream.empty();
+    }
+    return FirebaseFirestore.instance
+        .collection('users')
+        .doc(widget.userId)
+        .collection('farms')
+        .orderBy('createdAt', descending: true)
+        .snapshots();
+  }
 
   String _formatK(double amount) {
     if (amount >= 1000000) {
@@ -65,10 +69,10 @@ class _AllFarmsDataScreenState extends State<AllFarmsDataScreen> {
       final farmsList = farmDocs.map((d) => d.data()).toList();
       await FarmReportPdfService.exportAndShareGeneralData(
         userId: widget.userId,
-        totalIncome: totalIncome > 0 ? totalIncome : 73600.0,
-        totalYield: totalYield > 0 ? totalYield : 1650.0,
-        activeCycles: totalActiveCycles > 0 ? totalActiveCycles : 2,
-        totalAcres: totalAcres > 0 ? totalAcres : 570.0,
+        totalIncome: totalIncome,
+        totalYield: totalYield,
+        activeCycles: totalActiveCycles,
+        totalAcres: totalAcres,
         allFarms: farmsList,
       );
     } catch (e) {
@@ -134,7 +138,8 @@ class _AllFarmsDataScreenState extends State<AllFarmsDataScreen> {
               // Precalculate total acres across all farms
               double calculatedTotalAcres = 0;
               for (final f in farms) {
-                calculatedTotalAcres += (f.data()['acres'] as num?)?.toDouble() ?? 0.0;
+                calculatedTotalAcres +=
+                    (f.data()['acres'] ?? f.data()['area'] ?? f.data()['totalAcres'] as num?)?.toDouble() ?? 0.0;
               }
 
               return SingleChildScrollView(
@@ -196,24 +201,18 @@ class _AllFarmsDataScreenState extends State<AllFarmsDataScreen> {
                     StreamBuilder<double>(
                       stream: generalService.getNetIncome(),
                       builder: (context, incomeSnap) {
-                        final totalIncome = incomeSnap.data ?? 73600.0;
-                        final displayIncome = totalIncome > 0 ? totalIncome : 73600.0;
+                        final displayIncome = incomeSnap.data ?? 0.0;
 
                         return StreamBuilder<double>(
                           stream: generalService.getTotalYield(),
                           builder: (context, yieldSnap) {
-                            final totalYield = yieldSnap.data ?? 1650.0;
-                            final displayYield = totalYield > 0 ? totalYield : 1650.0;
+                            final displayYield = yieldSnap.data ?? 0.0;
 
                             return StreamBuilder<List<CycleModel>>(
                               stream: generalService.getActiveCycles(),
                               builder: (context, cyclesSnap) {
-                                final activeCyclesCount = cyclesSnap.data?.length ?? 2;
-                                final displayActiveCycles = activeCyclesCount > 0 ? activeCyclesCount : 2;
-
-                                final displayAcres = calculatedTotalAcres > 0
-                                    ? calculatedTotalAcres
-                                    : 570.0;
+                                final displayActiveCycles = cyclesSnap.data?.length ?? 0;
+                                final displayAcres = calculatedTotalAcres;
 
                                 return Column(
                                   children: [
@@ -487,7 +486,8 @@ class _AllFarmsDataScreenState extends State<AllFarmsDataScreen> {
   }) {
     final service = MonitoringFirestoreService(userId: userId, farmId: farmId);
     final name = farmData['name'] as String? ?? 'Farm ${index + 1}';
-    final acres = (farmData['acres'] as num?)?.toDouble() ?? (index == 0 ? 450.0 : 120.0);
+    final rawAcres =
+        (farmData['acres'] ?? farmData['area'] ?? farmData['totalAcres'] as num?)?.toDouble() ?? 0.0;
 
     final isEven = index % 2 == 0;
     final iconBg = isEven ? const Color(0xFF20693B) : const Color(0xFF9DE089);
@@ -550,13 +550,20 @@ class _AllFarmsDataScreenState extends State<AllFarmsDataScreen> {
                               .where((c) => c != null && c.isNotEmpty)
                               .toSet();
 
+                          double fieldAcresSum = 0;
+                          for (final f in fields) {
+                            fieldAcresSum += f.acres;
+                          }
+                          final totalAcres = rawAcres > 0 ? rawAcres : fieldAcresSum;
+
                           String specsText;
                           if (cropsSet.isNotEmpty) {
-                            specsText = '${acres.toStringAsFixed(0)} Acres • ${cropsSet.join(", ")}';
+                            specsText =
+                                '${totalAcres > 0 ? '${totalAcres.toStringAsFixed(0)} Acres • ' : ''}${cropsSet.join(", ")}';
+                          } else if (totalAcres > 0) {
+                            specsText = '${totalAcres.toStringAsFixed(0)} Acres • No crops assigned';
                           } else {
-                            specsText = isEven
-                                ? '${acres.toStringAsFixed(0)} Acres • Wheat, Corn'
-                                : '${acres.toStringAsFixed(0)} Acres • Orchards';
+                            specsText = 'No fields or crops yet';
                           }
 
                           return Column(
@@ -608,20 +615,17 @@ class _AllFarmsDataScreenState extends State<AllFarmsDataScreen> {
                 StreamBuilder<double>(
                   stream: service.getNetIncome(),
                   builder: (context, incomeSnap) {
-                    final incomeVal = incomeSnap.data ?? (isEven ? 45000.0 : 28000.0);
-                    final displayIncome = incomeVal > 0 ? incomeVal : (isEven ? 45000.0 : 28000.0);
+                    final displayIncome = incomeSnap.data ?? 0.0;
 
                     return StreamBuilder<double>(
                       stream: service.getTotalYield(),
                       builder: (context, yieldSnap) {
-                        final yieldVal = yieldSnap.data ?? (isEven ? 1200.0 : 450.0);
-                        final displayYield = yieldVal > 0 ? yieldVal : (isEven ? 1200.0 : 450.0);
+                        final displayYield = yieldSnap.data ?? 0.0;
 
                         return StreamBuilder<List<CycleModel>>(
                           stream: service.getActiveCycles(),
                           builder: (context, cycleSnap) {
-                            final cycleCount = cycleSnap.data?.length ?? (isEven ? 1 : 2);
-                            final displayCycle = cycleCount > 0 ? cycleCount : (isEven ? 1 : 2);
+                            final displayCycle = cycleSnap.data?.length ?? 0;
 
                             return Row(
                               children: [

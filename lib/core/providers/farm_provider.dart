@@ -34,13 +34,24 @@ class FarmProvider extends ChangeNotifier {
 
     // 2. Fetch from Firestore (will resolve from cache offline or server online)
     try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .collection('farms')
-          .orderBy('createdAt', descending: true)
-          .limit(1)
-          .get();
+      QuerySnapshot<Map<String, dynamic>> snapshot;
+      try {
+        snapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('farms')
+            .orderBy('createdAt', descending: true)
+            .limit(1)
+            .get();
+      } catch (orderErr) {
+        debugPrint('FarmProvider orderBy error, fallback to simple get: $orderErr');
+        snapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('farms')
+            .limit(1)
+            .get();
+      }
 
       if (snapshot.docs.isNotEmpty) {
         _activeFarmId = snapshot.docs.first.id;
@@ -49,12 +60,9 @@ class FarmProvider extends ChangeNotifier {
           activeFarmId: _activeFarmId,
           activeFarmName: _activeFarmName,
         );
-      } else if (_activeFarmId == null) {
-        _activeFarmId = null;
-        _activeFarmName = null;
       }
     } catch (e) {
-      debugPrint('FarmProvider init error (using offline cache): $e');
+      debugPrint('FarmProvider init error: $e');
     }
 
     _isLoading = false;

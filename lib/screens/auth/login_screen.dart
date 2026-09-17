@@ -5,6 +5,7 @@ import 'package:visaia/screens/auth/forgot_password_screen.dart';
 import 'package:visaia/screens/auth/registration_screen.dart';
 import 'package:visaia/services/auth_service.dart';
 import 'package:visaia/screens/root_screen.dart';
+import 'package:visaia/services/auth_cache_service.dart';
 import 'package:visaia/services/connectivity_service.dart';
 
 class LoginPage extends StatefulWidget {
@@ -29,6 +30,46 @@ class _LoginPageState extends State<LoginPage> {
   final ConnectivityService _connectivityService = ConnectivityService();
 
   bool _isLoading = false;
+  bool _didCheckArgs = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final cachedEmail = AuthCacheService().cachedEmail;
+    if (cachedEmail != null && cachedEmail.isNotEmpty) {
+      _emailController.text = cachedEmail;
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_didCheckArgs) {
+      _didCheckArgs = true;
+      final args = ModalRoute.of(context)?.settings.arguments;
+      if (args is Map<String, dynamic>) {
+        if (args['email'] != null && (args['email'] as String).isNotEmpty) {
+          _emailController.text = args['email'] as String;
+        }
+        if (args['autoFillMessage'] != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(args['autoFillMessage'] as String),
+                  backgroundColor: const Color(0xFF1A5C30),
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              );
+            }
+          });
+        }
+      }
+    }
+  }
 
   @override
   void dispose() {

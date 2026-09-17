@@ -35,10 +35,15 @@ void showAddLogModal(BuildContext context) {
 }
 
 class _AddLogModal extends StatelessWidget {
-  final user = FirebaseAuth.instance.currentUser;
+  String get _effectiveUid =>
+      FirebaseAuth.instance.currentUser?.uid ??
+      AuthCacheService().cachedUid ??
+      '';
 
   @override
   Widget build(BuildContext context) {
+    final uid = _effectiveUid;
+
     return Container(
       decoration: const BoxDecoration(
         color: Colors.white,
@@ -87,7 +92,7 @@ class _AddLogModal extends StatelessWidget {
                 context,
                 MaterialPageRoute(
                   builder: (context) => DailyLogFormScreen(
-                    userId: user!.uid,
+                    userId: uid,
                     cycleId: '',
                     shouldAssignCycle: true,
                   ),
@@ -101,11 +106,12 @@ class _AddLogModal extends StatelessWidget {
             title: 'Field Scouting',
             description: 'Weekly crop inspection',
             onTap: () {
+              Navigator.pop(context);
               Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (context) => FieldScoutingFormScreen(
-                    userId: user!.uid,
+                    userId: uid,
                     cycleId: '',
                   ),
                 ),

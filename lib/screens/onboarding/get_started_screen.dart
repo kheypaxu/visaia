@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:visaia/services/auth_cache_service.dart';
+import 'package:visaia/services/connectivity_service.dart';
 
 class GetStartedPage extends StatefulWidget {
   const GetStartedPage({super.key});
@@ -14,6 +15,7 @@ class GetStartedPage extends StatefulWidget {
 
 class _GetStartedPageState extends State<GetStartedPage> {
   final AuthCacheService _cacheService = AuthCacheService();
+  final ConnectivityService _connectivityService = ConnectivityService();
   String? _savedName;
   bool _hasSavedAccount = false;
   bool _isLoading = false;
@@ -68,9 +70,28 @@ class _GetStartedPageState extends State<GetStartedPage> {
     setState(() => _isLoading = true);
 
     try {
-      await _cacheService.continueSavedSession();
+      final currentUser = FirebaseAuth.instance.currentUser;
+      final isOnline = _connectivityService.isOnline;
+
+      // If user is already authenticated in FirebaseAuth (or offline with cached session), go straight to /root
+      if (currentUser != null || (!isOnline && _cacheService.hasSavedAccount)) {
+        await _cacheService.continueSavedSession();
+        if (mounted) {
+          Navigator.pushReplacementNamed(context, '/root');
+        }
+        return;
+      }
+
+      // If online but FirebaseAuth.currentUser is null, navigate to login to establish active auth token
       if (mounted) {
-        Navigator.pushReplacementNamed(context, '/root');
+        Navigator.pushNamed(
+          context,
+          '/login',
+          arguments: {
+            'email': _cacheService.cachedEmail,
+            'autoFillMessage': 'Welcome back! Please enter your password to sign in.',
+          },
+        );
       }
     } catch (_) {
       if (mounted) {

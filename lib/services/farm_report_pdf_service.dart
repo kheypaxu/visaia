@@ -66,7 +66,7 @@ class FarmReportPdfService {
     final db = FirebaseFirestore.instance;
 
     // 1. Fetch User Info
-    String ownerName = 'Alvien Altes';
+    String ownerName = FirebaseAuth.instance.currentUser?.displayName ?? 'Farm Owner';
     try {
       final userDoc = await db.collection('users').doc(userId).get();
       if (userDoc.exists) {
@@ -74,22 +74,21 @@ class FarmReportPdfService {
         ownerName = userData?['name'] ??
             userData?['fullName'] ??
             userData?['displayName'] ??
-            FirebaseAuth.instance.currentUser?.displayName ??
-            'Farm Owner';
+            ownerName;
       }
     } catch (_) {}
 
-    final farmName = farmData['name'] as String? ?? 'Farm 1';
+    final farmName = farmData['name'] as String? ?? 'Farm';
     final location = farmData['address'] as String? ??
         farmData['location'] as String? ??
-        'Tuy-an, Cabatuan Iloilo';
+        'Location not specified';
     final acres = (farmData['acres'] as num?)?.toDouble() ?? 0.0;
 
     // 2. Fetch Active Cycle
-    String cycleName = 'New Cycle | Corn - Glutinous';
-    String weekText = 'Week 7';
-    String growthStage = 'Late Vegetative';
-    double growthProgress = 0.85;
+    String cycleName = 'No active cycle';
+    String weekText = 'N/A';
+    String growthStage = 'None';
+    double growthProgress = 0.0;
 
     try {
       final cycleSnap = await db
@@ -168,20 +167,7 @@ class FarmReportPdfService {
           resolvedReports++;
         }
       }
-
-      // If empty for demo, provide reasonable baseline
-      if (totalReports == 0) {
-        totalReports = 5;
-        pendingReports = 4;
-        validatedReports = 1;
-        resolvedReports = 3;
-      }
-    } catch (_) {
-      totalReports = 5;
-      pendingReports = 4;
-      validatedReports = 1;
-      resolvedReports = 3;
-    }
+    } catch (_) {}
 
     // 4. Fetch Fields Count
     int totalFields = 0;

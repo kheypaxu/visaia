@@ -188,31 +188,37 @@ class MonitoringFirestoreService {
 
   // ----- Fields (from user document) -----
   Future<List<FieldModel>> getFields() async {
+    if (_userId.isEmpty) return [];
     Query<Map<String, dynamic>> ref = _db
         .collection('users')
         .doc(_userId)
         .collection('fields');
 
-    if (_farmId != null) {
+    if (_farmId != null && _farmId.isNotEmpty) {
       ref = ref.where('farmId', isEqualTo: _farmId);
     }
 
-    final snapshot = await ref.get();
-
-    return snapshot.docs
-        .map((doc) => FieldModel.fromMap(doc.id, doc.data()))
-        .toList();
+    try {
+      final snapshot = await ref.get();
+      return snapshot.docs
+          .map((doc) => FieldModel.fromMap(doc.id, doc.data()))
+          .toList();
+    } catch (e) {
+      debugPrint('getFields error: $e');
+      return [];
+    }
   }
 
   // ----- Active Cycles (isCompleted == false) -----
   Stream<List<CycleModel>> getActiveCycles() {
+    if (_userId.isEmpty) return Stream.value([]);
     Query<Map<String, dynamic>> ref = _db
         .collection('users')
         .doc(_userId)
         .collection('cycles')
         .where('isCompleted', isEqualTo: false);
 
-    if (_farmId != null) {
+    if (_farmId != null && _farmId.isNotEmpty) {
       ref = ref.where('farmId', isEqualTo: _farmId);
     }
 
@@ -220,11 +226,16 @@ class MonitoringFirestoreService {
         .snapshots()
         .map((snap) => snap.docs
             .map((doc) => CycleModel.fromMap(doc.id, doc.data()))
-            .toList());
+            .toList())
+        .handleError((e) {
+      debugPrint('getActiveCycles error: $e');
+      return <CycleModel>[];
+    });
   }
 
   // ----- Active Pests (isActive == true) -----
   Stream<List<PestModel>> getActivePests() {
+    if (_userId.isEmpty) return Stream.value([]);
     return _db
         .collection('users')
         .doc(_userId)
@@ -237,27 +248,37 @@ class MonitoringFirestoreService {
           .map((doc) => PestModel.fromFirestore(doc))
           .toList();
 
-      if (_farmId != null && pests.isNotEmpty) {
+      if (_farmId != null && _farmId.isNotEmpty && pests.isNotEmpty) {
         final fieldIds = await _getFieldIdsForFarm();
         pests = pests.where((p) => fieldIds.contains(p.fieldId)).toList();
       }
 
       return pests;
+    }).handleError((e) {
+      debugPrint('getActivePests error: $e');
+      return <PestModel>[];
     });
   }
 
   Future<Set<String>> _getFieldIdsForFarm() async {
-    final snapshot = await _db
-        .collection('users')
-        .doc(_userId)
-        .collection('fields')
-        .where('farmId', isEqualTo: _farmId)
-        .get();
-    return snapshot.docs.map((doc) => doc.id).toSet();
+    if (_userId.isEmpty || _farmId == null || _farmId.isEmpty) return {};
+    try {
+      final snapshot = await _db
+          .collection('users')
+          .doc(_userId)
+          .collection('fields')
+          .where('farmId', isEqualTo: _farmId)
+          .get();
+      return snapshot.docs.map((doc) => doc.id).toSet();
+    } catch (e) {
+      debugPrint('_getFieldIdsForFarm error: $e');
+      return {};
+    }
   }
 
   // ----- Recent Activity Logs (last 5) -----
   Stream<List<ActivityLogModel>> getRecentActivityLogs({int limit = 5}) {
+    if (_userId.isEmpty) return Stream.value([]);
     return _db
         .collection('users')
         .doc(_userId)
@@ -270,24 +291,28 @@ class MonitoringFirestoreService {
           .map((doc) => ActivityLogModel.fromFirestore(doc))
           .toList();
 
-      if (_farmId != null && logs.isNotEmpty) {
+      if (_farmId != null && _farmId.isNotEmpty && logs.isNotEmpty) {
         final fieldIds = await _getFieldIdsForFarm();
         logs = logs.where((l) => fieldIds.contains(l.fieldId)).toList();
       }
 
       return logs.take(limit).toList();
+    }).handleError((e) {
+      debugPrint('getRecentActivityLogs error: $e');
+      return <ActivityLogModel>[];
     });
   }
 
   // ----- Total Yield (sum of income from completed cycles) -----
   Stream<double> getTotalYield() {
+    if (_userId.isEmpty) return Stream.value(0.0);
     Query<Map<String, dynamic>> ref = _db
         .collection('users')
         .doc(_userId)
         .collection('cycles')
         .where('isCompleted', isEqualTo: true);
 
-    if (_farmId != null) {
+    if (_farmId != null && _farmId.isNotEmpty) {
       ref = ref.where('farmId', isEqualTo: _farmId);
     }
 
@@ -297,17 +322,22 @@ class MonitoringFirestoreService {
               final data = doc.data();
               final yield = (data['totalYield'] as num?)?.toDouble() ?? 0.0;
               return sum + yield;
-            }));
+            }))
+        .handleError((e) {
+      debugPrint('getTotalYield error: $e');
+      return 0.0;
+    });
   }
 
   Stream<double> getNetIncome() {
+    if (_userId.isEmpty) return Stream.value(0.0);
     Query<Map<String, dynamic>> ref = _db
         .collection('users')
         .doc(_userId)
         .collection('cycles')
         .where('isCompleted', isEqualTo: true);
 
-    if (_farmId != null) {
+    if (_farmId != null && _farmId.isNotEmpty) {
       ref = ref.where('farmId', isEqualTo: _farmId);
     }
 
@@ -318,44 +348,53 @@ class MonitoringFirestoreService {
               final income =
                   (data['netIncome'] as num?)?.toDouble() ?? 0.0;
               return sum + income;
-            }));
+            }))
+        .handleError((e) {
+      debugPrint('getNetIncome error: $e');
+      return 0.0;
+    });
   }
 
- Stream<List<PestModel>> getPestsFromScouting() async* {
-  await for (final cycles in getActiveCycles()) {
-    List<PestModel> allPests = [];
-    for (final cycle in cycles) {
-      try {
-        final weekDoc = await _getLatestWeek(cycle.id);
-        if (weekDoc != null && weekDoc.exists) {
-          final pests = _extractPestsFromWeek(weekDoc, cycle.fieldName, cycle.id);
-          allPests.addAll(pests);
-        }
-      } catch (e) {
-        print('Error processing cycle ${cycle.id}: $e');
-      }
+  Stream<List<PestModel>> getPestsFromScouting() async* {
+    if (_userId.isEmpty) {
+      yield [];
+      return;
     }
-    yield allPests;
+    await for (final cycles in getActiveCycles()) {
+      List<PestModel> allPests = [];
+      for (final cycle in cycles) {
+        try {
+          final weekDoc = await _getLatestWeek(cycle.id);
+          if (weekDoc != null && weekDoc.exists) {
+            final pests = _extractPestsFromWeek(weekDoc, cycle.fieldName, cycle.id);
+            allPests.addAll(pests);
+          }
+        } catch (e) {
+          debugPrint('Error processing cycle ${cycle.id}: $e');
+        }
+      }
+      yield allPests;
+    }
   }
-}
 
-Future<DocumentSnapshot?> _getLatestWeek(String cycleId) async {
-  try {
-    final query = await _db
-        .collection('users')
-        .doc(_userId)
-        .collection('cycles')
-        .doc(cycleId)
-        .collection('weeks')
-        .orderBy('timestamp', descending: true)
-        .limit(1)
-        .get();
-    return query.docs.isNotEmpty ? query.docs.first : null;
-  } catch (e) {
-    print('Error getting latest week for cycle $cycleId: $e');
-    return null;
+  Future<DocumentSnapshot?> _getLatestWeek(String cycleId) async {
+    if (_userId.isEmpty) return null;
+    try {
+      final query = await _db
+          .collection('users')
+          .doc(_userId)
+          .collection('cycles')
+          .doc(cycleId)
+          .collection('weeks')
+          .orderBy('timestamp', descending: true)
+          .limit(1)
+          .get();
+      return query.docs.isNotEmpty ? query.docs.first : null;
+    } catch (e) {
+      debugPrint('Error getting latest week for cycle $cycleId: $e');
+      return null;
+    }
   }
-}
 
 List<PestModel> _extractPestsFromWeek(
     DocumentSnapshot weekDoc, String fieldName, String cycleId) {

@@ -78,21 +78,30 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
         cycle.cropVariety.toLowerCase().contains(query);
   }
 
-  // Fallback stream without ordering (when index is missing)
+  // Fallback stream without ordering (when index or orderBy fails)
   Widget _buildCycleListWithoutOrdering(String? farmId) {
+    if (_effectiveUid.isEmpty) {
+      return _buildEmptyState('Please sign in to view cycles');
+    }
+
+    Query<Map<String, dynamic>> query = FirebaseFirestore.instance
+        .collection('users')
+        .doc(_effectiveUid)
+        .collection('cycles');
+
+    if (farmId != null && farmId.isNotEmpty) {
+      query = query.where('farmId', isEqualTo: farmId);
+    }
+
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('users')
-          .doc(_effectiveUid)
-          .collection('cycles')
-          .where('farmId', isEqualTo: farmId)
-          .snapshots(),
+      stream: query.snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return _buildLoadingState();
         }
         if (snapshot.hasError) {
-          return _buildEmptyState('Error loading cycles');
+          debugPrint('CroppingCycles fallback error: ${snapshot.error}');
+          return _buildEmptyState('No data available');
         }
 
         final allCycles = snapshot.data?.docs
@@ -188,24 +197,25 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
       return _buildEmptyState('Please sign in to view cycles');
     }
 
+    Query<Map<String, dynamic>> query = FirebaseFirestore.instance
+        .collection('users')
+        .doc(_effectiveUid)
+        .collection('cycles');
+
+    if (farmId != null && farmId.isNotEmpty) {
+      query = query.where('farmId', isEqualTo: farmId);
+    }
+
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('users')
-          .doc(_effectiveUid)
-          .collection('cycles')
-          .where('farmId', isEqualTo: farmId)
-          .orderBy('createdAt', descending: true)
-          .snapshots(),
+      stream: query.orderBy('createdAt', descending: true).snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return _buildLoadingState();
         }
 
         if (snapshot.hasError) {
-          if (snapshot.error.toString().contains('index')) {
-            return _buildCycleListWithoutOrdering(farmId);
-          }
-          return _buildEmptyState('Error loading cycles');
+          debugPrint('CroppingCycles ordered stream error: ${snapshot.error}. Trying unordered fallback.');
+          return _buildCycleListWithoutOrdering(farmId);
         }
 
         final allCycles = snapshot.data?.docs
