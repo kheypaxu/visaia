@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:visaia/services/firestore_safe_ext.dart';
 
 class HarvestRecordingScreen extends StatefulWidget {
   final String cycleId;
@@ -62,22 +63,12 @@ class _HarvestRecordingScreenState extends State<HarvestRecordingScreen> {
 
   Future<void> _loadCycleData() async {
     try {
-      DocumentSnapshot<Map<String, dynamic>> cycleDoc;
-      try {
-        cycleDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(widget.userId)
-            .collection('cycles')
-            .doc(widget.cycleId)
-            .get();
-      } catch (_) {
-        cycleDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(widget.userId)
-            .collection('cycles')
-            .doc(widget.cycleId)
-            .get(const GetOptions(source: Source.cache));
-      }
+      final cycleDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('cycles')
+          .doc(widget.cycleId)
+          .safeGet();
       
       if (cycleDoc.exists) {
         final data = cycleDoc.data();
@@ -90,14 +81,18 @@ class _HarvestRecordingScreenState extends State<HarvestRecordingScreen> {
           return;
         }
         
-        setState(() {
-          _cycleData = data;
-          _isLoading = false;
-        });
+        if (mounted) {
+          setState(() {
+            _cycleData = data;
+            _isLoading = false;
+          });
+        }
+      } else {
+        if (mounted) setState(() => _isLoading = false);
       }
     } catch (e) {
       debugPrint('Error loading cycle: $e');
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 

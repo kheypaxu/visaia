@@ -4,6 +4,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import 'dart:math' as math;
+import 'package:visaia/services/firestore_safe_ext.dart';
 
 /// Trap Setup Screen - Complete flow with map placement
 /// 
@@ -62,22 +63,12 @@ class _TrapSetupScreenState extends State<TrapSetupScreen> {
     setState(() => _isLoadingField = true);
 
     try {
-      DocumentSnapshot<Map<String, dynamic>> cycleDoc;
-      try {
-        cycleDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(widget.userId)
-            .collection('cycles')
-            .doc(widget.cycleId)
-            .get();
-      } catch (_) {
-        cycleDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(widget.userId)
-            .collection('cycles')
-            .doc(widget.cycleId)
-            .get(const GetOptions(source: Source.cache));
-      }
+      final cycleDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('cycles')
+          .doc(widget.cycleId)
+          .safeGet();
 
       if (!cycleDoc.exists) {
         setState(() {
@@ -98,22 +89,12 @@ class _TrapSetupScreenState extends State<TrapSetupScreen> {
         return;
       }
 
-      DocumentSnapshot<Map<String, dynamic>> fieldDoc;
-      try {
-        fieldDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(widget.userId)
-            .collection('fields')
-            .doc(fieldId)
-            .get();
-      } catch (_) {
-        fieldDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(widget.userId)
-            .collection('fields')
-            .doc(fieldId)
-            .get(const GetOptions(source: Source.cache));
-      }
+      final fieldDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('fields')
+          .doc(fieldId)
+          .safeGet();
 
       if (!fieldDoc.exists) {
         setState(() {
@@ -501,22 +482,12 @@ Future<void> _addToDailyLog() async {
     final now = DateTime.now();
     
     // Calculate the day number from planting date
-    DocumentSnapshot<Map<String, dynamic>> cycleDoc;
-    try {
-      cycleDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.userId)
-          .collection('cycles')
-          .doc(widget.cycleId)
-          .get();
-    } catch (_) {
-      cycleDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.userId)
-          .collection('cycles')
-          .doc(widget.cycleId)
-          .get(const GetOptions(source: Source.cache));
-    }
+    final cycleDoc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(widget.userId)
+        .collection('cycles')
+        .doc(widget.cycleId)
+        .safeGet();
     
     if (!cycleDoc.exists) return;
     

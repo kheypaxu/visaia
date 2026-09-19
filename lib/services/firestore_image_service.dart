@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:visaia/services/firestore_safe_ext.dart';
 
 /// Stores each compressed image in a separate Firestore document. Other
 /// documents retain only a small reference, avoiding Firestore's 1 MiB limit.
@@ -49,14 +50,7 @@ class FirestoreImageService {
     }
 
     final path = reference.substring(referencePrefix.length);
-    DocumentSnapshot<Map<String, dynamic>> snapshot;
-    try {
-      snapshot = await FirebaseFirestore.instance.doc(path).get();
-    } catch (_) {
-      snapshot = await FirebaseFirestore.instance
-          .doc(path)
-          .get(const GetOptions(source: Source.cache));
-    }
+    final snapshot = await FirebaseFirestore.instance.doc(path).safeGet();
     final data = snapshot.data()?['data'];
     if (data is! String || data.isEmpty) {
       throw StateError('Image no longer exists');

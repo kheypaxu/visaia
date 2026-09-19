@@ -106,7 +106,7 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
 
       compressedBytes ??= await imageFile.readAsBytes();
 
-      return FirestoreImageService.upload(
+      return await FirestoreImageService.upload(
         bytes: compressedBytes,
         userId: widget.userId,
         cycleId: widget.cycleId,
@@ -128,69 +128,76 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
   }
 
   // ==================== PEST VERIFICATION METHODS ====================
-  Future<void> _capturePestImage(String pestType) async {
-    final XFile? image = await _picker.pickImage(
-      source: ImageSource.camera,
-      imageQuality: 75,
-    );
-    
-    if (image != null && mounted) {
-      setState(() => _isProcessing[pestType] = true);
-      
-      final downloadUrl = await _compressAndUploadImage(File(image.path), pestType);
-      
+  bool get _isUploading =>
+      _isDamageProcessing || _isProcessing.values.any((value) => value);
+
+  Future<void> _pickAndUploadImage(ImageSource source, String category) async {
+    if (_isUploading) return;
+    final isDamage = category == 'damage';
+    setState(() {
+      if (isDamage) {
+        _isDamageProcessing = true;
+      } else {
+        _isProcessing[category] = true;
+      }
+    });
+
+    try {
+      final image = await _picker.pickImage(
+        source: source,
+        maxWidth: 1280,
+        maxHeight: 1280,
+        imageQuality: 75,
+      );
+      if (image == null || !mounted) return;
+
+      final reference = await _compressAndUploadImage(File(image.path), category);
+      if (reference == null || !mounted) return;
+
+      setState(() {
+        if (isDamage) {
+          _damagePhotos.add(reference);
+        } else {
+          _capturedImages[category]!.add(reference);
+        }
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${isDamage ? 'Damage photo' : '${_getPestLabel(category)} image'} uploaded',
+          ),
+          backgroundColor: _accentGreen,
+          duration: const Duration(seconds: 1),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Error selecting verification image: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not select the photo. Please try again.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
       if (mounted) {
         setState(() {
-          if (downloadUrl != null) {
-            _capturedImages[pestType]!.add(downloadUrl);
+          if (isDamage) {
+            _isDamageProcessing = false;
+          } else {
+            _isProcessing[category] = false;
           }
-          _isProcessing[pestType] = false;
         });
-        
-        if (downloadUrl != null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('${_getPestLabel(pestType)} image captured and uploaded'),
-              backgroundColor: _accentGreen,
-              duration: const Duration(seconds: 1),
-            ),
-          );
-        }
       }
     }
   }
 
-  Future<void> _pickPestImageFromGallery(String pestType) async {
-    final XFile? image = await _picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 75,
-    );
-    
-    if (image != null && mounted) {
-      setState(() => _isProcessing[pestType] = true);
-      
-      final downloadUrl = await _compressAndUploadImage(File(image.path), pestType);
-      
-      if (mounted) {
-        setState(() {
-          if (downloadUrl != null) {
-            _capturedImages[pestType]!.add(downloadUrl);
-          }
-          _isProcessing[pestType] = false;
-        });
-        
-        if (downloadUrl != null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('${_getPestLabel(pestType)} image uploaded from gallery'),
-              backgroundColor: _accentGreen,
-              duration: const Duration(seconds: 1),
-            ),
-          );
-        }
-      }
-    }
-  }
+  Future<void> _capturePestImage(String pestType) =>
+      _pickAndUploadImage(ImageSource.camera, pestType);
+
+  Future<void> _pickPestImageFromGallery(String pestType) =>
+      _pickAndUploadImage(ImageSource.gallery, pestType);
 
   void _removePestImage(String pestType, int index) {
     final reference = _capturedImages[pestType]![index];
@@ -208,69 +215,11 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
   }
 
   // ==================== DAMAGE VERIFICATION METHODS ====================
-  Future<void> _captureDamagePhoto() async {
-    final XFile? image = await _picker.pickImage(
-      source: ImageSource.camera,
-      imageQuality: 75,
-    );
-    
-    if (image != null && mounted) {
-      setState(() => _isDamageProcessing = true);
-      
-      final downloadUrl = await _compressAndUploadImage(File(image.path), 'damage');
-      
-      if (mounted) {
-        setState(() {
-          if (downloadUrl != null) {
-            _damagePhotos.add(downloadUrl);
-          }
-          _isDamageProcessing = false;
-        });
-        
-        if (downloadUrl != null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Damage photo captured and uploaded'),
-              backgroundColor: _accentGreen,
-              duration: Duration(seconds: 1),
-            ),
-          );
-        }
-      }
-    }
-  }
+  Future<void> _captureDamagePhoto() =>
+      _pickAndUploadImage(ImageSource.camera, 'damage');
 
-  Future<void> _pickDamagePhotoFromGallery() async {
-    final XFile? image = await _picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 75,
-    );
-    
-    if (image != null && mounted) {
-      setState(() => _isDamageProcessing = true);
-      
-      final downloadUrl = await _compressAndUploadImage(File(image.path), 'damage');
-      
-      if (mounted) {
-        setState(() {
-          if (downloadUrl != null) {
-            _damagePhotos.add(downloadUrl);
-          }
-          _isDamageProcessing = false;
-        });
-        
-        if (downloadUrl != null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Damage photo uploaded from gallery'),
-              backgroundColor: _accentGreen,
-              duration: Duration(seconds: 1),
-            ),
-          );
-        }
-      }
-    }
-  }
+  Future<void> _pickDamagePhotoFromGallery() =>
+      _pickAndUploadImage(ImageSource.gallery, 'damage');
 
   void _removeDamagePhoto(int index) {
     final reference = _damagePhotos[index];
@@ -284,6 +233,7 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
 
   // ==================== SAVE ====================
   void _saveAndComplete() {
+    if (_isUploading) return;
     final incompletePests = <String>[];
     
     for (var pest in _pestTypes) {
@@ -410,7 +360,7 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
     final damageVerified = damageRequired ? _damagePhotos.isNotEmpty : true;
 
     final totalRequired = (damageRequired ? 1 : 0) + totalPestRequired;
-    final totalVerified = (damageVerified ? 1 : 0) + totalPestVerified;
+    final totalVerified = (damageRequired && damageVerified ? 1 : 0) + totalPestVerified;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -631,7 +581,7 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: isProcessing ? null : () => _capturePestImage(key),
+                      onPressed: _isUploading ? null : () => _capturePestImage(key),
                       icon: const Icon(Icons.camera_alt, size: 18),
                       label: const Text('Capture'),
                       style: OutlinedButton.styleFrom(
@@ -646,7 +596,7 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: isProcessing ? null : () => _pickPestImageFromGallery(key),
+                      onPressed: _isUploading ? null : () => _pickPestImageFromGallery(key),
                       icon: const Icon(Icons.photo_library, size: 18),
                       label: const Text('Gallery'),
                       style: OutlinedButton.styleFrom(
@@ -817,7 +767,7 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: isProcessing ? null : _captureDamagePhoto,
+                  onPressed: _isUploading ? null : _captureDamagePhoto,
                   icon: const Icon(Icons.camera_alt, size: 18),
                   label: const Text('Capture'),
                   style: OutlinedButton.styleFrom(
@@ -832,7 +782,7 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
               const SizedBox(width: 12),
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: isProcessing ? null : _pickDamagePhotoFromGallery,
+                  onPressed: _isUploading ? null : _pickDamagePhotoFromGallery,
                   icon: const Icon(Icons.photo_library, size: 18),
                   label: const Text('Gallery'),
                   style: OutlinedButton.styleFrom(
@@ -878,7 +828,7 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
       width: double.infinity,
       height: 52,
       child: ElevatedButton(
-        onPressed: allComplete ? _saveAndComplete : null,
+        onPressed: allComplete && !_isUploading ? _saveAndComplete : null,
         style: ElevatedButton.styleFrom(
           backgroundColor: allComplete ? _accentGreen : Colors.grey.shade300,
           shape: RoundedRectangleBorder(

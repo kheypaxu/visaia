@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:visaia/services/firestore_safe_ext.dart';
 
 class AssignPestScreen extends StatefulWidget {
   final String userId;
@@ -129,20 +130,11 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
   Future<void> _fetchCycles() async {
     try {
       // Get all cycles (with offline cache fallback)
-      QuerySnapshot<Map<String, dynamic>> snapshot;
-      try {
-        snapshot = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(widget.userId)
-            .collection('cycles')
-            .get();
-      } catch (_) {
-        snapshot = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(widget.userId)
-            .collection('cycles')
-            .get(const GetOptions(source: Source.cache));
-      }
+      final snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('cycles')
+          .safeGet();
 
       print('✓ Fetched ${snapshot.docs.length} cycles for userId: ${widget.userId}');
 
@@ -200,22 +192,12 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
     print('  Stage: ${widget.detectedStage}');
 
     try {
-      DocumentSnapshot<Map<String, dynamic>> cycleDoc;
-      try {
-        cycleDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(widget.userId)
-            .collection('cycles')
-            .doc(_selectedCycleId)
-            .get();
-      } catch (_) {
-        cycleDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(widget.userId)
-            .collection('cycles')
-            .doc(_selectedCycleId)
-            .get(const GetOptions(source: Source.cache));
-      }
+      final cycleDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('cycles')
+          .doc(_selectedCycleId)
+          .safeGet();
 
       final plantingDate = (cycleDoc.data()?['plantingDate'] as Timestamp?)?.toDate();
       if (plantingDate == null) throw Exception('Invalid cycle planting date');
@@ -249,12 +231,7 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
           .collection('weeks')
           .doc(weekId);
 
-      DocumentSnapshot<Map<String, dynamic>> weekSnap;
-      try {
-        weekSnap = await weekRef.get();
-      } catch (_) {
-        weekSnap = await weekRef.get(const GetOptions(source: Source.cache));
-      }
+      final weekSnap = await weekRef.safeGet();
 
       List<Map<String, dynamic>> stations;
         if (weekSnap.exists && weekSnap.data()?['stations'] != null) {

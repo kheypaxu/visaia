@@ -4,6 +4,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:visaia/services/auth_cache_service.dart';
 
+import 'package:visaia/services/firestore_safe_ext.dart';
+import 'package:visaia/services/connectivity_service.dart';
+
 void showAssignLogSheet(
   BuildContext context, {
   required String userId,
@@ -63,25 +66,16 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
   Future<void> _loadCycles() async {
     final uid = _effectiveUid;
     if (uid.isEmpty) {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
       return;
     }
 
     try {
-      QuerySnapshot<Map<String, dynamic>> snapshot;
-      try {
-        snapshot = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(uid)
-            .collection('cycles')
-            .get();
-      } catch (_) {
-        snapshot = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(uid)
-            .collection('cycles')
-            .get(const GetOptions(source: Source.cache));
-      }
+      final snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('cycles')
+          .safeGet();
 
       // Filter active (non-completed) cycles safely
       final activeCycles = snapshot.docs.where((doc) {

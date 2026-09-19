@@ -9,6 +9,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:provider/provider.dart';
 import 'package:visaia/core/providers/farm_provider.dart';
 import 'package:visaia/services/auth_cache_service.dart';
+import 'package:visaia/services/firestore_safe_ext.dart';
 
 // ─── Trap Condition Model ─────────────────────────────────────────────────────
 
@@ -130,24 +131,13 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
       }
 
       // Fetch cycles for this user that belong to the active farm
-      QuerySnapshot<Map<String, dynamic>> cyclesSnapshot;
-      try {
-        cyclesSnapshot = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(uid)
-            .collection('cycles')
-            .where('farmId', isEqualTo: activeFarmId)
-            .where('isCompleted', isEqualTo: false)
-            .get();
-      } catch (_) {
-        cyclesSnapshot = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(uid)
-            .collection('cycles')
-            .where('farmId', isEqualTo: activeFarmId)
-            .where('isCompleted', isEqualTo: false)
-            .get(const GetOptions(source: Source.cache));
-      }
+      final cyclesSnapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('cycles')
+          .where('farmId', isEqualTo: activeFarmId)
+          .where('isCompleted', isEqualTo: false)
+          .safeGet();
 
       final cycles = <Map<String, dynamic>>[];
       
@@ -365,21 +355,16 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
           .add(inspectionData);
 
       // Also add to daily log
-      DocumentSnapshot<Map<String, dynamic>> cycleDoc;
+      DocumentSnapshot<Map<String, dynamic>>? cycleDoc;
       try {
         cycleDoc = await FirebaseFirestore.instance
             .collection('users')
             .doc(uid)
             .collection('cycles')
             .doc(_selectedCycleId)
-            .get();
-      } catch (_) {
-        cycleDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(uid)
-            .collection('cycles')
-            .doc(_selectedCycleId)
-            .get(const GetOptions(source: Source.cache));
+            .safeGet();
+      } catch (e) {
+        debugPrint('Error getting cycleDoc for trap inspection (offline): $e');
       }
       
       final plantingDate = (cycleDoc.data()?['plantingDate'] as Timestamp?)?.toDate();

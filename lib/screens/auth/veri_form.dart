@@ -1,25 +1,32 @@
+import 'dart:ui';
+import 'dart:convert';
+import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:visaia/screens/auth/login_screen.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'dart:convert';
-import 'dart:developer' as developer;
+import 'package:visaia/screens/auth/login_screen.dart';
 
 class VerificationFormScreen extends StatefulWidget {
-  const VerificationFormScreen({Key? key}) : super(key: key);
+  const VerificationFormScreen({super.key});
 
   @override
-  _VerificationFormScreenState createState() => _VerificationFormScreenState();
+  State<VerificationFormScreen> createState() => _VerificationFormScreenState();
 }
 
 class _VerificationFormScreenState extends State<VerificationFormScreen> {
   final _formKey = GlobalKey<FormState>();
 
-  final _fullNameController = TextEditingController();
+  // Name controllers
+  final _firstNameController = TextEditingController();
   final _middleNameController = TextEditingController();
+  final _lastNameController = TextEditingController();
+  String? _selectedExtension = 'None';
+  final List<String> _extensionOptions = ['None', 'Jr.', 'Sr.', 'II', 'III', 'IV', 'V'];
+
+  // Other form controllers
   final _rsbsaIdController = TextEditingController();
   final _farmSizeController = TextEditingController();
 
@@ -29,12 +36,12 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
 
   String? _base64Image;
   String _farmerIdFileName = 'No file selected';
-  
+
   bool _isSubmitting = false;
-  
+
   // Track if user has RSBSA ID
   bool _hasRsbsaId = true; // Default to true
-  
+
   // Track if user wants to skip farmer ID (only applicable for RSBSA holders)
   bool _skipFarmerId = false;
 
@@ -44,9 +51,14 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (FirebaseAuth.instance.currentUser == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Unauthenticated access blocked. Redirecting to login.'),
+          SnackBar(
+            content: Text(
+              'Unauthenticated access blocked. Redirecting to login.',
+              style: GoogleFonts.epilogue(),
+            ),
             backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
         );
         Navigator.pushReplacement(
@@ -59,8 +71,9 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
 
   @override
   void dispose() {
-    _fullNameController.dispose();
+    _firstNameController.dispose();
     _middleNameController.dispose();
+    _lastNameController.dispose();
     _rsbsaIdController.dispose();
     _farmSizeController.dispose();
     super.dispose();
@@ -69,9 +82,26 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
   Future<void> _selectBirthdate(BuildContext context) async {
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: _selectedBirthdate ?? DateTime.now().subtract(const Duration(days: 365 * 18)),
+      initialDate: _selectedBirthdate ??
+          DateTime.now().subtract(const Duration(days: 365 * 18)),
       firstDate: DateTime(1900),
       lastDate: DateTime.now(),
+      builder: (context, child) {
+        return Theme(
+          data: ThemeData.dark().copyWith(
+            colorScheme: const ColorScheme.dark(
+              primary: Color(0xFF2EAA4D),
+              onPrimary: Colors.white,
+              surface: Color(0xFF1B2E15),
+              onSurface: Colors.white,
+            ),
+            dialogTheme: const DialogThemeData(
+              backgroundColor: Color(0xFF1B2E15),
+            ),
+          ),
+          child: child!,
+        );
+      },
     );
     if (picked != null && picked != _selectedBirthdate) {
       setState(() {
@@ -91,7 +121,6 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
         Uint8List? fileBytes = result.files.first.bytes;
 
         if (fileBytes != null) {
-          // Compress image to prevent memory issues
           String base64String = base64Encode(fileBytes);
 
           setState(() {
@@ -99,37 +128,70 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
             _farmerIdFileName = result.files.first.name;
           });
 
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Image selected successfully')),
-          );
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Image selected: ${result.files.first.name}',
+                  style: GoogleFonts.epilogue(),
+                ),
+                backgroundColor: const Color(0xFF1A5C30),
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            );
+          }
         }
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error picking file: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Error picking file: $e',
+              style: GoogleFonts.epilogue(),
+            ),
+            backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
     }
   }
 
   void _submitForm() async {
     if (_isSubmitting) return;
-    
+
     if (!_formKey.currentState!.validate()) return;
 
-    // Check farmer ID upload based on RSBSA status
     if (_hasRsbsaId) {
-      // If they have RSBSA, they can skip farmer ID
       if (!_skipFarmerId && _farmerIdFileName == 'No file selected') {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please upload your Farmer ID or check "Skip"')),
+          SnackBar(
+            content: Text(
+              'Please upload your Farmer ID or check "Skip"',
+              style: GoogleFonts.epilogue(),
+            ),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
         );
         return;
       }
     } else {
-      // If they don't have RSBSA, they MUST upload an ID
       if (_farmerIdFileName == 'No file selected') {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please upload a valid government-issued ID')),
+          SnackBar(
+            content: Text(
+              'Please upload a valid government-issued ID',
+              style: GoogleFonts.epilogue(),
+            ),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
         );
         return;
       }
@@ -139,18 +201,37 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
 
     try {
       User? user = FirebaseAuth.instance.currentUser;
-      
+
       if (user == null) {
         throw Exception('You have been logged out. Please register again.');
       }
+
+      final firstName = _firstNameController.text.trim();
+      final middleName = _middleNameController.text.trim();
+      final lastName = _lastNameController.text.trim();
+      final extension = (_selectedExtension != null && _selectedExtension != 'None')
+          ? _selectedExtension!.trim()
+          : '';
+
+      // Combine structured name fields into full name
+      final nameParts = <String>[];
+      if (firstName.isNotEmpty) nameParts.add(firstName);
+      if (middleName.isNotEmpty) nameParts.add(middleName);
+      if (lastName.isNotEmpty) nameParts.add(lastName);
+      if (extension.isNotEmpty) nameParts.add(extension);
+      final fullName = nameParts.join(' ');
 
       // Build farmer data
       Map<String, dynamic> farmerData = {
         "uid": user.uid,
         "email": user.email ?? '',
-        "fullName": _fullNameController.text.trim(),
-        "middleName": _middleNameController.text.trim(),
-        "farmSize": double.parse(_farmSizeController.text),
+        "firstName": firstName,
+        "middleName": middleName,
+        "lastName": lastName,
+        "extension": extension.isNotEmpty ? extension : null,
+        "fullName": fullName,
+        "name": fullName, // for broad compatibility
+        "farmSize": double.parse(_farmSizeController.text.trim()),
         "sex": _selectedSex,
         "birthdate": _selectedBirthdate?.toIso8601String(),
         "status": "pending",
@@ -162,8 +243,7 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
       if (_hasRsbsaId) {
         farmerData["rsbsaId"] = _rsbsaIdController.text.trim();
         farmerData["skipFarmerId"] = _skipFarmerId;
-        
-        // Only add farmer ID image if not skipped
+
         if (!_skipFarmerId && _base64Image != null) {
           farmerData["farmerIdFileName"] = _farmerIdFileName;
           farmerData["farmerIdImage"] = _base64Image;
@@ -172,9 +252,8 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
           farmerData["farmerIdImage"] = null;
         }
       } else {
-        // No RSBSA ID - must upload alternative ID
         farmerData["rsbsaId"] = null;
-        farmerData["skipFarmerId"] = true; // Forced skip since no RSBSA
+        farmerData["skipFarmerId"] = true;
         farmerData["farmerIdFileName"] = _farmerIdFileName;
         farmerData["farmerIdImage"] = _base64Image;
       }
@@ -192,12 +271,15 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
-              "Your account is pending approval. Please wait for admin verification."
+              "Your account is pending approval. Please wait for admin verification.",
+              style: GoogleFonts.epilogue(fontWeight: FontWeight.w600),
             ),
-            backgroundColor: Color(0xFF8DBA60),
-            duration: Duration(seconds: 3),
+            backgroundColor: const Color(0xFF1A5C30),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            duration: const Duration(seconds: 4),
           ),
         );
 
@@ -206,14 +288,18 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
           (route) => false,
         );
       }
-      
     } catch (e) {
       developer.log('❌ Submit error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: ${e.toString()}'),
+            content: Text(
+              'Error: ${e.toString().replaceAll('Exception: ', '')}',
+              style: GoogleFonts.epilogue(),
+            ),
             backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
         );
       }
@@ -224,499 +310,812 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
     }
   }
 
+  InputDecoration _inputDecoration({
+    required String hintText,
+    String? suffixText,
+    Widget? prefixIcon,
+  }) {
+    return InputDecoration(
+      hintText: hintText,
+      hintStyle: GoogleFonts.epilogue(
+        color: Colors.white.withValues(alpha: 0.38),
+        fontSize: 13.5,
+      ),
+      suffixText: suffixText,
+      suffixStyle: GoogleFonts.epilogue(
+        color: const Color(0xFF81C784),
+        fontWeight: FontWeight.w700,
+        fontSize: 12.5,
+      ),
+      prefixIcon: prefixIcon,
+      isDense: true,
+      filled: true,
+      fillColor: Colors.black.withValues(alpha: 0.22),
+      contentPadding: const EdgeInsets.symmetric(
+        horizontal: 14,
+        vertical: 12,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide(
+          color: Colors.white.withValues(alpha: 0.22),
+          width: 1.0,
+        ),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(
+          color: Color(0xFF2EAA4D),
+          width: 1.5,
+        ),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(
+          color: Colors.redAccent,
+          width: 1.2,
+        ),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(
+          color: Colors.redAccent,
+          width: 1.5,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFieldLabel(String label) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 5.0),
+      child: Text(
+        label,
+        style: GoogleFonts.epilogue(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.8,
+          color: Colors.white.withValues(alpha: 0.85),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Edge-to-edge transparent system overlay for true full screen
     SystemChrome.setSystemUIOverlayStyle(
       const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
         statusBarIconBrightness: Brightness.light,
+        systemNavigationBarColor: Colors.transparent,
+        systemNavigationBarIconBrightness: Brightness.light,
       ),
     );
 
     return Scaffold(
+      backgroundColor: const Color(0xFF0F1B0D),
+      extendBody: true,
+      extendBodyBehindAppBar: true,
       body: Stack(
+        fit: StackFit.expand,
         children: [
-          Container(
-            width: double.infinity,
-            height: double.infinity,
-            decoration: const BoxDecoration(
-              image: DecorationImage(
-                image: AssetImage('assets/images/bg.png'),
-                fit: BoxFit.cover,
+          // 1. Fullscreen background image layer (covers entire display)
+          Positioned.fill(
+            child: Image.asset(
+              'assets/images/login-bg.png',
+              fit: BoxFit.cover,
+              width: double.infinity,
+              height: double.infinity,
+              alignment: Alignment.center,
+            ),
+          ),
+
+          // 2. Subtle gradient overlay for readability and depth
+          Positioned.fill(
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withValues(alpha: 0.12),
+                    Colors.black.withValues(alpha: 0.28),
+                  ],
+                ),
               ),
             ),
           ),
-          Container(
-            width: double.infinity,
-            height: double.infinity,
-            color: const Color(0xFF102216).withValues(alpha: 0.75),
-          ),
-          
-          SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 40.0),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  children: [
-                    const SizedBox(height: 60),
-                    Container(
-                      padding: const EdgeInsets.all(30.0),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.05),
-                        borderRadius: BorderRadius.circular(16.0),
-                        border: Border.all(
-                          color: Colors.black,
-                          width: 1.0,
-                        ),
-                      ),
+
+          // 3. Main content (designed to fit viewport cleanly without scrolling)
+          SafeArea(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  physics: const ClampingScrollPhysics(),
+                  padding: const EdgeInsets.symmetric(horizontal: 18.0, vertical: 8.0),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                    child: IntrinsicHeight(
                       child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          // Logo and Title
-                          Column(
-                            children: [
-                              Image.asset(
-                                'assets/images/logo.png',
-                                width: 120,
-                                height: 120,
-                              ),
-                              const SizedBox(height: 15),
-                              Text(
-                                'Verification Form',
-                                style: GoogleFonts.inter(
-                                  fontSize: 28,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
+                          // Glassmorphic Verification Card (No top logo/brand banner)
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(28.0),
+                            child: BackdropFilter(
+                              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20.0,
+                                  vertical: 20.0,
                                 ),
-                              ),
-                              const SizedBox(height: 5),
-                              Text(
-                                'Please complete your profile information.',
-                                style: GoogleFonts.inter(
-                                  fontSize: 16,
-                                  color: Colors.white.withValues(alpha: 0.8),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 40),
-
-                          // Full Name Field
-                          TextFormField(
-                            controller: _fullNameController,
-                            style: const TextStyle(color: Colors.white),
-                            decoration: InputDecoration(
-                              labelText: 'Full Name',
-                              hintText: 'e.g., Juan Dela Cruz Jr.',
-                              hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.4)),
-                              labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
-                              prefixIcon: const Icon(Icons.person, color: Color(0xFF8DBA60)),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12.0),
-                                borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12.0),
-                                borderSide: const BorderSide(color: Color(0xFF8DBA60)),
-                              ),
-                            ),
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Please enter your full name';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 16),
-
-                          // Middle Name Field
-                          TextFormField(
-                            controller: _middleNameController,
-                            style: const TextStyle(color: Colors.white),
-                            decoration: InputDecoration(
-                              labelText: 'Middle Name',
-                              hintText: 'e.g., Santos',
-                              hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.4)),
-                              labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
-                              prefixIcon: const Icon(Icons.person_outline, color: Color(0xFF8DBA60)),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12.0),
-                                borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12.0),
-                                borderSide: const BorderSide(color: Color(0xFF8DBA60)),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-
-                          // RSBSA ID Toggle
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.05),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.assignment_ind, color: Color(0xFF8DBA60)),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    'Do you have an RSBSA ID?',
-                                    style: GoogleFonts.inter(
-                                      fontSize: 14,
-                                      color: Colors.white.withValues(alpha: 0.8),
-                                    ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF2E3E24).withValues(alpha: 0.65),
+                                  borderRadius: BorderRadius.circular(28.0),
+                                  border: Border.all(
+                                    color: Colors.white.withValues(alpha: 0.25),
+                                    width: 1.2,
                                   ),
-                                ),
-                                Row(
-                                  children: [
-                                    ChoiceChip(
-                                      label: Text(
-                                        'Yes',
-                                        style: GoogleFonts.inter(
-                                          color: _hasRsbsaId ? Colors.black : Colors.white,
-                                        ),
-                                      ),
-                                      selected: _hasRsbsaId,
-                                      onSelected: (selected) {
-                                        setState(() {
-                                          _hasRsbsaId = selected;
-                                          if (!selected) {
-                                            _rsbsaIdController.clear();
-                                          }
-                                        });
-                                      },
-                                      selectedColor: const Color(0xFF8DBA60),
-                                      backgroundColor: Colors.transparent,
-                                      side: BorderSide(
-                                        color: _hasRsbsaId ? const Color(0xFF8DBA60) : Colors.white.withValues(alpha: 0.3),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    ChoiceChip(
-                                      label: Text(
-                                        'No',
-                                        style: GoogleFonts.inter(
-                                          color: !_hasRsbsaId ? Colors.black : Colors.white,
-                                        ),
-                                      ),
-                                      selected: !_hasRsbsaId,
-                                      onSelected: (selected) {
-                                        setState(() {
-                                          _hasRsbsaId = !selected;
-                                          if (!_hasRsbsaId) {
-                                            _rsbsaIdController.clear();
-                                          }
-                                        });
-                                      },
-                                      selectedColor: const Color(0xFF8DBA60),
-                                      backgroundColor: Colors.transparent,
-                                      side: BorderSide(
-                                        color: !_hasRsbsaId ? const Color(0xFF8DBA60) : Colors.white.withValues(alpha: 0.3),
-                                      ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(alpha: 0.35),
+                                      blurRadius: 30,
+                                      offset: const Offset(0, 15),
                                     ),
                                   ],
                                 ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-
-                          // RSBSA ID Field (only show if user has RSBSA ID)
-                          if (_hasRsbsaId)
-                            TextFormField(
-                              controller: _rsbsaIdController,
-                              style: const TextStyle(color: Colors.white),
-                              decoration: InputDecoration(
-                                labelText: 'RSBSA ID Number',
-                                hintText: 'e.g., 1234-5678-9012',
-                                hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.4)),
-                                labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
-                                prefixIcon: const Icon(Icons.credit_card, color: Color(0xFF8DBA60)),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12.0),
-                                  borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
-                                ),
-                                focusedBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12.0),
-                                  borderSide: const BorderSide(color: Color(0xFF8DBA60)),
-                                ),
-                              ),
-                              validator: (value) {
-                                if (_hasRsbsaId && (value == null || value.isEmpty)) {
-                                  return 'Please enter your RSBSA ID number';
-                                }
-                                return null;
-                              },
-                            ),
-                          
-                          if (_hasRsbsaId) const SizedBox(height: 16),
-
-                          // Farm Size Field
-                          TextFormField(
-                            controller: _farmSizeController,
-                            keyboardType: TextInputType.number,
-                            style: const TextStyle(color: Colors.white),
-                            decoration: InputDecoration(
-                              labelText: 'Farm Size',
-                              hintText: 'e.g., 5.5',
-                              hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.4)),
-                              labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
-                              suffixText: 'hectares',
-                              suffixStyle: const TextStyle(color: Color(0xFF8DBA60)),
-                              prefixIcon: const Icon(Icons.agriculture, color: Color(0xFF8DBA60)),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12.0),
-                                borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12.0),
-                                borderSide: const BorderSide(color: Color(0xFF8DBA60)),
-                              ),
-                            ),
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Please enter your farm size';
-                              }
-                              if (double.tryParse(value) == null || double.tryParse(value)! <= 0) {
-                                return 'Please enter a valid farm size';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 16),
-
-                          // Sex Dropdown
-                          DropdownButtonFormField<String>(
-                            style: const TextStyle(color: Colors.white),
-                            dropdownColor: const Color(0xFF102216),
-                            decoration: InputDecoration(
-                              labelText: 'Sex',
-                              labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
-                              prefixIcon: const Icon(Icons.people, color: Color(0xFF8DBA60)),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12.0),
-                                borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12.0),
-                                borderSide: const BorderSide(color: Color(0xFF8DBA60)),
-                              ),
-                            ),
-                            items: _sexOptions.map((String value) {
-                              return DropdownMenuItem<String>(
-                                value: value,
-                                child: Text(
-                                  value,
-                                  style: const TextStyle(color: Colors.white),
-                                ),
-                              );
-                            }).toList(),
-                            onChanged: (String? newValue) {
-                              setState(() {
-                                _selectedSex = newValue;
-                              });
-                            },
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Please select your sex';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 16),
-
-                          // Birthdate ListTile
-                          ListTile(
-                            title: Text(
-                              'Birthdate',
-                              style: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
-                            ),
-                            subtitle: Text(
-                              _selectedBirthdate == null
-                                  ? 'e.g., January 1, 1990'
-                                  : '${_selectedBirthdate!.day}/${_selectedBirthdate!.month}/${_selectedBirthdate!.year}',
-                              style: const TextStyle(color: Colors.white),
-                            ),
-                            leading: const Icon(Icons.calendar_today, color: Color(0xFF8DBA60)),
-                            trailing: const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 16),
-                            tileColor: Colors.white.withValues(alpha: 0.05),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12.0),
-                              side: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
-                            ),
-                            onTap: () => _selectBirthdate(context),
-                          ),
-                          const SizedBox(height: 16),
-
-                          // Farmer ID Upload Section
-                          if (_hasRsbsaId) ...[
-                            // For users WITH RSBSA ID
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: ListTile(
-                                    title: Text(
-                                      'Farmer ID (RSBSA ID Image)',
-                                      style: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
-                                    ),
-                                    subtitle: Text(
-                                      _farmerIdFileName == 'No file selected' 
-                                          ? 'e.g., rsbsa_id.jpg'
-                                          : _farmerIdFileName,
-                                      style: const TextStyle(color: Colors.white),
-                                    ),
-                                    leading: const Icon(Icons.cloud_upload, color: Color(0xFF8DBA60)),
-                                    trailing: const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 16),
-                                    tileColor: Colors.white.withValues(alpha: 0.05),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12.0),
-                                      side: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
-                                    ),
-                                    onTap: _skipFarmerId ? null : _uploadFarmerId,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Checkbox(
-                                  value: _skipFarmerId,
-                                  onChanged: (bool? value) {
-                                    setState(() {
-                                      _skipFarmerId = value ?? false;
-                                      if (_skipFarmerId) {
-                                        _base64Image = null;
-                                        _farmerIdFileName = 'No file selected';
-                                      }
-                                    });
-                                  },
-                                  activeColor: const Color(0xFF8DBA60),
-                                  checkColor: Colors.black,
-                                ),
-                                Text(
-                                  'Skip',
-                                  style: GoogleFonts.inter(
-                                    color: Colors.white.withValues(alpha: 0.7),
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            if (_skipFarmerId) ...[
-                              const SizedBox(height: 4),
-                              Text(
-                                '✅ RSBSA ID image skipped. You can upload it later.',
-                                style: GoogleFonts.inter(
-                                  color: const Color(0xFF8DBA60),
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ] else ...[
-                            // For users WITHOUT RSBSA ID
-                            Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: Colors.orange.withValues(alpha: 0.1),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
-                              ),
-                              child: Row(
-                                children: [
-                                  const Icon(Icons.info_outline, color: Colors.orange, size: 20),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      'Since you don\'t have an RSBSA ID, please upload any valid government-issued ID for verification purposes.',
-                                      style: GoogleFonts.inter(
-                                        color: Colors.orange,
-                                        fontSize: 13,
+                                child: Form(
+                                  key: _formKey,
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      // Card Header Row with Back/Close button & Title
+                                      Row(
+                                        children: [
+                                          GestureDetector(
+                                            onTap: () {
+                                              if (Navigator.canPop(context)) {
+                                                Navigator.pop(context);
+                                              } else {
+                                                Navigator.pushReplacement(
+                                                  context,
+                                                  MaterialPageRoute(builder: (_) => const LoginPage()),
+                                                );
+                                              }
+                                            },
+                                            child: Container(
+                                              padding: const EdgeInsets.all(7),
+                                              decoration: BoxDecoration(
+                                                color: Colors.black.withValues(alpha: 0.25),
+                                                shape: BoxShape.circle,
+                                                border: Border.all(
+                                                  color: Colors.white.withValues(alpha: 0.2),
+                                                  width: 1,
+                                                ),
+                                              ),
+                                              child: const Icon(
+                                                Icons.arrow_back_ios_new_rounded,
+                                                color: Colors.white,
+                                                size: 16,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                RichText(
+                                                  text: TextSpan(
+                                                    style: GoogleFonts.epilogue(
+                                                      fontSize: 22,
+                                                      fontWeight: FontWeight.w800,
+                                                      color: Colors.white,
+                                                    ),
+                                                    children: [
+                                                      const TextSpan(text: 'Farmer '),
+                                                      TextSpan(
+                                                        text: 'Verification',
+                                                        style: GoogleFonts.epilogue(
+                                                          fontSize: 22,
+                                                          fontWeight: FontWeight.w800,
+                                                          fontStyle: FontStyle.italic,
+                                                          color: const Color(0xFF2EAA4D),
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                                Text(
+                                                  'Complete your profile details to proceed',
+                                                  style: GoogleFonts.epilogue(
+                                                    fontSize: 12,
+                                                    color: Colors.white.withValues(alpha: 0.75),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                    ),
+
+                                      const SizedBox(height: 16),
+
+                                      // Row 1: First Name & Last Name (Side by Side)
+                                      Row(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          // First Name
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                _buildFieldLabel('FIRST NAME'),
+                                                TextFormField(
+                                                  controller: _firstNameController,
+                                                  style: GoogleFonts.epilogue(
+                                                    color: Colors.white,
+                                                    fontSize: 13.5,
+                                                    fontWeight: FontWeight.w500,
+                                                  ),
+                                                  cursorColor: const Color(0xFF2EAA4D),
+                                                  decoration: _inputDecoration(
+                                                    hintText: 'e.g., Juan',
+                                                  ),
+                                                  validator: (value) {
+                                                    if (value == null || value.trim().isEmpty) {
+                                                      return 'Required';
+                                                    }
+                                                    return null;
+                                                  },
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          // Last Name
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                _buildFieldLabel('LAST NAME'),
+                                                TextFormField(
+                                                  controller: _lastNameController,
+                                                  style: GoogleFonts.epilogue(
+                                                    color: Colors.white,
+                                                    fontSize: 13.5,
+                                                    fontWeight: FontWeight.w500,
+                                                  ),
+                                                  cursorColor: const Color(0xFF2EAA4D),
+                                                  decoration: _inputDecoration(
+                                                    hintText: 'e.g., Dela Cruz',
+                                                  ),
+                                                  validator: (value) {
+                                                    if (value == null || value.trim().isEmpty) {
+                                                      return 'Required';
+                                                    }
+                                                    return null;
+                                                  },
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+
+                                      const SizedBox(height: 12),
+
+                                      // Row 2: Middle Name & Suffix / Extension
+                                      Row(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          // Middle Name
+                                          Expanded(
+                                            flex: 3,
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                _buildFieldLabel('MIDDLE NAME (OPTIONAL)'),
+                                                TextFormField(
+                                                  controller: _middleNameController,
+                                                  style: GoogleFonts.epilogue(
+                                                    color: Colors.white,
+                                                    fontSize: 13.5,
+                                                    fontWeight: FontWeight.w500,
+                                                  ),
+                                                  cursorColor: const Color(0xFF2EAA4D),
+                                                  decoration: _inputDecoration(
+                                                    hintText: 'e.g., Santos',
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          // Suffix Dropdown
+                                          Expanded(
+                                            flex: 2,
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                _buildFieldLabel('SUFFIX'),
+                                                DropdownButtonFormField<String>(
+                                                  initialValue: _selectedExtension,
+                                                  style: GoogleFonts.epilogue(
+                                                    color: Colors.white,
+                                                    fontSize: 13.5,
+                                                    fontWeight: FontWeight.w500,
+                                                  ),
+                                                  dropdownColor: const Color(0xFF1B2E15),
+                                                  icon: const Icon(
+                                                    Icons.keyboard_arrow_down_rounded,
+                                                    color: Colors.white70,
+                                                    size: 18,
+                                                  ),
+                                                  decoration: _inputDecoration(hintText: 'None'),
+                                                  items: _extensionOptions.map((String ext) {
+                                                    return DropdownMenuItem<String>(
+                                                      value: ext,
+                                                      child: Text(
+                                                        ext,
+                                                        style: GoogleFonts.epilogue(color: Colors.white),
+                                                      ),
+                                                    );
+                                                  }).toList(),
+                                                  onChanged: (String? val) {
+                                                    setState(() {
+                                                      _selectedExtension = val;
+                                                    });
+                                                  },
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+
+                                      const SizedBox(height: 12),
+
+                                      // Row 3: Sex Dropdown & Birthdate Picker
+                                      Row(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          // Sex
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                _buildFieldLabel('SEX'),
+                                                DropdownButtonFormField<String>(
+                                                  initialValue: _selectedSex,
+                                                  style: GoogleFonts.epilogue(
+                                                    color: Colors.white,
+                                                    fontSize: 13.5,
+                                                    fontWeight: FontWeight.w500,
+                                                  ),
+                                                  dropdownColor: const Color(0xFF1B2E15),
+                                                  icon: const Icon(
+                                                    Icons.keyboard_arrow_down_rounded,
+                                                    color: Colors.white70,
+                                                    size: 18,
+                                                  ),
+                                                  decoration: _inputDecoration(hintText: 'Select sex'),
+                                                  items: _sexOptions.map((String value) {
+                                                    return DropdownMenuItem<String>(
+                                                      value: value,
+                                                      child: Text(
+                                                        value,
+                                                        style: GoogleFonts.epilogue(color: Colors.white),
+                                                      ),
+                                                    );
+                                                  }).toList(),
+                                                  onChanged: (String? newValue) {
+                                                    setState(() {
+                                                      _selectedSex = newValue;
+                                                    });
+                                                  },
+                                                  validator: (value) {
+                                                    if (value == null || value.isEmpty) {
+                                                      return 'Required';
+                                                    }
+                                                    return null;
+                                                  },
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          // Birthdate
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                _buildFieldLabel('BIRTHDATE'),
+                                                GestureDetector(
+                                                  onTap: () => _selectBirthdate(context),
+                                                  child: Container(
+                                                    padding: const EdgeInsets.symmetric(
+                                                      horizontal: 12,
+                                                      vertical: 12,
+                                                    ),
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.black.withValues(alpha: 0.22),
+                                                      borderRadius: BorderRadius.circular(14),
+                                                      border: Border.all(
+                                                        color: Colors.white.withValues(alpha: 0.22),
+                                                        width: 1.0,
+                                                      ),
+                                                    ),
+                                                    child: Row(
+                                                      children: [
+                                                        const Icon(
+                                                          Icons.calendar_today_outlined,
+                                                          color: Color(0xFF2EAA4D),
+                                                          size: 16,
+                                                        ),
+                                                        const SizedBox(width: 8),
+                                                        Expanded(
+                                                          child: Text(
+                                                            _selectedBirthdate == null
+                                                                ? 'Pick date'
+                                                                : '${_selectedBirthdate!.day.toString().padLeft(2, '0')}/${_selectedBirthdate!.month.toString().padLeft(2, '0')}/${_selectedBirthdate!.year}',
+                                                            style: GoogleFonts.epilogue(
+                                                              color: _selectedBirthdate == null
+                                                                  ? Colors.white.withValues(alpha: 0.38)
+                                                                  : Colors.white,
+                                                              fontSize: 13,
+                                                              fontWeight: FontWeight.w500,
+                                                            ),
+                                                            overflow: TextOverflow.ellipsis,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+
+                                      const SizedBox(height: 12),
+
+                                      // Row 4: Farm Size & RSBSA ID Toggle
+                                      Row(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          // Farm Size
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                _buildFieldLabel('FARM SIZE'),
+                                                TextFormField(
+                                                  controller: _farmSizeController,
+                                                  keyboardType: const TextInputType.numberWithOptions(
+                                                    decimal: true,
+                                                  ),
+                                                  style: GoogleFonts.epilogue(
+                                                    color: Colors.white,
+                                                    fontSize: 13.5,
+                                                    fontWeight: FontWeight.w500,
+                                                  ),
+                                                  cursorColor: const Color(0xFF2EAA4D),
+                                                  decoration: _inputDecoration(
+                                                    hintText: 'e.g., 2.5',
+                                                    suffixText: 'ha',
+                                                  ),
+                                                  validator: (value) {
+                                                    if (value == null || value.trim().isEmpty) {
+                                                      return 'Required';
+                                                    }
+                                                    if (double.tryParse(value.trim()) == null ||
+                                                        double.parse(value.trim()) <= 0) {
+                                                      return 'Invalid size';
+                                                    }
+                                                    return null;
+                                                  },
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          // RSBSA ID Toggle
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                _buildFieldLabel('HAS RSBSA ID?'),
+                                                Container(
+                                                  height: 44,
+                                                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.black.withValues(alpha: 0.22),
+                                                    borderRadius: BorderRadius.circular(14),
+                                                    border: Border.all(
+                                                      color: Colors.white.withValues(alpha: 0.22),
+                                                      width: 1.0,
+                                                    ),
+                                                  ),
+                                                  child: Row(
+                                                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                                    children: [
+                                                      GestureDetector(
+                                                        onTap: () => setState(() => _hasRsbsaId = true),
+                                                        child: Container(
+                                                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                                                          decoration: BoxDecoration(
+                                                            color: _hasRsbsaId
+                                                                ? const Color(0xFF1B6A2D)
+                                                                : Colors.transparent,
+                                                            borderRadius: BorderRadius.circular(10),
+                                                          ),
+                                                          child: Text(
+                                                            'Yes',
+                                                            style: GoogleFonts.epilogue(
+                                                              fontSize: 12,
+                                                              fontWeight: FontWeight.w700,
+                                                              color: _hasRsbsaId ? Colors.white : Colors.white60,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                      GestureDetector(
+                                                        onTap: () {
+                                                          setState(() {
+                                                            _hasRsbsaId = false;
+                                                            _rsbsaIdController.clear();
+                                                          });
+                                                        },
+                                                        child: Container(
+                                                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                                                          decoration: BoxDecoration(
+                                                            color: !_hasRsbsaId
+                                                                ? const Color(0xFF1B6A2D)
+                                                                : Colors.transparent,
+                                                            borderRadius: BorderRadius.circular(10),
+                                                          ),
+                                                          child: Text(
+                                                            'No',
+                                                            style: GoogleFonts.epilogue(
+                                                              fontSize: 12,
+                                                              fontWeight: FontWeight.w700,
+                                                              color: !_hasRsbsaId ? Colors.white : Colors.white60,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+
+                                      const SizedBox(height: 12),
+
+                                      // Row 5: RSBSA ID Number (Conditional)
+                                      if (_hasRsbsaId) ...[
+                                        _buildFieldLabel('RSBSA ID NUMBER'),
+                                        TextFormField(
+                                          controller: _rsbsaIdController,
+                                          style: GoogleFonts.epilogue(
+                                            color: Colors.white,
+                                            fontSize: 13.5,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                          cursorColor: const Color(0xFF2EAA4D),
+                                          decoration: _inputDecoration(
+                                            hintText: 'e.g., 1234-5678-9012',
+                                            prefixIcon: const Icon(
+                                              Icons.credit_card_outlined,
+                                              color: Color(0xFF2EAA4D),
+                                              size: 18,
+                                            ),
+                                          ),
+                                          validator: (value) {
+                                            if (_hasRsbsaId &&
+                                                (value == null || value.trim().isEmpty)) {
+                                              return 'Please enter your RSBSA ID number';
+                                            }
+                                            return null;
+                                          },
+                                        ),
+                                        const SizedBox(height: 12),
+                                      ],
+
+                                      // Row 6: ID Photo Upload Bar with Inline Skip Option
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          _buildFieldLabel(_hasRsbsaId ? 'FARMER ID PHOTO' : 'GOV ID PHOTO'),
+                                          if (_hasRsbsaId)
+                                            Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Transform.scale(
+                                                  scale: 0.8,
+                                                  child: Checkbox(
+                                                    value: _skipFarmerId,
+                                                    onChanged: (bool? value) {
+                                                      setState(() {
+                                                        _skipFarmerId = value ?? false;
+                                                        if (_skipFarmerId) {
+                                                          _base64Image = null;
+                                                          _farmerIdFileName = 'No file selected';
+                                                        }
+                                                      });
+                                                    },
+                                                    activeColor: const Color(0xFF2EAA4D),
+                                                    checkColor: Colors.white,
+                                                    side: BorderSide(
+                                                      color: Colors.white.withValues(alpha: 0.4),
+                                                      width: 1.5,
+                                                    ),
+                                                  ),
+                                                ),
+                                                Text(
+                                                  'Skip for now',
+                                                  style: GoogleFonts.epilogue(
+                                                    fontSize: 11,
+                                                    color: Colors.white.withValues(alpha: 0.75),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                        ],
+                                      ),
+                                      GestureDetector(
+                                        onTap: _skipFarmerId ? null : _uploadFarmerId,
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 14,
+                                            vertical: 10,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: _skipFarmerId
+                                                ? Colors.black.withValues(alpha: 0.1)
+                                                : Colors.black.withValues(alpha: 0.22),
+                                            borderRadius: BorderRadius.circular(14),
+                                            border: Border.all(
+                                              color: Colors.white.withValues(alpha: 0.22),
+                                              width: 1.0,
+                                            ),
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              Icon(
+                                                Icons.cloud_upload_outlined,
+                                                color: _skipFarmerId
+                                                    ? Colors.white30
+                                                    : const Color(0xFF2EAA4D),
+                                                size: 20,
+                                              ),
+                                              const SizedBox(width: 10),
+                                              Expanded(
+                                                child: Text(
+                                                  _skipFarmerId
+                                                      ? 'Skipped (Upload later in profile)'
+                                                      : _farmerIdFileName,
+                                                  style: GoogleFonts.epilogue(
+                                                    color: _skipFarmerId
+                                                        ? Colors.white38
+                                                        : Colors.white,
+                                                    fontSize: 13,
+                                                    fontWeight: FontWeight.w500,
+                                                  ),
+                                                  overflow: TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                              Icon(
+                                                Icons.arrow_forward_ios_rounded,
+                                                color: _skipFarmerId ? Colors.white24 : Colors.white60,
+                                                size: 13,
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+
+                                      const SizedBox(height: 18),
+
+                                      // Row 7: Submit & Cancel Buttons
+                                      Row(
+                                        children: [
+                                          // Cancel Button (flex 1)
+                                          Expanded(
+                                            flex: 2,
+                                            child: SizedBox(
+                                              height: 46,
+                                              child: OutlinedButton(
+                                                onPressed: () {
+                                                  if (Navigator.canPop(context)) {
+                                                    Navigator.pop(context);
+                                                  } else {
+                                                    Navigator.pushReplacement(
+                                                      context,
+                                                      MaterialPageRoute(
+                                                        builder: (context) => const LoginPage(),
+                                                      ),
+                                                    );
+                                                  }
+                                                },
+                                                style: OutlinedButton.styleFrom(
+                                                  side: BorderSide(
+                                                    color: Colors.white.withValues(alpha: 0.3),
+                                                    width: 1.0,
+                                                  ),
+                                                  shape: RoundedRectangleBorder(
+                                                    borderRadius: BorderRadius.circular(24),
+                                                  ),
+                                                ),
+                                                child: Text(
+                                                  'Cancel',
+                                                  style: GoogleFonts.epilogue(
+                                                    color: Colors.white.withValues(alpha: 0.85),
+                                                    fontSize: 13.5,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          // Submit Button (flex 3)
+                                          Expanded(
+                                            flex: 3,
+                                            child: SizedBox(
+                                              height: 46,
+                                              child: ElevatedButton(
+                                                onPressed: _isSubmitting ? null : _submitForm,
+                                                style: ElevatedButton.styleFrom(
+                                                  backgroundColor: const Color(0xFF1B6A2D),
+                                                  elevation: 4,
+                                                  shadowColor: Colors.black.withValues(alpha: 0.35),
+                                                  shape: RoundedRectangleBorder(
+                                                    borderRadius: BorderRadius.circular(24),
+                                                  ),
+                                                ),
+                                                child: _isSubmitting
+                                                    ? const SizedBox(
+                                                        height: 20,
+                                                        width: 20,
+                                                        child: CircularProgressIndicator(
+                                                          color: Colors.white,
+                                                          strokeWidth: 2.0,
+                                                        ),
+                                                      )
+                                                    : Row(
+                                                        mainAxisAlignment: MainAxisAlignment.center,
+                                                        children: [
+                                                          Text(
+                                                            'Submit',
+                                                            style: GoogleFonts.epilogue(
+                                                              color: Colors.white,
+                                                              fontSize: 14.5,
+                                                              fontWeight: FontWeight.w700,
+                                                            ),
+                                                          ),
+                                                          const SizedBox(width: 6),
+                                                          const Icon(
+                                                            Icons.arrow_forward_rounded,
+                                                            color: Colors.white,
+                                                            size: 17,
+                                                          ),
+                                                        ],
+                                                      ),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
                                   ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            ListTile(
-                              title: Text(
-                                'Alternative ID Upload',
-                                style: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
-                              ),
-                              subtitle: Text(
-                                _farmerIdFileName == 'No file selected' 
-                                    ? 'e.g., passport, drivers_license.jpg'
-                                    : _farmerIdFileName,
-                                style: const TextStyle(color: Colors.white),
-                              ),
-                              leading: const Icon(Icons.cloud_upload, color: Color(0xFF8DBA60)),
-                              trailing: const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 16),
-                              tileColor: Colors.white.withValues(alpha: 0.05),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12.0),
-                                side: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
-                              ),
-                              onTap: _uploadFarmerId,
-                            ),
-                          ],
-
-                          const SizedBox(height: 24),
-
-                          // Submit Button
-                          SizedBox(
-                            width: double.infinity,
-                            height: 50,
-                            child: ElevatedButton(
-                              onPressed: _isSubmitting ? null : _submitForm,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF8DBA60),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(30),
-                                ),
-                              ),
-                              child: _isSubmitting
-                                  ? const SizedBox(
-                                      height: 24,
-                                      width: 24,
-                                      child: CircularProgressIndicator(
-                                        color: Colors.black,
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : Text(
-                                      'Submit',
-                                      style: GoogleFonts.inter(
-                                        color: Colors.black,
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-
-                          // Cancel Button
-                          SizedBox(
-                            width: double.infinity,
-                            height: 50,
-                            child: OutlinedButton(
-                              onPressed: () {
-                                Navigator.pop(context);
-                              },
-                              style: OutlinedButton.styleFrom(
-                                side: const BorderSide(color: Color(0xFF8DBA60)),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(30),
-                                ),
-                              ),
-                              child: Text(
-                                'Cancel',
-                                style: GoogleFonts.inter(
-                                  color: const Color(0xFF8DBA60),
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
                             ),
@@ -724,9 +1123,9 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
                         ],
                       ),
                     ),
-                  ],
-                ),
-              ),
+                  ),
+                );
+              },
             ),
           ),
         ],

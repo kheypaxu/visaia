@@ -5,6 +5,8 @@ import 'package:visaia/screens/logging_screens/assign_pest_detected.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:convert';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:visaia/services/auth_cache_service.dart';
+import 'package:visaia/services/firestore_safe_ext.dart';
 
 class AIResultScreen extends StatefulWidget {
   final String pestName;
@@ -352,11 +354,15 @@ class _AIResultScreenState extends State<AIResultScreen>
   }
 
   Future<String> _getFarmerName() async {
+    final cachedName = AuthCacheService().cachedName;
+    if (cachedName != null && cachedName.isNotEmpty) {
+      return cachedName;
+    }
     try {
       final userDoc = await FirebaseFirestore.instance
           .collection('farmers')
           .doc(widget.userId)
-          .get();
+          .safeGet();
       if (userDoc.exists) {
         final data = userDoc.data();
         return data?['name'] ?? data?['fullName'] ?? 'Unknown Farmer';

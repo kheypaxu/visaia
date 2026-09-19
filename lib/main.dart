@@ -50,8 +50,10 @@ void main() async {
   runApp(
     ChangeNotifierProvider(
       create: (_) => FarmProvider(),
-      child: const MyApp(
-        initialRoute: '/get-started',
+      child: MyApp(
+        initialRoute: hasActiveUser || hasCachedSession
+            ? '/auth-gate'
+            : '/get-started',
       ),
     ),
   );

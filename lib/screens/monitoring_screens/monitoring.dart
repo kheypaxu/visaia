@@ -15,6 +15,7 @@ import 'package:visaia/screens/logging_screens/trap_guide.dart';
 import 'package:visaia/utils/growth_stage.dart';
 import 'package:visaia/widgets/database_image.dart';
 import 'package:visaia/services/auth_cache_service.dart';
+import 'package:visaia/services/firestore_safe_ext.dart';
 
 // ==========================================
 // BRAND COLORS
@@ -1007,36 +1008,25 @@ Future<void> _loadCycleData() async {
               .doc(_userId)
               .collection('farms')
               .doc(farmId)
-              .get();
-        } catch (_) {
-          farmDoc = await FirebaseFirestore.instance
-              .collection('users')
-              .doc(_userId)
-              .collection('farms')
-              .doc(farmId)
-              .get(const GetOptions(source: Source.cache));
-        }
-        if (farmDoc.exists) {
+              .safeGet();
+        } catch (_) {}
+        if (farmDoc != null && farmDoc.exists) {
           farmerId = _userId; // The farm belongs to this user
         }
       }
     }
 
-    // Fetch farmer name from farmers collection
-    if (farmerId.isNotEmpty) {
+    // Fetch farmer name from cache or farmers collection
+    farmerName = AuthCacheService().cachedName ?? '';
+    if (farmerName.isEmpty && farmerId.isNotEmpty) {
       DocumentSnapshot<Map<String, dynamic>>? farmerDoc;
       try {
         farmerDoc = await FirebaseFirestore.instance
             .collection('farmers')
             .doc(farmerId)
-            .get();
-      } catch (_) {
-        farmerDoc = await FirebaseFirestore.instance
-            .collection('farmers')
-            .doc(farmerId)
-            .get(const GetOptions(source: Source.cache));
-      }
-      if (farmerDoc.exists) {
+            .safeGet();
+      } catch (_) {}
+      if (farmerDoc != null && farmerDoc.exists) {
         final data = farmerDoc.data();
         farmerName = data?['fullName'] as String? ?? data?['name'] as String? ?? '';
       } else {
@@ -1046,14 +1036,9 @@ Future<void> _loadCycleData() async {
           userDoc = await FirebaseFirestore.instance
               .collection('users')
               .doc(farmerId)
-              .get();
-        } catch (_) {
-          userDoc = await FirebaseFirestore.instance
-              .collection('users')
-              .doc(farmerId)
-              .get(const GetOptions(source: Source.cache));
-        }
-        if (userDoc.exists) {
+              .safeGet();
+        } catch (_) {}
+        if (userDoc != null && userDoc.exists) {
           final data = userDoc.data();
           farmerName = data?['fullName'] as String? ?? data?['name'] as String? ?? '';
         }
@@ -1067,14 +1052,9 @@ Future<void> _loadCycleData() async {
           userDoc = await FirebaseFirestore.instance
               .collection('users')
               .doc(_userId)
-              .get();
-        } catch (_) {
-          userDoc = await FirebaseFirestore.instance
-              .collection('users')
-              .doc(_userId)
-              .get(const GetOptions(source: Source.cache));
-        }
-        if (userDoc.exists) {
+              .safeGet();
+        } catch (_) {}
+        if (userDoc != null && userDoc.exists) {
           final data = userDoc.data();
           farmerName = data?['fullName'] as String? ?? data?['name'] as String? ?? 'Unknown Farmer';
         }
@@ -1191,8 +1171,7 @@ Future<void> _loadCycleData() async {
           .doc(dayId)
           .collection('activities')
           .orderBy('timestamp', descending: true)
-          .get()
-          .timeout(const Duration(seconds: 15));
+          .safeGet();
 
       final activities = activitiesSnapshot.docs.map((doc) {
         final data = doc.data();
@@ -1683,7 +1662,7 @@ if (isBiological) {
           .doc(_userId)
           .collection('cycles')
           .doc(widget.cycleId)
-          .get();
+          .safeGet();
       if (cycleDoc.exists) {
         setState(() {
           _trapsInstalled = cycleDoc.data()?['trapsInstalled'] == true;
@@ -1909,7 +1888,7 @@ Future<GeoPoint?> _getFieldLocation() async {
         .doc(_userId)
         .collection('cycles')
         .doc(widget.cycleId)
-        .get();
+        .safeGet();
     
     if (cycleDoc.exists) {
       final data = cycleDoc.data();
@@ -1920,7 +1899,7 @@ Future<GeoPoint?> _getFieldLocation() async {
             .doc(_userId)
             .collection('fields')
             .doc(fieldId)
-            .get();
+            .safeGet();
         
         if (fieldDoc.exists) {
           final fieldData = fieldDoc.data();

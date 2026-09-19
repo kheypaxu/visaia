@@ -10,6 +10,7 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:visaia/screens/logging_screens/assign_log_modal.dart';
 import 'package:visaia/services/auth_cache_service.dart';
 import 'package:visaia/services/firestore_image_service.dart';
+import 'package:visaia/services/firestore_safe_ext.dart';
 
 // ─── Activity Type Model ──────────────────────────────────────────────────────
 
@@ -374,31 +375,27 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
       if (url != null) imageUrls.add(url);
     }
 
-    DocumentSnapshot<Map<String, dynamic>> cycleDoc;
+    DocumentSnapshot<Map<String, dynamic>>? cycleDoc;
     try {
       cycleDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(uid)
           .collection('cycles')
           .doc(cycleId)
-          .get();
-    } catch (_) {
-      cycleDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .collection('cycles')
-          .doc(cycleId)
-          .get(const GetOptions(source: Source.cache));
+          .safeGet();
+    } catch (e) {
+      debugPrint('Note: Error fetching cycle doc for daily log (offline): $e');
     }
     
     DateTime? plantingDate;
-    if (cycleDoc.exists) {
+    if (cycleDoc != null && cycleDoc.exists) {
       final data = cycleDoc.data();
       final pTimestamp = data?['plantingDate'];
       if (pTimestamp is Timestamp) {
         plantingDate = pTimestamp.toDate();
       }
     }
+    plantingDate ??= widget.plantingDate;
 
     int dayNumber = 1;
     if (plantingDate != null) {

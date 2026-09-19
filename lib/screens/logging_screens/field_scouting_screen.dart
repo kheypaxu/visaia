@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:visaia/widgets/success_modal.dart';
 import 'package:visaia/services/firestore_service.dart';
+import 'package:visaia/services/firestore_safe_ext.dart';
 
 // ─── Field Scouting Form Screen ───────────────────────────────────────────────
 
@@ -114,42 +115,34 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
     if (_selectedCycleId == null) return;
     
     try {
-      DocumentSnapshot<Map<String, dynamic>> cycleDoc;
-      try {
-        cycleDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(widget.userId)
-            .collection('cycles')
-            .doc(_selectedCycleId)
-            .get();
-      } catch (_) {
-        cycleDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(widget.userId)
-            .collection('cycles')
-            .doc(_selectedCycleId)
-            .get(const GetOptions(source: Source.cache));
-      }
+      final cycleDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('cycles')
+          .doc(_selectedCycleId)
+          .safeGet();
       
       if (cycleDoc.exists) {
         final data = cycleDoc.data();
         final plantingDate = (data?['plantingDate'] as Timestamp?)?.toDate();
         final harvestDate = (data?['harvestDate'] as Timestamp?)?.toDate();
         
-        setState(() {
-          _selectedCycleName = data?['cycleName'] ?? 'Unknown Cycle';
-          _selectedFieldName = data?['fieldName'] ?? 'Unknown Field';
-          // _plantingDate = plantingDate; // REMOVED
-          
-          if (plantingDate != null && harvestDate != null) {
-            final totalDays = harvestDate.difference(plantingDate).inDays;
-            _totalWeeks = (totalDays / 7).ceil().clamp(1, 52);
+        if (mounted) {
+          setState(() {
+            _selectedCycleName = data?['cycleName'] ?? 'Unknown Cycle';
+            _selectedFieldName = data?['fieldName'] ?? 'Unknown Field';
+            // _plantingDate = plantingDate; // REMOVED
             
-            final daysSincePlanting = DateTime.now().difference(plantingDate).inDays;
-            final currentWeek = (daysSincePlanting / 7).floor();
-            _selectedCycleWeekIndex = widget.weekIndex ?? currentWeek.clamp(0, _totalWeeks - 1);
-          }
-        });
+            if (plantingDate != null && harvestDate != null) {
+              final totalDays = harvestDate.difference(plantingDate).inDays;
+              _totalWeeks = (totalDays / 7).ceil().clamp(1, 52);
+              
+              final daysSincePlanting = DateTime.now().difference(plantingDate).inDays;
+              final currentWeek = (daysSincePlanting / 7).floor();
+              _selectedCycleWeekIndex = widget.weekIndex ?? currentWeek.clamp(0, _totalWeeks - 1);
+            }
+          });
+        }
       }
     } catch (e) {
       debugPrint('Error loading cycle data: $e');
@@ -158,21 +151,12 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
 
   Future<List<Map<String, dynamic>>> _fetchUserCycles() async {
     try {
-      QuerySnapshot<Map<String, dynamic>> cyclesSnapshot;
-      try {
-        cyclesSnapshot = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(widget.userId)
-            .collection('cycles')
-            .orderBy('createdAt', descending: true)
-            .get();
-      } catch (_) {
-        cyclesSnapshot = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(widget.userId)
-            .collection('cycles')
-            .get(const GetOptions(source: Source.cache));
-      }
+      final cyclesSnapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('cycles')
+          .orderBy('createdAt', descending: true)
+          .safeGet();
       
       if (cyclesSnapshot.docs.isEmpty) {
         return [];

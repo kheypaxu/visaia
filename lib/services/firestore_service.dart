@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:visaia/services/firestore_safe_ext.dart';
 
 class MonitoringFirestoreService {
   final FirebaseFirestore _db;
@@ -10,11 +11,7 @@ class MonitoringFirestoreService {
 
   Future<DocumentSnapshot<Map<String, dynamic>>> _getWithCacheFallback(
       DocumentReference<Map<String, dynamic>> ref) async {
-    try {
-      return await ref.get();
-    } catch (_) {
-      return await ref.get(const GetOptions(source: Source.cache));
-    }
+    return ref.safeGet();
   }
 
   Future<Map<String, dynamic>?> getCycle(String cycleId) async {
