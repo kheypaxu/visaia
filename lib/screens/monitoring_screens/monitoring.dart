@@ -13,6 +13,7 @@ import 'package:visaia/screens/logging_screens/field_scouting_demo.dart';
 import 'package:visaia/screens/logging_screens/trap_lists.dart';
 import 'package:visaia/screens/logging_screens/trap_guide.dart';
 import 'package:visaia/utils/growth_stage.dart';
+import 'package:visaia/utils/scouting_report_date.dart';
 import 'package:visaia/utils/chemical_task_policy.dart';
 import 'package:visaia/widgets/database_image.dart';
 import 'package:visaia/services/auth_cache_service.dart';
@@ -4646,10 +4647,9 @@ Map<String, List<String>> _getAllCapturedImages() {
 }
 
 // ─── Plant Damage Report ─────────────────────────────────────────────
-Future<void> _createPlantDamageReport() async {
-  final growthInfo = _getCurrentGrowthStage();
-  final dap = _selectedDayDap;
-  final weekNumber = (dap / 7).ceil();
+Future<void> _createPlantDamageReport(DateTime reportDate, int weekNumber) async {
+  final dap = scoutingReportDap(_plantingDate!, reportDate);
+  final growthInfo = getGrowthStage(dap);
 
   int totalInspected = _stationData.fold(0, (sum, s) => sum + (s['plantsInspected'] as int? ?? 0));
   double damagePercent = totalInspected > 0 ? (_totalDamaged / totalInspected) * 100 : 0.0;
@@ -4721,7 +4721,10 @@ Future<void> _createPlantDamageReport() async {
     'averageCobScore': avgCobScore,
     'stationBreakdown': stationBreakdown,
     'status': 'pending',
-    'createdAt': FieldValue.serverTimestamp(),
+    'reportDate': Timestamp.fromDate(reportDate),
+    'timestamp': Timestamp.fromDate(reportDate),
+    'createdAt': Timestamp.fromDate(reportDate),
+    'submittedAt': FieldValue.serverTimestamp(),
   };
 
   await FirebaseFirestore.instance
@@ -4741,7 +4744,14 @@ Future<void> _createClusteredReport() async {
     final String reportLevel = exceedsThreshold ? 'High' : 'Low';
     final String severityLevel = exceedsThreshold ? 'High Level' : 'Low Level';
 
-    final growthInfo = _getCurrentGrowthStage();
+    final weekNumber = _selectedWeek + 1;
+    final reportDate = scoutingReportDate(
+      plantingDate: _plantingDate!,
+      weekIndex: _selectedWeek,
+      submittedAt: DateTime.now(),
+    );
+    final reportDap = scoutingReportDap(_plantingDate!, reportDate);
+    final growthInfo = getGrowthStage(reportDap);
 
     String larvaRiskLevel = 'None';
     if (_totalLarvae > 0) {
@@ -4784,8 +4794,6 @@ Future<void> _createClusteredReport() async {
     // ─── Get all captured images ────────────────────────────────────────
     final allCapturedImages = _getAllCapturedImages();
 
-    final weekNumber = (_selectedDayDap / 7).ceil();
-
     // ─── Build report data ──────────────────────────────────────────────
     Map<String, dynamic> reportData = {
       // IDs to connect to other collections
@@ -4802,9 +4810,12 @@ Future<void> _createClusteredReport() async {
       'cycleName': _cycleName,
       
       // Report data
-      'timestamp': FieldValue.serverTimestamp(),
+      'timestamp': Timestamp.fromDate(reportDate),
+      'reportDate': Timestamp.fromDate(reportDate),
+      'submittedAt': FieldValue.serverTimestamp(),
+      'plantingDate': Timestamp.fromDate(_plantingDate!),
       'weekNumber': weekNumber, 
-      'dap': _selectedDayDap,
+      'dap': reportDap,
       'growthStage': growthInfo.name,
       'growthStageScore': growthInfo.vulnerabilityScore,
       'totalDamaged': _totalDamaged,
@@ -4874,7 +4885,7 @@ Future<void> _createClusteredReport() async {
       
       // Status for validation
       'status': 'pending',
-      'createdAt': FieldValue.serverTimestamp(),
+      'createdAt': Timestamp.fromDate(reportDate),
     };
 
     // ─── Save to top-level clustered_reports collection ────────────────
@@ -4883,7 +4894,7 @@ Future<void> _createClusteredReport() async {
         .add(reportData);
 
     // ─── Save plant damage report ─────────────────────────────────────
-    await _createPlantDamageReport();
+    await _createPlantDamageReport(reportDate, weekNumber);
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
