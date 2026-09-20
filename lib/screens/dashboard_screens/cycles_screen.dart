@@ -570,7 +570,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'You can start a new cycle or record a previous cycle. Both options are available!',
+                  'You can start a new cycle or record a previous cycle. Both options are available.',
                   style: GoogleFonts.manrope(
                     fontSize: 12,
                     color: const Color(0xFF9A6A00),
