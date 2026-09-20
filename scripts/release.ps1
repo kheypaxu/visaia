@@ -54,9 +54,9 @@ if ($BuildLocal) {
 $tagName = "v$Version+$Build"
 
 # 3. Git Commit and Tag
-Write-Host "[3/4] Committing and creating tag $tagName..." -ForegroundColor Yellow
-git add pubspec.yaml
-git commit -m "chore(release): bump version to $Version+$Build"
+Write-Host "[3/4] Committing all changes and creating tag $tagName..." -ForegroundColor Yellow
+git add .
+git commit -m "chore(release): bump version to $Version+$Build - $Notes"
 git tag -a "$tagName" -m "$Notes"
 
 # 4. Push to GitHub
