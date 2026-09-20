@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -14,10 +15,10 @@ class GetStartedPage extends StatefulWidget {
 }
 
 class _GetStartedPageState extends State<GetStartedPage> {
-  final AuthCacheService _cacheService = AuthCacheService();
-  final ConnectivityService _connectivityService = ConnectivityService();
+  final _cache = AuthCacheService();
   String? _savedName;
   bool _hasSavedAccount = false;
+  bool _checking = true;
   bool _isLoading = false;
 
   @override
@@ -27,75 +28,82 @@ class _GetStartedPageState extends State<GetStartedPage> {
   }
 
   Future<void> _checkSavedAccount() async {
-    await _cacheService.init();
-
-    String? name = _cacheService.cachedName;
-    bool hasAccount = _cacheService.hasSavedAccount;
-
-    // Also check Firebase current user if online
-    final firebaseUser = FirebaseAuth.instance.currentUser;
-    if (firebaseUser != null) {
-      hasAccount = true;
-      if (name == null || name.trim().isEmpty) {
-        name = firebaseUser.displayName;
+    await _cache.init();
+    final user = FirebaseAuth.instance.currentUser;
+    final cacheMatches = user == null || user.uid == _cache.cachedUid;
+    String? name = cacheMatches ? _cache.cachedName : null;
+    if (name == null || name.trim().isEmpty) name = user?.displayName;
+    final hasAccount = user != null || _cache.hasSavedAccount;
+    if (!mounted) return;
+    // Publish local identity immediately, including on offline cold starts.
+    setState(() {
+      _savedName = name;
+      _hasSavedAccount = hasAccount;
+      _checking = false;
+    });
+    if (!hasAccount || (name != null && name.trim().isNotEmpty)) return;
+    final uid = user?.uid ?? _cache.cachedUid;
+    if (uid == null) return;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('farmers')
+          .doc(uid)
+          .get(
+            GetOptions(
+              source: ConnectivityService().isOnline
+                  ? Source.serverAndCache
+                  : Source.cache,
+            ),
+          )
+          .timeout(const Duration(seconds: 4));
+      final data = doc.data();
+      final profileName = data?['name'] ?? data?['fullName'];
+      if (profileName is String && profileName.trim().isNotEmpty) {
+        if (_cache.cachedUid == uid) {
+          await _cache.updateProfile(name: profileName.trim());
+        }
+        if (mounted) setState(() => _savedName = profileName.trim());
       }
+    } catch (_) {
+      // An unavailable profile must never block the locally saved session.
     }
+  }
 
-    // Try to load farmer name from Firestore if missing
-    if (hasAccount && (name == null || name.trim().isEmpty)) {
-      final uid = firebaseUser?.uid ?? _cacheService.cachedUid;
-      if (uid != null && uid.isNotEmpty) {
-        try {
-          final doc = await FirebaseFirestore.instance.collection('farmers').doc(uid).get();
-          if (doc.exists) {
-            name = doc.data()?['name'] ?? doc.data()?['fullName'];
-            if (name != null && name.trim().isNotEmpty) {
-              await _cacheService.updateProfile(name: name.trim());
-            }
-          }
-        } catch (_) {}
-      }
-    }
-
-    if (mounted) {
-      setState(() {
-        _hasSavedAccount = hasAccount;
-        _savedName = name;
-      });
-    }
+  Future<void> _openLogin() async {
+    await Navigator.pushNamed(context, '/login');
+    if (mounted) await _checkSavedAccount();
   }
 
   Future<void> _continueSavedSession() async {
     if (_isLoading) return;
     setState(() => _isLoading = true);
-
     try {
-      final currentUser = FirebaseAuth.instance.currentUser;
-      final isOnline = _connectivityService.isOnline;
-
-      // If user is already authenticated in FirebaseAuth (or offline with cached session), go straight to /root
-      if (currentUser != null || (!isOnline && _cacheService.hasSavedAccount)) {
-        await _cacheService.continueSavedSession();
-        if (mounted) {
-          Navigator.pushReplacementNamed(context, '/root');
-        }
-        return;
-      }
-
-      // If online but FirebaseAuth.currentUser is null, navigate to login to establish active auth token
-      if (mounted) {
-        Navigator.pushNamed(
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        if (_cache.cachedUid == user.uid) await _cache.continueSavedSession();
+        if (mounted) Navigator.pushReplacementNamed(context, '/root');
+      } else if (!ConnectivityService().isOnline &&
+          await _cache.continueSavedSession()) {
+        if (mounted) Navigator.pushReplacementNamed(context, '/root');
+      } else if (mounted) {
+        await Navigator.pushNamed(
           context,
           '/login',
           arguments: {
-            'email': _cacheService.cachedEmail,
-            'autoFillMessage': 'Welcome back! Please enter your password to sign in.',
+            'email': _cache.cachedEmail,
+            'autoFillMessage':
+                'Welcome back! Please enter your password to sign in.',
           },
         );
+        if (mounted) await _checkSavedAccount();
       }
     } catch (_) {
       if (mounted) {
-        Navigator.pushReplacementNamed(context, '/root');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to restore your session. Please try again.'),
+          ),
+        );
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -104,237 +112,270 @@ class _GetStartedPageState extends State<GetStartedPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Make the app fullscreen
-    SystemChrome.setSystemUIOverlayStyle(
-      const SystemUiOverlayStyle(
-        statusBarColor: Colors.transparent,
-        statusBarIconBrightness: Brightness.light,
-      ),
-    );
-
-    final displayName = _savedName != null && _savedName!.trim().isNotEmpty
-        ? _savedName!.trim().split(' ').first
+    final name = _savedName?.trim();
+    final displayName = name != null && name.isNotEmpty
+        ? name.split(RegExp(r'\s+')).first
         : 'Farmer';
-
-    return Scaffold(
-      body: Stack(
-        children: [
-          // Background image
-          Container(
-            width: double.infinity,
-            height: double.infinity,
-            decoration: const BoxDecoration(
-              image: DecorationImage(
-                image: AssetImage('assets/images/bg.png'),
-                fit: BoxFit.cover,
-              ),
-            ),
-            // Dark overlay for better text visibility
-            child: Container(
-              color: Colors.black.withValues(alpha: 0.4),
-            ),
-          ),
-
-          // Content
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Logo and brand name at the top
-                  Center(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        // Logo image
-                        Image.asset(
-                          'assets/images/logo.png',
-                          width: 40,
-                          height: 40,
-                        ),
-                        const SizedBox(width: 10),
-                        // Brand name
-                        Text(
-                          'VISAIA',
-                          style: GoogleFonts.inter(
-                            color: Colors.white,
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 2.0,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  const Spacer(flex: 4),
-
-                  // Main tagline with colored "Protected 24/7"
-                  RichText(
-                    text: TextSpan(
-                      style: GoogleFonts.inter(
-                        color: Colors.white,
-                        fontSize: 40,
-                        fontWeight: FontWeight.bold,
-                        height: 1.2,
-                      ),
-                      children: const [
-                        TextSpan(text: 'Rest Easy Knowing\nYour Crops Are\n'),
-                        TextSpan(
-                          text: 'Protected 24/7.',
-                          style: TextStyle(color: Color(0xFF8DBA60)),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 40),
-
-                  // Row with text container and images
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      // Square container with text
-                      Container(
-                        width: 110,
-                        height: 150,
-                        padding: const EdgeInsets.all(8.0),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.8),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Center(
-                          child: Text(
-                            'Join farmers sharing alerts and solutions.',
-                            style: GoogleFonts.inter(
-                              color: const Color(0xFF333333),
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                            ),
-                            textAlign: TextAlign.center,
-                            maxLines: 5,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      // First crop image
-                      Container(
-                        width: 110,
-                        height: 150,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(12),
-                          image: const DecorationImage(
-                            image: AssetImage('assets/images/img1.png'),
-                            fit: BoxFit.cover,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      // Second crop image
-                      Container(
-                        width: 110,
-                        height: 150,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(12),
-                          image: const DecorationImage(
-                            image: AssetImage('assets/images/img2.png'),
-                            fit: BoxFit.cover,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const Spacer(flex: 1),
-
-                  // Action buttons
-                  if (_hasSavedAccount) ...[
-                    // Continue as [Name] button
-                    Center(
-                      child: SizedBox(
-                        width: double.infinity,
-                        height: 54,
-                        child: ElevatedButton.icon(
-                          onPressed: _isLoading ? null : _continueSavedSession,
-                          icon: _isLoading
-                              ? const SizedBox(
-                                  height: 20,
-                                  width: 20,
-                                  child: CircularProgressIndicator(
-                                    color: Colors.white,
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.arrow_forward_rounded, color: Colors.white),
-                          label: Text(
-                            _isLoading ? 'Loading...' : 'Continue as $displayName',
-                            style: GoogleFonts.inter(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF4CAF50),
-                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(30),
-                            ),
-                            elevation: 4,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Center(
-                      child: TextButton(
-                        onPressed: () => Navigator.pushNamed(context, '/login'),
-                        child: Text(
-                          'Switch or use another account',
-                          style: GoogleFonts.inter(
-                            color: Colors.white.withValues(alpha: 0.9),
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            decoration: TextDecoration.underline,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ] else ...[
-                    // Standard Start Farming button
-                    Center(
-                      child: ElevatedButton(
-                        onPressed: () {
-                          Navigator.pushNamed(context, '/login');
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF4CAF50),
-                          padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(30),
-                          ),
-                        ),
-                        child: Text(
-                          'Start Farming',
-                          style: GoogleFonts.inter(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.light.copyWith(
+        statusBarColor: Colors.transparent,
+        systemNavigationBarColor: const Color(0xFF0F1B0D),
+      ),
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0F1B0D),
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.asset('assets/images/login-bg.png', fit: BoxFit.cover),
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color(0x220F1B0D),
+                    Color(0x550F1B0D),
+                    Color(0xDD0F1B0D),
                   ],
-
-                  const Spacer(flex: 1),
-                ],
+                ),
               ),
             ),
-          ),
-        ],
+            SafeArea(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 24,
+                    ),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        minHeight: (constraints.maxHeight - 48).clamp(
+                          0.0,
+                          double.infinity,
+                        ),
+                      ),
+                      child: IntrinsicHeight(
+                        child: Column(
+                          children: [
+                            Image.asset(
+                              'assets/images/logo.png',
+                              width: 78,
+                              height: 78,
+                              semanticLabel: 'Visaia logo',
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              'VISAIA',
+                              style: GoogleFonts.epilogue(
+                                color: Colors.white,
+                                fontSize: 32,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 4,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'SMART CROP PROTECTION',
+                              textAlign: TextAlign.center,
+                              style: GoogleFonts.epilogue(
+                                color: const Color(0xFFD5E8BC),
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 2,
+                              ),
+                            ),
+                            const SizedBox(height: 56),
+                            const Spacer(),
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 480),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(30),
+                                child: BackdropFilter(
+                                  filter: ImageFilter.blur(
+                                    sigmaX: 18,
+                                    sigmaY: 18,
+                                  ),
+                                  child: Container(
+                                    padding: const EdgeInsets.all(26),
+                                    decoration: BoxDecoration(
+                                      color: const Color(
+                                        0xFF2E3E24,
+                                      ).withValues(alpha: 0.72),
+                                      borderRadius: BorderRadius.circular(30),
+                                      border: Border.all(
+                                        color: Colors.white.withValues(
+                                          alpha: 0.25,
+                                        ),
+                                      ),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            const Icon(
+                                              Icons.spa_outlined,
+                                              color: Color(0xFFBADA9B),
+                                              size: 19,
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Expanded(
+                                              child: Text(
+                                                _hasSavedAccount
+                                                    ? 'WELCOME BACK'
+                                                    : 'GROW WITH CONFIDENCE',
+                                                style: GoogleFonts.epilogue(
+                                                  color: const Color(
+                                                    0xFFBADA9B,
+                                                  ),
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.w700,
+                                                  letterSpacing: 1.5,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 20),
+                                        Text(
+                                          'A little care.\nA thriving farm.',
+                                          style: GoogleFonts.epilogue(
+                                            color: Colors.white,
+                                            fontSize: 34,
+                                            fontWeight: FontWeight.w800,
+                                            height: 1.15,
+                                            letterSpacing: -1.2,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 16),
+                                        Text(
+                                          _hasSavedAccount
+                                              ? 'Your crops, your community, your next season. Pick up where you left off.'
+                                              : 'Keep an eye on your crops and connect with a community that grows together.',
+                                          style: GoogleFonts.epilogue(
+                                            color: const Color(0xFFDCE4D6),
+                                            fontSize: 14,
+                                            height: 1.65,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 28),
+                                        SizedBox(
+                                          width: double.infinity,
+                                          child: ElevatedButton(
+                                            onPressed: _checking || _isLoading
+                                                ? null
+                                                : (_hasSavedAccount
+                                                      ? _continueSavedSession
+                                                      : _openLogin),
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: const Color(
+                                                0xFF1B6A2D,
+                                              ),
+                                              foregroundColor: Colors.white,
+                                              disabledBackgroundColor:
+                                                  const Color(0xFF31563A),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 20,
+                                                    vertical: 18,
+                                                  ),
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(28),
+                                              ),
+                                            ),
+                                            child: _checking || _isLoading
+                                                ? const SizedBox(
+                                                    width: 20,
+                                                    height: 20,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                          strokeWidth: 2,
+                                                          color: Colors.white,
+                                                        ),
+                                                  )
+                                                : Row(
+                                                    mainAxisAlignment:
+                                                        MainAxisAlignment
+                                                            .center,
+                                                    children: [
+                                                      Flexible(
+                                                        child: Text(
+                                                          _hasSavedAccount
+                                                              ? 'Continue as $displayName'
+                                                              : 'Get started',
+                                                          textAlign:
+                                                              TextAlign.center,
+                                                          style:
+                                                              GoogleFonts.epilogue(
+                                                                fontSize: 15,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w700,
+                                                              ),
+                                                        ),
+                                                      ),
+                                                      const SizedBox(width: 10),
+                                                      const Icon(
+                                                        Icons
+                                                            .arrow_forward_rounded,
+                                                        size: 19,
+                                                      ),
+                                                    ],
+                                                  ),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 10),
+                                        Center(
+                                          child: TextButton(
+                                            onPressed: _checking || _isLoading
+                                                ? null
+                                                : (_hasSavedAccount
+                                                      ? _openLogin
+                                                      : () =>
+                                                            Navigator.pushNamed(
+                                                              context,
+                                                              '/register',
+                                                            )),
+                                            child: Text(
+                                              _hasSavedAccount
+                                                  ? 'Use another account'
+                                                  : 'Create an account',
+                                              style: GoogleFonts.epilogue(
+                                                color: Colors.white,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+                            Text(
+                              'Rooted in care. Ready for tomorrow.',
+                              textAlign: TextAlign.center,
+                              style: GoogleFonts.epilogue(
+                                color: const Color(0xFFC8D4BD),
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

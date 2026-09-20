@@ -264,11 +264,11 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
       // Calculate the current growth stage based on planting date
       final now = DateTime.now();
       final planting = plantingDate ?? now;
-      final currentDap = now.difference(planting).inDays.clamp(0, 75);
+      final currentDap = (now.difference(planting).inDays).clamp(0, 365);
       final currentGrowthStage = getGrowthStage(currentDap);
       
       // Get all growth stages for this cycle (weekly breakdown)
-      final harvest = harvestDate ?? planting.add(const Duration(days: 75));
+      final harvest = harvestDate ?? planting.add(const Duration(days: 105));
       final weeklyStages = getGrowthStagesForCycle(planting, harvest);
 
       await FirebaseFirestore.instance

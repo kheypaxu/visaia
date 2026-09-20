@@ -44,4 +44,22 @@ void main() {
   test('DAP counts calendar days regardless of planting time', () {
     expect(scoutingReportDap(planting, DateTime(2026, 9, 2)), 1);
   });
+
+  test('Growth stages are properly resolved across full crop cycle including 75+ DAP', () {
+    expect(getGrowthStage(0).name, 'Seedling');
+    expect(getGrowthStage(14).name, 'Seedling');
+    expect(getGrowthStage(15).name, 'Early Vegetative');
+    expect(getGrowthStage(29).name, 'Early Vegetative');
+    expect(getGrowthStage(30).name, 'Late Vegetative');
+    expect(getGrowthStage(45).name, 'Late Vegetative');
+    expect(getGrowthStage(46).name, 'Tasseling-Silking');
+    expect(getGrowthStage(55).name, 'Tasseling-Silking');
+    expect(getGrowthStage(56).name, 'Grain Fill');
+    expect(getGrowthStage(74).name, 'Grain Fill');
+    expect(getGrowthStage(75).name, 'Maturity');
+    expect(getGrowthStage(85).name, 'Maturity');
+    expect(getGrowthStage(105).name, 'Maturity');
+    expect(getGrowthStage(120).name, 'Maturity');
+    expect(getGrowthStage(-1).name, 'Unknown');
+  });
 }

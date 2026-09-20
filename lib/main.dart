@@ -1,5 +1,4 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
@@ -9,6 +8,7 @@ import 'package:visaia/screens/auth/login_screen.dart';
 import 'package:visaia/screens/root_screen.dart';
 import 'package:visaia/screens/auth/registration_screen.dart';
 import 'package:visaia/screens/onboarding/get_started_screen.dart';
+import 'package:visaia/screens/onboarding/splash_screen.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:visaia/services/auth_cache_service.dart';
 import 'package:visaia/services/connectivity_service.dart';
@@ -40,29 +40,15 @@ void main() async {
   final syncService = OfflineSyncService();
   await syncService.init();
 
-  // Check if session is already cached or active
-  final hasActiveUser = FirebaseAuth.instance.currentUser != null;
-  final hasCachedSession = authCacheService.hasCachedSession;
-  if (hasActiveUser || hasCachedSession) {
-    authCacheService.isOfflineSessionActive = true;
-  }
-
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => FarmProvider(),
-      child: MyApp(
-        initialRoute: hasActiveUser || hasCachedSession
-            ? '/auth-gate'
-            : '/get-started',
-      ),
-    ),
+    ChangeNotifierProvider(create: (_) => FarmProvider(), child: const MyApp()),
   );
 }
 
 class MyApp extends StatelessWidget {
   final String initialRoute;
 
-  const MyApp({super.key, this.initialRoute = '/get-started'});
+  const MyApp({super.key, this.initialRoute = '/splash'});
 
   @override
   Widget build(BuildContext context) {
@@ -78,8 +64,21 @@ class MyApp extends StatelessWidget {
       builder: (context, child) =>
           AppVersionGate(navigatorKey: appNavigatorKey, child: child!),
       initialRoute: initialRoute,
+      onGenerateRoute: (settings) {
+        if (settings.name != '/get-started') return null;
+        return PageRouteBuilder<void>(
+          settings: settings,
+          transitionDuration: const Duration(milliseconds: 650),
+          pageBuilder: (context, animation, secondaryAnimation) =>
+              const GetStartedPage(),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            if (MediaQuery.disableAnimationsOf(context)) return child;
+            return FadeTransition(opacity: animation, child: child);
+          },
+        );
+      },
       routes: {
-        '/get-started': (context) => const GetStartedPage(),
+        '/splash': (context) => const SplashScreen(),
         '/login': (context) => const LoginPage(),
         '/register': (context) => const RegistrationPage(),
         '/auth-gate': (context) => const AuthGate(),
