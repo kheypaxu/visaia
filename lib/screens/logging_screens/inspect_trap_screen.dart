@@ -367,7 +367,7 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
         debugPrint('Error getting cycleDoc for trap inspection (offline): $e');
       }
       
-      final plantingDate = (cycleDoc.data()?['plantingDate'] as Timestamp?)?.toDate();
+      final plantingDate = (cycleDoc?.data()?['plantingDate'] as Timestamp?)?.toDate();
       if (plantingDate != null) {
         final dayIndex = _selectedDate.difference(plantingDate).inDays;
         if (dayIndex >= 0) {

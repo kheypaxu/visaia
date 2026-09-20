@@ -13,6 +13,7 @@ import 'package:visaia/screens/logging_screens/field_scouting_demo.dart';
 import 'package:visaia/screens/logging_screens/trap_lists.dart';
 import 'package:visaia/screens/logging_screens/trap_guide.dart';
 import 'package:visaia/utils/growth_stage.dart';
+import 'package:visaia/utils/chemical_task_policy.dart';
 import 'package:visaia/widgets/database_image.dart';
 import 'package:visaia/services/auth_cache_service.dart';
 import 'package:visaia/services/firestore_safe_ext.dart';
@@ -120,7 +121,8 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   bool _isCalculatingThreshold = false;
   String? _selectedControlMethod;
   bool _wasThresholdTriggered = false;
-  Map<String, dynamic>? _pendingChemicalRecommendation;
+  int? _chemicalControlStartWeek;
+  int? _loadedWeekIndex;
   bool _trapsInstalled = false;
   String _fieldId = '';
   String _farmId = '';
@@ -381,6 +383,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
       },
       {
         'title': 'Spray if Moths Observed',
+        'requiresChemicalEligibility': true,
         'description': 'If butterflies or moths are sighted in large numbers, apply recommended insecticide.',
         'icon': Icons.bug_report,
         'category': 'Pest Control',
@@ -445,6 +448,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
       },
       {
         'title': 'Spray if Pest Threshold Met',
+        'requiresChemicalEligibility': true,
         'description': 'If pest damage exceeds economic threshold (>20% leaf damage), apply insecticide.',
         'icon': Icons.bug_report,
         'category': 'Pest Control',
@@ -992,6 +996,8 @@ Future<void> _loadCycleData() async {
     }
 
     final controlMethod = cycle['controlMethod'] as String?;
+    final selectedAt = (cycle['controlMethodSelectedAt'] as Timestamp?)?.toDate();
+    final savedStartWeek = cycle['chemicalControlStartWeek'] as int?;
 
     // Fetch farmer ID from cycle or from the farm
     String farmerId = cycle['farmerId'] as String? ?? '';
@@ -1077,6 +1083,10 @@ Future<void> _loadCycleData() async {
         ((_selectedWeek * 7 + 6).clamp(0, _totalDays - 1)),
       );
       _selectedControlMethod = controlMethod;
+      _chemicalControlStartWeek = savedStartWeek ??
+          (controlMethod == 'chemical' && selectedAt != null
+              ? (selectedAt.difference(planting).inDays ~/ 7 + 1).clamp(1, 52)
+              : null);
       _trapsInstalled = cycle['trapsInstalled'] == true;
     });
 
@@ -1100,13 +1110,17 @@ Future<void> _loadCycleData() async {
 
   Future<void> _loadWeekData(int weekIndex) async {
     if (weekIndex < 0 || weekIndex >= _totalWeeks) return;
-    setState(() => _isWeekLoading = true);
+    setState(() {
+      _isWeekLoading = true;
+      _loadedWeekIndex = null;
+    });
 
     try {
       final weekId = 'week_${weekIndex + 1}';
       final weekData = await _firestoreService
           .getWeek(widget.cycleId, weekId)
           .timeout(const Duration(seconds: 15));
+      if (!mounted || weekIndex != _selectedWeek) return;
 
       final loadedTaskState = <int, String>{};
       if (weekData != null && weekData['recommendedTaskState'] != null) {
@@ -1132,6 +1146,7 @@ Future<void> _loadCycleData() async {
           _showClusteredReportButton = allCompleted;
           _wasThresholdTriggered = damagePercent >= 10.0;
           _recommendedTaskState[weekIndex] = loadedTaskState;
+          _loadedWeekIndex = weekIndex;
         });
       } else {
         setState(() {
@@ -1140,20 +1155,25 @@ Future<void> _loadCycleData() async {
           _showClusteredReportButton = false;
           _wasThresholdTriggered = false;
           _recommendedTaskState[weekIndex] = loadedTaskState;
+          _loadedWeekIndex = weekIndex;
         });
       }
     } on TimeoutException {
+      if (!mounted || weekIndex != _selectedWeek) return;
       setState(() {
         _stationData = _getDefaultStations(5);
         _expandedStationIndex = -1;
       });
     } catch (e) {
+      if (!mounted || weekIndex != _selectedWeek) return;
       setState(() {
         _stationData = _getDefaultStations(5);
         _expandedStationIndex = -1;
       });
     } finally {
-      setState(() => _isWeekLoading = false);
+      if (mounted && weekIndex == _selectedWeek) {
+        setState(() => _isWeekLoading = false);
+      }
     }
   }
 
@@ -1832,10 +1852,8 @@ if (isBiological) {
 }
 
   Future<void> _selectControlMethod(String method) async {
-  setState(() {
-    _selectedControlMethod = method;
-    _showControlModal = false;
-  });
+  if (_isCurrentWeekLocked || _isWeekLoading) return;
+  final startWeek = _chemicalControlStartWeek ?? _selectedWeek + 1;
 
   try {
     await FirebaseFirestore.instance
@@ -1846,6 +1864,13 @@ if (isBiological) {
         .update({
       'controlMethod': method,
       'controlMethodSelectedAt': FieldValue.serverTimestamp(),
+      if (method == 'chemical') 'chemicalControlStartWeek': startWeek,
+    });
+    if (!mounted) return;
+    setState(() {
+      _selectedControlMethod = method;
+      if (method == 'chemical') _chemicalControlStartWeek = startWeek;
+      _showControlModal = false;
     });
 
     if (mounted) {
@@ -1854,7 +1879,7 @@ if (isBiological) {
           content: Text(
             method == 'biological'
                 ? 'Biological control selected. Install traps to start monitoring.'
-                : 'Chemical control selected. Chemical recommendations will appear in your tasks.',
+                : 'Chemical control selected. Application tasks appear only for weeks with qualifying scouting results.',
           ),
           backgroundColor: method == 'biological' 
               ? const Color(0xFF2E7D32)
@@ -1865,7 +1890,6 @@ if (isBiological) {
     }
 
     if (method == 'chemical' && mounted) {
-      await Future.delayed(const Duration(milliseconds: 500));
       _addChemicalRecommendationsToTasks();
     }
   } catch (e) {
@@ -2136,22 +2160,16 @@ Map<String, dynamic> _getChemicalRecommendation() {
 }
 
 void _addChemicalRecommendationsToTasks() {
-  final recommendation = _getChemicalRecommendation();
-  
-  setState(() {
-    _pendingChemicalRecommendation = recommendation;
-  });
-  
-  final weekNumber = _selectedWeek + 1;
-  if (weekNumber <= 8) {
-    setState(() {});
-  }
+  final eligible = _isChemicalEligibleForSelectedWeek;
+  setState(() {});
   
   if (mounted) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Chemical recommendations added to your tasks!'),
-        backgroundColor: const Color(0xFFC62828),
+        content: Text(eligible
+            ? 'Chemical recommendations added for this week.'
+            : 'No chemical application task: this week must have completed scouting that meets the damage threshold.'),
+        backgroundColor: eligible ? const Color(0xFFC62828) : kActionGreen,
         duration: const Duration(seconds: 2),
       ),
     );
@@ -2596,25 +2614,36 @@ Widget _buildGrowthStageCard() {
     );
   }
 
+  bool get _isChemicalEligibleForSelectedWeek =>
+      !_isWeekLoading && _loadedWeekIndex == _selectedWeek &&
+      isChemicalTaskEligible(
+        controlMethod: _selectedControlMethod,
+        startWeek: _chemicalControlStartWeek,
+        weekNumber: _selectedWeek + 1,
+        isFutureWeek: _isCurrentWeekLocked,
+        stations: _stationData,
+      );
+
   List<Map<String, dynamic>> _getChemicalTasksForWeek(int weekNumber) {
-  if (_selectedControlMethod != 'chemical') return [];
+  if (_isWeekLoading || _loadedWeekIndex != _selectedWeek ||
+      weekNumber != _selectedWeek + 1) {
+    return [];
+  }
+  final chemicalIndex = (_weeklyRecommendedTasks[weekNumber] ?? []).length;
+  final completed = _recommendedTaskState[_selectedWeek]?[chemicalIndex] == 'completed';
+  if (!_isChemicalEligibleForSelectedWeek && !completed) return [];
   
-  List<Map<String, dynamic>> chemicalTasks = [];
-  
-  if (_pendingChemicalRecommendation != null) {
-    chemicalTasks.add({
-      'title': _pendingChemicalRecommendation!['title'] ?? 'Apply Chemical Control',
-      'description': _pendingChemicalRecommendation!['description'] ?? 'Apply recommended chemical treatment.',
+  final recommendation = _getChemicalRecommendation();
+  return [{
+      'title': recommendation['title'] ?? 'Apply Chemical Control',
+      'description': recommendation['description'] ?? 'Apply recommended chemical treatment.',
       'icon': Icons.science,
       'category': 'Chemical Control',
       'isChemical': true,
-      'details': _pendingChemicalRecommendation!['details'],
-      'chemicals': _pendingChemicalRecommendation!['chemicals'],
-      'stage': _pendingChemicalRecommendation!['stage'],
-    });
-  }
-  
-  return chemicalTasks;
+      'details': recommendation['details'],
+      'chemicals': recommendation['chemicals'],
+      'stage': recommendation['stage'],
+    }];
 }
 
   // ========================
@@ -2635,6 +2664,11 @@ Widget _buildRecommendedTasksSection() {
 
   for (int i = 0; i < allTasks.length; i++) {
     final status = stateMap[i];
+    // Keep original indices so saved completion/removal states remain valid.
+    if (allTasks[i]['requiresChemicalEligibility'] == true &&
+        !_isChemicalEligibleForSelectedWeek && status != 'completed') {
+      continue;
+    }
     if (status == 'deleted') continue;
     if (status == 'completed') {
       completedTasks.add(MapEntry(i, allTasks[i]));
