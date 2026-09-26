@@ -192,9 +192,8 @@ class AppVersionService {
           latestBuild: remoteBuild,
         ),
         downloadUrl: apkUrl,
-        updateMessage: body.isNotEmpty
-            ? body
-            : 'A new version of VISAAIA (v$remoteVersion) is available.',
+        updateMessage:
+            'A new version of VISAAIA (v$remoteVersion) is available.',
         maintenanceMode: false,
       );
 

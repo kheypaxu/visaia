@@ -254,7 +254,7 @@ class _InAppUpdateDialogState extends State<_InAppUpdateDialog> {
               ),
               const SizedBox(height: 10),
               Text(
-                _errorMessage ?? widget.config.updateMessage,
+                _errorMessage ?? 'Please update to the latest version to continue using VISAAIA.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       height: 1.45,
