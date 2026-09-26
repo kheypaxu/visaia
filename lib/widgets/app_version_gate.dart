@@ -26,7 +26,7 @@ class _AppVersionGateState extends State<AppVersionGate>
   );
 
   StreamSubscription<AppVersionCheckResult>? _subscription;
-  bool _isDialogOpen = false;
+  AppVersionCheckResult? _activeResult;
 
   @override
   void initState() {
@@ -63,74 +63,9 @@ class _AppVersionGateState extends State<AppVersionGate>
 
   void _handleResult(AppVersionCheckResult result) {
     if (!mounted) return;
-
-    final navContext = widget.navigatorKey.currentContext;
-    if (navContext == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _handleResult(result);
-      });
-      return;
-    }
-
-    switch (result.status) {
-      case UpdateStatus.requiredUpdate:
-        if (result.config != null && !_isDialogOpen) {
-          _showUpdateDialog(result.config!);
-        }
-      case UpdateStatus.maintenance:
-        if (result.config != null && !_isDialogOpen) {
-          _showMaintenanceDialog(result.config!);
-        }
-      case UpdateStatus.upToDate:
-      case UpdateStatus.unavailable:
-        break;
-    }
-  }
-
-  Future<void> _showUpdateDialog(AppReleaseConfig config) async {
-    final navContext = widget.navigatorKey.currentContext;
-    if (navContext == null || _isDialogOpen) return;
-
-    _isDialogOpen = true;
-
-    try {
-      await showDialog<void>(
-        context: navContext,
-        barrierDismissible: false,
-        builder: (_) => PopScope(
-          canPop: false,
-          child: _InAppUpdateDialog(
-            config: config,
-            onOpenBrowser: () => _openDownloadPage(config.downloadUrl),
-          ),
-        ),
-      );
-    } finally {
-      _isDialogOpen = false;
-    }
-  }
-
-  Future<void> _showMaintenanceDialog(AppReleaseConfig config) async {
-    final navContext = widget.navigatorKey.currentContext;
-    if (navContext == null || _isDialogOpen) return;
-
-    _isDialogOpen = true;
-
-    try {
-      await showDialog<void>(
-        context: navContext,
-        barrierDismissible: false,
-        builder: (_) => PopScope(
-          canPop: false,
-          child: AlertDialog(
-            title: const Text('Temporarily unavailable'),
-            content: Text(config.updateMessage),
-          ),
-        ),
-      );
-    } finally {
-      _isDialogOpen = false;
-    }
+    setState(() {
+      _activeResult = result;
+    });
   }
 
   Future<void> _openDownloadPage(String configuredUrl) async {
@@ -142,7 +77,82 @@ class _AppVersionGateState extends State<AppVersionGate>
   }
 
   @override
-  Widget build(BuildContext context) => widget.child;
+  Widget build(BuildContext context) {
+    final activeConfig = _activeResult?.config;
+    final status = _activeResult?.status;
+
+    final isRequiredUpdate =
+        status == UpdateStatus.requiredUpdate && activeConfig != null;
+    final isMaintenance =
+        status == UpdateStatus.maintenance && activeConfig != null;
+
+    if (!isRequiredUpdate && !isMaintenance) {
+      return widget.child;
+    }
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        widget.child,
+        // Persistent modal barrier
+        ModalBarrier(
+          dismissible: false,
+          color: Colors.black.withValues(alpha: 0.65),
+        ),
+        // Persistent update / maintenance gate above navigator stack
+        PopScope(
+          canPop: false,
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(vertical: 24),
+              child: isRequiredUpdate
+                  ? _InAppUpdateDialog(
+                      config: activeConfig,
+                      onOpenBrowser: () =>
+                          _openDownloadPage(activeConfig.downloadUrl),
+                    )
+                  : Dialog(
+                      insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(24),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.build_circle_outlined,
+                              size: 48,
+                              color: Color(0xFFE65100),
+                            ),
+                            const SizedBox(height: 16),
+                            const Text(
+                              'Temporarily unavailable',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 18,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              activeConfig.updateMessage,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                height: 1.45,
+                                color: Color(0xFF5B665F),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _InAppUpdateDialog extends StatefulWidget {
