@@ -73,15 +73,6 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
     _damagePhotos = List<String>.from(widget.station['damagePhotos'] ?? []);
   }
 
-  bool _hasFAWPresence() {
-    final eggs = widget.station['eggMasses'] as int? ?? 0;
-    final larvae = widget.station['larvae'] as int? ?? 0;
-    final pupae = widget.station['pupae'] as int? ?? 0;
-    final moths = widget.station['moths'] as int? ?? 0;
-    final fawObserved = widget.station['fawObserved'] as bool? ?? false;
-    return eggs > 0 || larvae > 0 || pupae > 0 || moths > 0 || fawObserved;
-  }
-
   Widget _buildImage(String imageData) {
     return DatabaseImage(source: imageData);
   }
@@ -127,11 +118,12 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
     }
   }
 
-  // ==================== PEST VERIFICATION METHODS ====================
+  // ==================== IMAGE PICKING & UPLOADING ====================
   bool get _isUploading =>
       _isDamageProcessing || _isProcessing.values.any((value) => value);
 
-  Future<void> _pickAndUploadImage(ImageSource source, String category) async {
+  // Pick single image via Camera
+  Future<void> _captureImageWithCamera(String category) async {
     if (_isUploading) return;
     final isDamage = category == 'damage';
     setState(() {
@@ -144,7 +136,7 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
 
     try {
       final image = await _picker.pickImage(
-        source: source,
+        source: ImageSource.camera,
         maxWidth: 1280,
         maxHeight: 1280,
         imageQuality: 75,
@@ -161,21 +153,23 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
           _capturedImages[category]!.add(reference);
         }
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '${isDamage ? 'Damage photo' : '${_getPestLabel(category)} image'} uploaded',
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '${isDamage ? 'Damage photo' : '${_getPestLabel(category)} image'} uploaded successfully',
+            ),
+            backgroundColor: _accentGreen,
+            duration: const Duration(seconds: 1),
           ),
-          backgroundColor: _accentGreen,
-          duration: const Duration(seconds: 1),
-        ),
-      );
+        );
+      }
     } catch (e) {
-      debugPrint('Error selecting verification image: $e');
+      debugPrint('Error capturing image: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Could not select the photo. Please try again.'),
+            content: Text('Could not capture photo. Please try again.'),
             backgroundColor: Colors.red,
           ),
         );
@@ -193,11 +187,75 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
     }
   }
 
-  Future<void> _capturePestImage(String pestType) =>
-      _pickAndUploadImage(ImageSource.camera, pestType);
+  // Pick multiple images via Gallery (Multi-select)
+  Future<void> _pickImagesFromGallery(String category) async {
+    if (_isUploading) return;
+    final isDamage = category == 'damage';
+    setState(() {
+      if (isDamage) {
+        _isDamageProcessing = true;
+      } else {
+        _isProcessing[category] = true;
+      }
+    });
 
-  Future<void> _pickPestImageFromGallery(String pestType) =>
-      _pickAndUploadImage(ImageSource.gallery, pestType);
+    try {
+      final List<XFile> pickedImages = await _picker.pickMultiImage(
+        maxWidth: 1280,
+        maxHeight: 1280,
+        imageQuality: 75,
+      );
+
+      if (pickedImages.isEmpty || !mounted) return;
+
+      int successCount = 0;
+      for (final xFile in pickedImages) {
+        final reference = await _compressAndUploadImage(File(xFile.path), category);
+        if (reference != null && mounted) {
+          setState(() {
+            if (isDamage) {
+              _damagePhotos.add(reference);
+            } else {
+              _capturedImages[category]!.add(reference);
+            }
+          });
+          successCount++;
+        }
+      }
+
+      if (mounted && successCount > 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Uploaded $successCount ${isDamage ? 'damage' : _getPestLabel(category)} photo(s)',
+            ),
+            backgroundColor: _accentGreen,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error selecting multiple images: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not select photos. Please try again.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          if (isDamage) {
+            _isDamageProcessing = false;
+          } else {
+            _isProcessing[category] = false;
+          }
+        });
+      }
+    }
+  }
 
   void _removePestImage(String pestType, int index) {
     final reference = _capturedImages[pestType]![index];
@@ -209,18 +267,6 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
     });
   }
 
-  String _getPestLabel(String pestType) {
-    final pest = _pestTypes.firstWhere((p) => p['key'] == pestType);
-    return pest['label'] as String;
-  }
-
-  // ==================== DAMAGE VERIFICATION METHODS ====================
-  Future<void> _captureDamagePhoto() =>
-      _pickAndUploadImage(ImageSource.camera, 'damage');
-
-  Future<void> _pickDamagePhotoFromGallery() =>
-      _pickAndUploadImage(ImageSource.gallery, 'damage');
-
   void _removeDamagePhoto(int index) {
     final reference = _damagePhotos[index];
     setState(() {
@@ -231,42 +277,53 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
     });
   }
 
+  String _getPestLabel(String pestType) {
+    final pest = _pestTypes.firstWhere(
+      (p) => p['key'] == pestType,
+      orElse: () => {'label': pestType},
+    );
+    return pest['label'] as String;
+  }
+
   // ==================== SAVE ====================
   void _saveAndComplete() {
     if (_isUploading) return;
-    final incompletePests = <String>[];
+    final missingErrors = <String>[];
     
+    // 1. Check all pest categories
     for (var pest in _pestTypes) {
       final key = pest['key'] as String;
       final count = widget.station[key] as int? ?? 0;
+      final uploadedCount = _capturedImages[key]?.length ?? 0;
       
-      if (count > 0 && (_capturedImages[key]?.isEmpty ?? true)) {
-        incompletePests.add(pest['label'] as String);
+      if (count > 0 && uploadedCount < count) {
+        final missing = count - uploadedCount;
+        missingErrors.add(
+          '${pest['label']}: needs $missing more photo${missing > 1 ? 's' : ''} ($uploadedCount/$count uploaded)',
+        );
       }
     }
 
-    // Check damage verification
+    // 2. Check damage verification
     final damaged = widget.station['damaged'] as int? ?? 0;
-    final hasFAW = _hasFAWPresence();
-    bool damageIncomplete = hasFAW && damaged > 0 && _damagePhotos.isEmpty;
+    if (damaged > 0) {
+      final uploadedDamage = _damagePhotos.length;
+      if (uploadedDamage < damaged) {
+        final missing = damaged - uploadedDamage;
+        missingErrors.add(
+          'Plant Damage: needs $missing more photo${missing > 1 ? 's' : ''} ($uploadedDamage/$damaged uploaded)',
+        );
+      }
+    }
 
-    if (incompletePests.isNotEmpty) {
+    if (missingErrors.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Please capture images for: ${incompletePests.join(", ")}',
+            'Please complete all required photo verifications:\n• ${missingErrors.join("\n• ")}',
           ),
           backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    if (damageIncomplete) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please capture damage photos for verification'),
-          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
         ),
       );
       return;
@@ -285,6 +342,9 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
   // ==================== UI ====================
   @override
   Widget build(BuildContext context) {
+    final damaged = widget.station['damaged'] as int? ?? 0;
+    final hasPests = _pestTypes.any((p) => (widget.station[p['key']] as int? ?? 0) > 0);
+
     return Scaffold(
       backgroundColor: _bgColor,
       appBar: AppBar(
@@ -295,7 +355,7 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
-          'Pest Verification',
+          'Station ${widget.stationIndex + 1} Verification',
           style: GoogleFonts.inter(
             fontWeight: FontWeight.w700,
             color: _green,
@@ -310,30 +370,69 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
           children: [
             _buildHeader(),
             const SizedBox(height: 24),
-            Text(
-              'Pest Verification',
-              style: GoogleFonts.inter(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                color: _textDark,
-              ),
-            ),
-            const SizedBox(height: 16),
-            ..._buildPestVerificationCards(),
-            if (_hasFAWPresence() && (widget.station['damaged'] as int? ?? 0) > 0) ...[
-              const SizedBox(height: 8),
+            
+            if (hasPests) ...[
               Text(
-                'Damage Verification',
+                'Pest Sightings Verification',
                 style: GoogleFonts.inter(
-                  fontSize: 18,
+                  fontSize: 17,
                   fontWeight: FontWeight.w700,
                   color: _textDark,
                 ),
               ),
-              const SizedBox(height: 16),
-              _buildDamageVerificationCard(),
+              const SizedBox(height: 12),
+              ..._buildPestVerificationCards(),
+              const SizedBox(height: 12),
             ],
-            const SizedBox(height: 30),
+
+            if (damaged > 0) ...[
+              Text(
+                'Plant Damage Verification',
+                style: GoogleFonts.inter(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  color: _textDark,
+                ),
+              ),
+              const SizedBox(height: 12),
+              _buildDamageVerificationCard(),
+              const SizedBox(height: 16),
+            ],
+
+            if (!hasPests && damaged == 0) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Column(
+                  children: [
+                    Icon(Icons.check_circle_outline, color: _accentGreen, size: 40),
+                    const SizedBox(height: 10),
+                    Text(
+                      'No Pests or Damage Recorded',
+                      style: GoogleFonts.inter(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: _textDark,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'This station has 0 pests and 0 damaged plants. No photo verification is required.',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.inter(fontSize: 13, color: _textGrey),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            const SizedBox(height: 16),
             _buildSaveButton(),
           ],
         ),
@@ -342,25 +441,31 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
   }
 
   Widget _buildHeader() {
-    int totalPestRequired = 0;
-    int totalPestVerified = 0;
+    int totalRequiredPhotos = 0;
+    int totalUploadedPhotos = 0;
     
     for (var pest in _pestTypes) {
       final key = pest['key'] as String;
       final count = widget.station[key] as int? ?? 0;
       if (count > 0) {
-        totalPestRequired++;
-        if (_capturedImages[key]?.isNotEmpty ?? false) totalPestVerified++;
+        totalRequiredPhotos += count;
+        final uploaded = _capturedImages[key]?.length ?? 0;
+        totalUploadedPhotos += uploaded > count ? count : uploaded;
       }
     }
 
     final damaged = widget.station['damaged'] as int? ?? 0;
-    final hasFAW = _hasFAWPresence();
-    final damageRequired = hasFAW && damaged > 0;
-    final damageVerified = damageRequired ? _damagePhotos.isNotEmpty : true;
+    if (damaged > 0) {
+      totalRequiredPhotos += damaged;
+      final uploaded = _damagePhotos.length;
+      totalUploadedPhotos += uploaded > damaged ? damaged : uploaded;
+    }
 
-    final totalRequired = (damageRequired ? 1 : 0) + totalPestRequired;
-    final totalVerified = (damageRequired && damageVerified ? 1 : 0) + totalPestVerified;
+    final progress = totalRequiredPhotos > 0
+        ? (totalUploadedPhotos / totalRequiredPhotos).clamp(0.0, 1.0)
+        : 1.0;
+
+    final isAllComplete = totalRequiredPhotos == 0 || totalUploadedPhotos >= totalRequiredPhotos;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -380,40 +485,69 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
         children: [
           Row(
             children: [
-              Icon(Icons.verified_outlined, color: _orange, size: 24),
+              Icon(
+                isAllComplete ? Icons.check_circle : Icons.verified_outlined,
+                color: isAllComplete ? _accentGreen : _orange,
+                size: 24,
+              ),
               const SizedBox(width: 12),
               Expanded(
-                child: Text(
-                  'Station ${widget.stationIndex + 1} Verification',
-                  style: GoogleFonts.inter(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    color: _green,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Evidence Verification Requirement',
+                      style: GoogleFonts.inter(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: _green,
+                      ),
+                    ),
+                    Text(
+                      '1 photo required per recorded sighting / damaged plant',
+                      style: GoogleFonts.inter(fontSize: 12, color: _textGrey),
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          if (totalRequired > 0) ...[
+          const SizedBox(height: 14),
+          if (totalRequiredPhotos > 0) ...[
             LinearProgressIndicator(
-              value: totalVerified / totalRequired,
+              value: progress,
               backgroundColor: _lightGreen,
-              valueColor: const AlwaysStoppedAnimation<Color>(_accentGreen),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                isAllComplete ? _accentGreen : _orange,
+              ),
               borderRadius: BorderRadius.circular(8),
-              minHeight: 6,
+              minHeight: 8,
             ),
             const SizedBox(height: 8),
-            Text(
-              '$totalVerified of $totalRequired items verified',
-              style: GoogleFonts.inter(
-                fontSize: 13,
-                color: _textGrey,
-              ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '$totalUploadedPhotos of $totalRequiredPhotos photo(s) uploaded',
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: isAllComplete ? _accentGreen : _textDark,
+                  ),
+                ),
+                Text(
+                  '${(progress * 100).toInt()}%',
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: isAllComplete ? _accentGreen : _textGrey,
+                  ),
+                ),
+              ],
             ),
           ] else
             Text(
-              'No verification required',
+              'No photo verification required for this station',
               style: GoogleFonts.inter(
                 fontSize: 13,
                 color: _textGrey,
@@ -431,11 +565,12 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
     for (var pest in _pestTypes) {
       final key = pest['key'] as String;
       final count = widget.station[key] as int? ?? 0;
-      final hasImages = (_capturedImages[key]?.isNotEmpty ?? false);
-      final needsVerification = count > 0;
+      if (count <= 0) continue;
+
+      final images = _capturedImages[key] ?? [];
+      final uploadedCount = images.length;
+      final isVerified = uploadedCount >= count;
       final isProcessing = _isProcessing[key] ?? false;
-      
-      if (!needsVerification) continue;
       
       cards.add(
         Container(
@@ -445,9 +580,16 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
             color: _cardWhite,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: hasImages ? _accentGreen : Colors.grey.shade200,
+              color: isVerified ? _accentGreen : Colors.orange.shade300,
               width: 1.5,
             ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.03),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -455,16 +597,16 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
               Row(
                 children: [
                   Container(
-                    width: 40,
-                    height: 40,
+                    width: 42,
+                    height: 42,
                     decoration: BoxDecoration(
-                      color: (pest['color'] as Color).withValues(alpha: 0.1),
+                      color: (pest['color'] as Color).withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Icon(
                       pest['icon'] as IconData,
                       color: pest['color'] as Color,
-                      size: 22,
+                      size: 24,
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -477,13 +619,15 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
                           style: GoogleFonts.inter(
                             fontSize: 16,
                             fontWeight: FontWeight.w700,
+                            color: _textDark,
                           ),
                         ),
                         Text(
-                          'Count: $count',
+                          'Observed: $count sighting${count > 1 ? 's' : ''} ($count photo${count > 1 ? 's' : ''} required)',
                           style: GoogleFonts.inter(
                             fontSize: 12,
-                            color: _textGrey,
+                            fontWeight: FontWeight.w500,
+                            color: isVerified ? _accentGreen : Colors.orange.shade900,
                           ),
                         ),
                       ],
@@ -492,27 +636,30 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 10,
-                      vertical: 4,
+                      vertical: 5,
                     ),
                     decoration: BoxDecoration(
-                      color: hasImages ? _lightGreen : Colors.orange.shade50,
+                      color: isVerified ? _lightGreen : Colors.orange.shade50,
                       borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: isVerified ? _accentGreen.withValues(alpha: 0.4) : Colors.orange.shade200,
+                      ),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
-                          hasImages ? Icons.check_circle : Icons.warning_amber,
-                          color: hasImages ? _accentGreen : Colors.orange,
+                          isVerified ? Icons.check_circle : Icons.warning_amber_rounded,
+                          color: isVerified ? _accentGreen : Colors.orange.shade800,
                           size: 14,
                         ),
                         const SizedBox(width: 4),
                         Text(
-                          hasImages ? 'Verified' : 'Required',
+                          isVerified ? 'Verified ($uploadedCount/$count)' : 'Required ($uploadedCount/$count)',
                           style: GoogleFonts.inter(
                             fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: hasImages ? _accentGreen : Colors.orange,
+                            fontWeight: FontWeight.w700,
+                            color: isVerified ? _accentGreen : Colors.orange.shade900,
                           ),
                         ),
                       ],
@@ -521,44 +668,64 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
                 ],
               ),
               
-              // Image thumbnails
-              if (hasImages && _capturedImages[key]!.isNotEmpty) ...[
-                const SizedBox(height: 12),
+              // Image thumbnails list
+              if (images.isNotEmpty) ...[
+                const SizedBox(height: 14),
                 SizedBox(
-                  height: 80,
+                  height: 84,
                   child: ListView.builder(
                     scrollDirection: Axis.horizontal,
-                    itemCount: _capturedImages[key]!.length,
+                    itemCount: images.length,
                     itemBuilder: (context, imgIndex) {
                       return Stack(
                         children: [
                           Container(
-                            width: 80,
-                            height: 80,
-                            margin: const EdgeInsets.only(right: 8),
+                            width: 84,
+                            height: 84,
+                            margin: const EdgeInsets.only(right: 10),
                             decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(8),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: Colors.grey.shade200),
                             ),
                             child: ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: _buildImage(_capturedImages[key]![imgIndex]),
+                              borderRadius: BorderRadius.circular(10),
+                              child: _buildImage(images[imgIndex]),
                             ),
                           ),
                           Positioned(
                             top: 4,
-                            right: 12,
+                            right: 14,
                             child: GestureDetector(
                               onTap: () => _removePestImage(key, imgIndex),
                               child: Container(
-                                padding: const EdgeInsets.all(2),
+                                padding: const EdgeInsets.all(3),
                                 decoration: const BoxDecoration(
-                                  color: Colors.black54,
+                                  color: Colors.black87,
                                   shape: BoxShape.circle,
                                 ),
                                 child: const Icon(
                                   Icons.close,
                                   size: 12,
                                   color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            bottom: 4,
+                            left: 4,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.6),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                '#${imgIndex + 1}',
+                                style: const TextStyle(
+                                  fontSize: 9,
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
                             ),
@@ -570,22 +737,22 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
                 ),
               ],
               
-              if (isProcessing)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  child: LinearProgressIndicator(),
-                ),
+              if (isProcessing) ...[
+                const SizedBox(height: 10),
+                const LinearProgressIndicator(),
+              ],
               
-              const SizedBox(height: 12),
+              const SizedBox(height: 14),
               Row(
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: _isUploading ? null : () => _capturePestImage(key),
+                      onPressed: _isUploading ? null : () => _captureImageWithCamera(key),
                       icon: const Icon(Icons.camera_alt, size: 18),
-                      label: const Text('Capture'),
+                      label: const Text('Camera'),
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 12),
+                        foregroundColor: _green,
                         side: BorderSide(color: _green.withValues(alpha: 0.3)),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
@@ -593,15 +760,17 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 10),
                   Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _isUploading ? null : () => _pickPestImageFromGallery(key),
+                    child: ElevatedButton.icon(
+                      onPressed: _isUploading ? null : () => _pickImagesFromGallery(key),
                       icon: const Icon(Icons.photo_library, size: 18),
-                      label: const Text('Gallery'),
-                      style: OutlinedButton.styleFrom(
+                      label: const Text('Gallery (Multi)'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _lightGreen,
+                        foregroundColor: _green,
+                        elevation: 0,
                         padding: const EdgeInsets.symmetric(vertical: 12),
-                        side: BorderSide(color: _green.withValues(alpha: 0.3)),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
@@ -622,7 +791,8 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
   // ==================== DAMAGE VERIFICATION CARD ====================
   Widget _buildDamageVerificationCard() {
     final damaged = widget.station['damaged'] as int? ?? 0;
-    final hasImages = _damagePhotos.isNotEmpty;
+    final uploadedCount = _damagePhotos.length;
+    final isVerified = uploadedCount >= damaged;
     final isProcessing = _isDamageProcessing;
 
     return Container(
@@ -631,9 +801,16 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
         color: _cardWhite,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: hasImages ? _accentGreen : Colors.grey.shade200,
+          color: isVerified ? _accentGreen : Colors.orange.shade300,
           width: 1.5,
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -641,16 +818,16 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
           Row(
             children: [
               Container(
-                width: 40,
-                height: 40,
+                width: 42,
+                height: 42,
                 decoration: BoxDecoration(
-                  color: _purple.withValues(alpha: 0.1),
+                  color: _purple.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Icon(
-                  Icons.image_outlined,
+                  Icons.eco_rounded,
                   color: _purple,
-                  size: 22,
+                  size: 24,
                 ),
               ),
               const SizedBox(width: 12),
@@ -659,17 +836,19 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Plant Damage',
+                      'Damaged Plants Evidence',
                       style: GoogleFonts.inter(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
+                        color: _textDark,
                       ),
                     ),
                     Text(
-                      'Count: $damaged',
+                      'Recorded: $damaged damaged plant${damaged > 1 ? 's' : ''} ($damaged photo${damaged > 1 ? 's' : ''} required)',
                       style: GoogleFonts.inter(
                         fontSize: 12,
-                        color: _textGrey,
+                        fontWeight: FontWeight.w500,
+                        color: isVerified ? _accentGreen : Colors.orange.shade900,
                       ),
                     ),
                   ],
@@ -678,27 +857,30 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 10,
-                  vertical: 4,
+                  vertical: 5,
                 ),
                 decoration: BoxDecoration(
-                  color: hasImages ? _lightGreen : Colors.orange.shade50,
+                  color: isVerified ? _lightGreen : Colors.orange.shade50,
                   borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: isVerified ? _accentGreen.withValues(alpha: 0.4) : Colors.orange.shade200,
+                  ),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      hasImages ? Icons.check_circle : Icons.warning_amber,
-                      color: hasImages ? _accentGreen : Colors.orange,
+                      isVerified ? Icons.check_circle : Icons.warning_amber_rounded,
+                      color: isVerified ? _accentGreen : Colors.orange.shade800,
                       size: 14,
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      hasImages ? 'Verified' : 'Required',
+                      isVerified ? 'Verified ($uploadedCount/$damaged)' : 'Required ($uploadedCount/$damaged)',
                       style: GoogleFonts.inter(
                         fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: hasImages ? _accentGreen : Colors.orange,
+                        fontWeight: FontWeight.w700,
+                        color: isVerified ? _accentGreen : Colors.orange.shade900,
                       ),
                     ),
                   ],
@@ -708,10 +890,10 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
           ),
           
           // Damage image thumbnails
-          if (hasImages) ...[
-            const SizedBox(height: 12),
+          if (_damagePhotos.isNotEmpty) ...[
+            const SizedBox(height: 14),
             SizedBox(
-              height: 80,
+              height: 84,
               child: ListView.builder(
                 scrollDirection: Axis.horizontal,
                 itemCount: _damagePhotos.length,
@@ -719,32 +901,52 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
                   return Stack(
                     children: [
                       Container(
-                        width: 80,
-                        height: 80,
-                        margin: const EdgeInsets.only(right: 8),
+                        width: 84,
+                        height: 84,
+                        margin: const EdgeInsets.only(right: 10),
                         decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.grey.shade200),
                         ),
                         child: ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(10),
                           child: _buildImage(_damagePhotos[imgIndex]),
                         ),
                       ),
                       Positioned(
                         top: 4,
-                        right: 12,
+                        right: 14,
                         child: GestureDetector(
                           onTap: () => _removeDamagePhoto(imgIndex),
                           child: Container(
-                            padding: const EdgeInsets.all(2),
+                            padding: const EdgeInsets.all(3),
                             decoration: const BoxDecoration(
-                              color: Colors.black54,
+                              color: Colors.black87,
                               shape: BoxShape.circle,
                             ),
                             child: const Icon(
                               Icons.close,
                               size: 12,
                               color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        bottom: 4,
+                        left: 4,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.6),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            'Plant #${imgIndex + 1}',
+                            style: const TextStyle(
+                              fontSize: 9,
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
                             ),
                           ),
                         ),
@@ -756,22 +958,22 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
             ),
           ],
           
-          if (isProcessing)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 8),
-              child: LinearProgressIndicator(),
-            ),
+          if (isProcessing) ...[
+            const SizedBox(height: 10),
+            const LinearProgressIndicator(),
+          ],
           
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           Row(
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: _isUploading ? null : _captureDamagePhoto,
+                  onPressed: _isUploading ? null : () => _captureImageWithCamera('damage'),
                   icon: const Icon(Icons.camera_alt, size: 18),
-                  label: const Text('Capture'),
+                  label: const Text('Camera'),
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 12),
+                    foregroundColor: _purple,
                     side: BorderSide(color: _purple.withValues(alpha: 0.3)),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
@@ -779,15 +981,17 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _isUploading ? null : _pickDamagePhotoFromGallery,
+                child: ElevatedButton.icon(
+                  onPressed: _isUploading ? null : () => _pickImagesFromGallery('damage'),
                   icon: const Icon(Icons.photo_library, size: 18),
-                  label: const Text('Gallery'),
-                  style: OutlinedButton.styleFrom(
+                  label: const Text('Gallery (Multi)'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _purple.withValues(alpha: 0.1),
+                    foregroundColor: _purple,
+                    elevation: 0,
                     padding: const EdgeInsets.symmetric(vertical: 12),
-                    side: BorderSide(color: _purple.withValues(alpha: 0.3)),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -802,14 +1006,14 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
   }
 
   Widget _buildSaveButton() {
-    // Check if all required verifications are complete
     bool allComplete = true;
     
     // Check pests
     for (var pest in _pestTypes) {
       final key = pest['key'] as String;
       final count = widget.station[key] as int? ?? 0;
-      if (count > 0 && (_capturedImages[key]?.isEmpty ?? true)) {
+      final uploaded = _capturedImages[key]?.length ?? 0;
+      if (count > 0 && uploaded < count) {
         allComplete = false;
         break;
       }
@@ -818,8 +1022,8 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
     // Check damage
     if (allComplete) {
       final damaged = widget.station['damaged'] as int? ?? 0;
-      final hasFAW = _hasFAWPresence();
-      if (hasFAW && damaged > 0 && _damagePhotos.isEmpty) {
+      final uploadedDamage = _damagePhotos.length;
+      if (damaged > 0 && uploadedDamage < damaged) {
         allComplete = false;
       }
     }
@@ -836,7 +1040,7 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
           ),
         ),
         child: Text(
-          allComplete ? 'Complete Verification ✓' : 'Complete All Verifications First',
+          allComplete ? 'Complete Verification ✓' : 'Upload All Required Photos First',
           style: GoogleFonts.inter(
             fontSize: 16,
             fontWeight: FontWeight.w700,

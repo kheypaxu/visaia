@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:visaia/screens/dashboard_screens/spread_risk_sheet.dart';
+import 'package:visaia/screens/report_history/report_details.dart';
 
 class ThreatDetailsScreen extends StatelessWidget {
   final String alertId;
@@ -76,6 +77,49 @@ class ThreatDetailsScreen extends StatelessWidget {
                             _buildSectionTitle('Detection Details', Icons.fact_check_outlined),
                             const SizedBox(height: 10),
                             _buildDetailsCard(data),
+                          ],
+                          if (data['reportId'] != null) ...[
+                            const SizedBox(height: 20),
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                onPressed: () async {
+                                  final reportId = data['reportId'].toString();
+                                  final clusteredSnap = await FirebaseFirestore.instance.collection('clustered_reports').doc(reportId).get();
+                                  if (clusteredSnap.exists) {
+                                    final rData = clusteredSnap.data()!;
+                                    rData['reportType'] = 'clustered';
+                                    if (context.mounted) {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(builder: (_) => ReportDetailScreen(reportId: reportId, reportData: rData, reportType: 'clustered')),
+                                      );
+                                    }
+                                    return;
+                                  }
+                                  final regSnap = await FirebaseFirestore.instance.collection('reports').doc(reportId).get();
+                                  if (regSnap.exists && context.mounted) {
+                                    final rData = regSnap.data()!;
+                                    rData['reportType'] = 'regular';
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(builder: (_) => ReportDetailScreen(reportId: reportId, reportData: rData, reportType: 'regular')),
+                                    );
+                                  }
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: darkGreen,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                ),
+                                icon: const Icon(Icons.description_outlined, size: 18),
+                                label: Text(
+                                  'View Full Report & Resolution',
+                                  style: GoogleFonts.manrope(fontWeight: FontWeight.w700, fontSize: 14),
+                                ),
+                              ),
+                            ),
                           ],
                           const SizedBox(height: 24),
                           Align(

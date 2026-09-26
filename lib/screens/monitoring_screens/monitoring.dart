@@ -570,12 +570,13 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     final hasLarvae = (station['larvae'] as int? ?? 0) > 0;
     final hasPupae = (station['pupae'] as int? ?? 0) > 0;
     final hasMoths = (station['moths'] as int? ?? 0) > 0;
+    final hasDamaged = (station['damaged'] as int? ?? 0) > 0;
     
-    if (!hasEggMasses && !hasLarvae && !hasPupae && !hasMoths) {
+    if (!hasEggMasses && !hasLarvae && !hasPupae && !hasMoths && !hasDamaged) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('No pests to verify. Add pest observations first.'),
+            content: Text('No pests or plant damage to verify. Add observations first.'),
             backgroundColor: Colors.orange,
           ),
         );
@@ -612,7 +613,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     setState(() {
       _stationData[index][key] = (_stationData[index][key] as int) + 1;
       
-      if (key == 'eggMasses' || key == 'larvae' || key == 'pupae' || key == 'moths') {
+      if (key == 'eggMasses' || key == 'larvae' || key == 'pupae' || key == 'moths' || key == 'damaged') {
         final newCount = _stationData[index][key] as int;
         if (newCount > 0 && !(_stationData[index]['verificationRequired'] as bool? ?? false)) {
           _stationData[index]['verificationRequired'] = true;
@@ -633,23 +634,19 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     setState(() {
       _stationData[index][key] = (_stationData[index][key] as int) - 1;
       
-      if (key == 'eggMasses' || key == 'larvae' || key == 'pupae' || key == 'moths') {
-        final hasEggs = (_stationData[index]['eggMasses'] as int) > 0;
-        final hasLarvae = (_stationData[index]['larvae'] as int) > 0;
-        final hasPupae = (_stationData[index]['pupae'] as int) > 0;
-        final hasMoths = (_stationData[index]['moths'] as int) > 0;
-        
-        if (!hasEggs && !hasLarvae && !hasPupae && !hasMoths) {
-          _stationData[index]['verificationRequired'] = false;
-          _stationData[index]['verificationCompleted'] = false;
-        }
+      final hasEggs = (_stationData[index]['eggMasses'] as int? ?? 0) > 0;
+      final hasLarvae = (_stationData[index]['larvae'] as int? ?? 0) > 0;
+      final hasPupae = (_stationData[index]['pupae'] as int? ?? 0) > 0;
+      final hasMoths = (_stationData[index]['moths'] as int? ?? 0) > 0;
+      final hasDamaged = (_stationData[index]['damaged'] as int? ?? 0) > 0;
+      
+      if (!hasEggs && !hasLarvae && !hasPupae && !hasMoths && !hasDamaged) {
+        _stationData[index]['verificationRequired'] = false;
+        _stationData[index]['verificationCompleted'] = false;
       }
       
       if (key == 'damaged' && _stationData[index][key] == 0) {
-        final hasOtherSigns = (_stationData[index]['eggMasses'] as int) > 0 ||
-            (_stationData[index]['larvae'] as int) > 0 ||
-            (_stationData[index]['pupae'] as int) > 0 ||
-            (_stationData[index]['moths'] as int) > 0;
+        final hasOtherSigns = hasEggs || hasLarvae || hasPupae || hasMoths;
         if (!hasOtherSigns) _stationData[index]['fawObserved'] = false;
       }
     });
@@ -826,7 +823,7 @@ void _showSafeModal(double percent, int damaged, int inspected) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Please verify all observed pests before completing this station'),
+            content: Text('Please verify all observed pests and damage before completing this station'),
             backgroundColor: Colors.orange,
             duration: Duration(seconds: 3),
           ),
@@ -877,7 +874,8 @@ void _showSafeModal(double percent, int damaged, int inspected) {
     final pupae = station['pupae'] as int? ?? 0;
     final moths = station['moths'] as int? ?? 0;
     final fawObserved = station['fawObserved'] as bool? ?? false;
-    return eggs > 0 || larvae > 0 || pupae > 0 || moths > 0 || fawObserved;
+    final damaged = station['damaged'] as int? ?? 0;
+    return eggs > 0 || larvae > 0 || pupae > 0 || moths > 0 || fawObserved || damaged > 0;
   }
 
   /// Keeps plantDamageScores rows in sync with the current "damaged" count,
@@ -954,8 +952,8 @@ void _showSafeModal(double percent, int damaged, int inspected) {
     }
 
     final photos = (station['damagePhotos'] as List?) ?? [];
-    if (photos.isEmpty) {
-      return 'Please attach a photo showing the visible FAW damage';
+    if (photos.length < damaged) {
+      return 'Please verify and attach $damaged photo(s) showing the visible FAW damage (currently ${photos.length}/$damaged)';
     }
 
     return null;
@@ -3792,7 +3790,7 @@ Widget _buildExpandableStationTile({
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Verification required: Please verify observed pests before completing',
+                              'Verification required: Please verify observed pests or damage evidence before completing',
                               style: GoogleFonts.inter(
                                 fontSize: 11,
                                 color: Colors.orange.shade800,
