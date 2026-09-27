@@ -105,8 +105,12 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
     final isValidated = status.toLowerCase() == 'validated';
     final statusColor = _statusColor(status);
 
-    // Collect all images from capturedImages map
-    final List<String> galleryImages = _extractAllImages(data);
+    // Collect all structured evidence images (both pest sightings and damage plants)
+    final List<_ScoutingEvidenceImage> allEvidence = _extractAllEvidence(data);
+    final List<_ScoutingEvidenceImage> damageImages =
+        allEvidence.where((e) => e.category == 'damage').toList();
+    final List<_ScoutingEvidenceImage> pestImages =
+        allEvidence.where((e) => e.category != 'damage').toList();
 
     return Scaffold(
       backgroundColor: _cream,
@@ -114,7 +118,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
         slivers: [
           // ─── Sliver App Bar ───────────────────────────────────────────────
           SliverAppBar(
-            expandedHeight: galleryImages.isNotEmpty ? 280 : 200,
+            expandedHeight: allEvidence.isNotEmpty ? 290 : 200,
             pinned: true,
             backgroundColor: _forestGreen,
             leading: Padding(
@@ -164,8 +168,8 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
                 fit: StackFit.expand,
                 children: [
                   // Image Gallery or Forest Background
-                  if (galleryImages.isNotEmpty)
-                    _buildGalleryHeader(galleryImages)
+                  if (allEvidence.isNotEmpty)
+                    _buildGalleryHeader(allEvidence)
                   else
                     Container(
                       decoration: const BoxDecoration(
@@ -283,28 +287,56 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
 
                   const SizedBox(height: 16),
 
-                  // 3. Pest Stage Counts (Eggs, Larvae, Pupae, Moths)
-                  _buildPestStageBreakdown(eggs: eggs, larvae: larvae, pupae: pupae, moths: moths, data: data),
+                  // 3. Plant Damage Assessment Card (Detailed Damage, Symptoms & Photos)
+                  _buildPlantDamageAssessmentCard(
+                    data: data,
+                    damageImages: damageImages,
+                    totalInspected: totalInspected,
+                    totalDamaged: totalDamaged,
+                    damagePercentage: damagePercentage,
+                    exceedsThreshold: exceedsThreshold,
+                  ),
 
                   const SizedBox(height: 16),
 
-                  // 4. RCPC Expert Validation Details (if available)
-                  if (isValidated || data['advisoryMessage'] != null || data['validationNotes'] != null)
+                  // 4. Pest Stage Counts & Observed Pest Sightings Photos
+                  _buildPestStageBreakdown(
+                    eggs: eggs,
+                    larvae: larvae,
+                    pupae: pupae,
+                    moths: moths,
+                    data: data,
+                    pestImages: pestImages,
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // 5. Unified Verification Photo Evidence Gallery (if photos exist)
+                  if (allEvidence.isNotEmpty) ...[
+                    _ScoutingEvidenceGalleryCard(
+                      images: allEvidence,
+                      onOpenFullscreen: (list, idx) => _openFullscreenGallery(images: list, initialIndex: idx),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // 6. RCPC Expert Validation Details (if available)
+                  if (isValidated || data['advisoryMessage'] != null || data['validationNotes'] != null) ...[
                     _buildRcpcValidationCard(data),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // 7. Stations Inspection Breakdown (Accordion with Station Photos & Damage Scores)
+                  _buildStationsBreakdown(data['stationsData'], allEvidence),
 
                   const SizedBox(height: 16),
 
-                  // 5. Stations Inspection Breakdown (Accordion)
-                  _buildStationsBreakdown(data['stationsData']),
-
-                  const SizedBox(height: 16),
-
-                  // 6. Field & Cycle Context Card
+                  // 8. Field & Cycle Context Card
                   _buildContextCard(data, timestamp),
 
                   const SizedBox(height: 20),
 
-                  // 7. Resolve CTA (if unresolved)
+                  // 9. Resolve CTA (if unresolved)
                   if (!isResolved && !isRejected)
                     _ResolveCTA(
                       isResolving: _isResolving,
@@ -588,33 +620,40 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
   // HELPER WIDGETS FOR CLUSTERED SCOUTING
   // ══════════════════════════════════════════════════════════════════════════
 
-  Widget _buildGalleryHeader(List<String> images) {
+  Widget _buildGalleryHeader(List<_ScoutingEvidenceImage> images) {
     return PageView.builder(
       itemCount: images.length,
       itemBuilder: (context, index) {
         final img = images[index];
         return GestureDetector(
-          onTap: () => _openFullscreenImage(img),
+          onTap: () => _openFullscreenGallery(images: images, initialIndex: index),
           child: Stack(
             fit: StackFit.expand,
             children: [
-              DatabaseImage(source: img, fit: BoxFit.cover),
+              DatabaseImage(source: img.source, fit: BoxFit.cover),
               Positioned(
                 top: 50,
                 right: 16,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                   decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.6),
+                    color: Colors.black.withValues(alpha: 0.65),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Text(
-                    'Photo ${index + 1}/${images.length}',
-                    style: GoogleFonts.manrope(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
-                    ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(img.icon, size: 12, color: Colors.white),
+                      const SizedBox(width: 5),
+                      Text(
+                        'Photo ${index + 1}/${images.length} · ${img.displayTag}',
+                        style: GoogleFonts.manrope(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -687,12 +726,490 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
     );
   }
 
+  // ─── Plant Damage Assessment Card ──────────────────────────────────────────
+  Widget _buildPlantDamageAssessmentCard({
+    required Map<String, dynamic> data,
+    required List<_ScoutingEvidenceImage> damageImages,
+    required int totalInspected,
+    required int totalDamaged,
+    required double damagePercentage,
+    required bool exceedsThreshold,
+  }) {
+    final damageAssessment = (data['damageAssessment'] as Map<String, dynamic>?) ?? {};
+    final avgWhorl = damageAssessment['averageWhorlLeafScore'] ?? data['averageWhorlScore'];
+    final avgCob = damageAssessment['averageCobScore'] ?? data['averageCobScore'];
+    final stationsData = data['stationsData'] as List?;
+
+    // Collect per-plant scores
+    final plantScores = <Map<String, dynamic>>[];
+    if (damageAssessment['plantScores'] is List) {
+      for (final s in damageAssessment['plantScores']) {
+        if (s is Map<String, dynamic>) plantScores.add(s);
+      }
+    } else if (stationsData != null) {
+      for (int sIdx = 0; sIdx < stationsData.length; sIdx++) {
+        final st = stationsData[sIdx];
+        if (st is Map<String, dynamic>) {
+          final sScores = st['plantDamageScores'] as List?;
+          if (sScores != null) {
+            for (final sc in sScores) {
+              if (sc is Map<String, dynamic>) {
+                plantScores.add({
+                  'station': st['title'] ?? 'Station ${sIdx + 1}',
+                  'plantNumber': sc['plantNumber'],
+                  'whorlScore': sc['whorlScore'],
+                  'cobScore': sc['cobScore'],
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF7B1FA2).withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.eco_rounded, color: Color(0xFF7B1FA2), size: 20),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Plant Damage Assessment',
+                      style: GoogleFonts.epilogue(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: _forestGreen,
+                      ),
+                    ),
+                    Text(
+                      'Visual evaluation of crop leaf & whorl damage ($totalDamaged/$totalInspected plants)',
+                      style: GoogleFonts.manrope(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: exceedsThreshold ? Colors.red.withValues(alpha: 0.1) : Colors.green.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: exceedsThreshold ? Colors.red.withValues(alpha: 0.3) : Colors.green.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Text(
+                  '${damagePercentage.toStringAsFixed(1)}% Damaged',
+                  style: GoogleFonts.manrope(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    color: exceedsThreshold ? Colors.red[700] : Colors.green[700],
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 16),
+
+          // Threshold Alert Box
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: exceedsThreshold ? const Color(0xFFFFF1F0) : const Color(0xFFF0FDF4),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: exceedsThreshold ? const Color(0xFFFECDD3) : const Color(0xFFBBF7D0),
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  exceedsThreshold ? Icons.warning_amber_rounded : Icons.check_circle_outline_rounded,
+                  color: exceedsThreshold ? Colors.red[700] : Colors.green[700],
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        exceedsThreshold
+                            ? 'ACTION THRESHOLD EXCEEDED (≥ 10%)'
+                            : 'BELOW ECONOMIC THRESHOLD (< 10%)',
+                        style: GoogleFonts.manrope(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w800,
+                          color: exceedsThreshold ? Colors.red[800] : Colors.green[800],
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        exceedsThreshold
+                            ? '$totalDamaged out of $totalInspected corn plants (${damagePercentage.toStringAsFixed(1)}%) exhibit active FAW damage. Immediate pest management (biocontrol, botanical, or targeted application) is recommended to prevent yield loss.'
+                            : '$totalDamaged out of $totalInspected plants (${damagePercentage.toStringAsFixed(1)}%) show damage symptoms. Infestation is within acceptable threshold. Continue regular surveillance.',
+                        style: GoogleFonts.manrope(
+                          fontSize: 12,
+                          color: exceedsThreshold ? Colors.red[900] : Colors.green[900],
+                          height: 1.45,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Scoring Metrics (Davis / CIMMYT scale) if scores exist
+          if (avgWhorl != null || avgCob != null) ...[
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                if (avgWhorl != null)
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8F5EF),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade200),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.grading_rounded, size: 14, color: Color(0xFF7B1FA2)),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Avg Whorl Score',
+                                style: GoogleFonts.manrope(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey[600]),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            avgWhorl is num ? '${avgWhorl.toStringAsFixed(1)} / 9' : '$avgWhorl / 9',
+                            style: GoogleFonts.epilogue(fontSize: 16, fontWeight: FontWeight.w800, color: const Color(0xFF7B1FA2)),
+                          ),
+                          Text(
+                            'Davis Scale (1-9)',
+                            style: GoogleFonts.manrope(fontSize: 10, color: Colors.grey[500]),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                if (avgWhorl != null && avgCob != null) const SizedBox(width: 10),
+                if (avgCob != null)
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8F5EF),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade200),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.grain_rounded, size: 14, color: Color(0xFFD97706)),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Avg Cob Score',
+                                style: GoogleFonts.manrope(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey[600]),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            avgCob is num ? '${avgCob.toStringAsFixed(1)} / 9' : '$avgCob / 9',
+                            style: GoogleFonts.epilogue(fontSize: 16, fontWeight: FontWeight.w800, color: const Color(0xFFD97706)),
+                          ),
+                          Text(
+                            'CIMMYT Scale (1-9)',
+                            style: GoogleFonts.manrope(fontSize: 10, color: Colors.grey[500]),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+
+          // Damaged Plants Photo Evidence Carousel
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Text(
+                'Damaged Plants Photo Evidence',
+                style: GoogleFonts.manrope(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w800,
+                  color: _forestGreen,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF7B1FA2).withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '${damageImages.length} photo${damageImages.length == 1 ? '' : 's'}',
+                  style: GoogleFonts.manrope(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF7B1FA2),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+
+          if (damageImages.isNotEmpty)
+            SizedBox(
+              height: 120,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: damageImages.length,
+                itemBuilder: (context, idx) {
+                  final img = damageImages[idx];
+                  return GestureDetector(
+                    onTap: () => _openFullscreenGallery(images: damageImages, initialIndex: idx),
+                    child: Container(
+                      width: 120,
+                      margin: const EdgeInsets.only(right: 10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8F5EF),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade200),
+                      ),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: DatabaseImage(source: img.source, fit: BoxFit.cover),
+                          ),
+                          const DecoratedBox(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.all(Radius.circular(12)),
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                stops: [0.4, 1.0],
+                                colors: [Colors.transparent, Colors.black87],
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            top: 4,
+                            right: 4,
+                            child: Container(
+                              padding: const EdgeInsets.all(3),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.5),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.fullscreen_rounded, size: 12, color: Colors.white),
+                            ),
+                          ),
+                          Positioned(
+                            bottom: 6,
+                            left: 6,
+                            right: 6,
+                            child: Text(
+                              img.displayTag,
+                              style: GoogleFonts.manrope(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            )
+          else
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8F5EF),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey.shade200),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline_rounded, size: 16, color: Colors.grey[600]),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      totalDamaged > 0
+                          ? '$totalDamaged damaged plants were recorded without photo uploads.'
+                          : 'No plant damage was recorded during this scouting session.',
+                      style: GoogleFonts.manrope(fontSize: 12, color: Colors.grey[700]),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // Per-station damage distribution summary
+          if (stationsData != null && stationsData.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Text(
+              'Station Damage Distribution',
+              style: GoogleFonts.manrope(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: Colors.grey[600],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: stationsData.asMap().entries.map((entry) {
+                final idx = entry.key;
+                final s = entry.value as Map<String, dynamic>;
+                final sTitle = s['title'] ?? 'Station ${idx + 1}';
+                final sDamaged = s['damaged'] as int? ?? 0;
+                final sInspected = s['plantsInspected'] as int? ?? 20;
+                final hasDamage = sDamaged > 0;
+
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: hasDamage ? Colors.red.withValues(alpha: 0.08) : Colors.green.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: hasDamage ? Colors.red.withValues(alpha: 0.25) : Colors.green.withValues(alpha: 0.25),
+                    ),
+                  ),
+                  child: Text(
+                    '$sTitle: $sDamaged/$sInspected',
+                    style: GoogleFonts.manrope(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: hasDamage ? Colors.red[800] : Colors.green[800],
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+
+          // Per-plant individual score details (if recorded)
+          if (plantScores.isNotEmpty && plantScores.any((e) => e['whorlScore'] != null || e['cobScore'] != null)) ...[
+            const SizedBox(height: 14),
+            Theme(
+              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: const EdgeInsets.only(top: 8),
+                title: Text(
+                  'Individual Damaged Plant Scores (${plantScores.length})',
+                  style: GoogleFonts.manrope(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: _forestGreen,
+                  ),
+                ),
+                children: [
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: plantScores.map((ps) {
+                      final station = ps['station'] ?? 'Station';
+                      final pNum = ps['plantNumber'] ?? 1;
+                      final whorl = ps['whorlScore'];
+                      final cob = ps['cobScore'];
+
+                      String scoreText = '';
+                      if (whorl != null && cob != null) {
+                        scoreText = 'Whorl: $whorl · Cob: $cob';
+                      } else if (whorl != null) {
+                        scoreText = 'Whorl: $whorl/9';
+                      } else if (cob != null) {
+                        scoreText = 'Cob: $cob/9';
+                      } else {
+                        scoreText = 'Damaged';
+                      }
+
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8F5EF),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: Text(
+                          '$station - Plant #$pNum ($scoreText)',
+                          style: GoogleFonts.manrope(fontSize: 11, fontWeight: FontWeight.w600, color: const Color(0xFF1B3015)),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ─── Pest Life-Stage Inventory & Observed Sighting Photos ──────────────────
   Widget _buildPestStageBreakdown({
     required int eggs,
     required int larvae,
     required int pupae,
     required int moths,
     required Map<String, dynamic> data,
+    required List<_ScoutingEvidenceImage> pestImages,
   }) {
     final larvaRisk = (data['larvaRisk'] as Map<String, dynamic>?)?['riskLevel']?.toString() ?? (larvae > 0 ? 'High' : 'None');
     final mothRisk = (data['mothRisk'] as Map<String, dynamic>?)?['riskLevel']?.toString() ?? (moths > 0 ? 'High' : 'None');
@@ -797,6 +1314,116 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
               ),
             ],
           ),
+
+          // Pest Sightings Photo Evidence Showcase
+          if (pestImages.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Text(
+                  'Observed Pest Sightings Photo Evidence',
+                  style: GoogleFonts.manrope(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: _forestGreen,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '${pestImages.length} photo${pestImages.length == 1 ? '' : 's'}',
+                    style: GoogleFonts.manrope(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.amber[900],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 110,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: pestImages.length,
+                itemBuilder: (context, idx) {
+                  final img = pestImages[idx];
+                  return GestureDetector(
+                    onTap: () => _openFullscreenGallery(images: pestImages, initialIndex: idx),
+                    child: Container(
+                      width: 110,
+                      margin: const EdgeInsets.only(right: 10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8F5EF),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade200),
+                      ),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: DatabaseImage(source: img.source, fit: BoxFit.cover),
+                          ),
+                          const DecoratedBox(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.all(Radius.circular(12)),
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                stops: [0.4, 1.0],
+                                colors: [Colors.transparent, Colors.black87],
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            top: 4,
+                            left: 4,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: img.color.withValues(alpha: 0.9),
+                                borderRadius: BorderRadius.circular(5),
+                              ),
+                              child: Text(
+                                img.categoryLabel,
+                                style: GoogleFonts.manrope(
+                                  fontSize: 8.5,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            bottom: 4,
+                            left: 6,
+                            right: 6,
+                            child: Text(
+                              img.displayTag,
+                              style: GoogleFonts.manrope(
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -937,7 +1564,8 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
     );
   }
 
-  Widget _buildStationsBreakdown(dynamic stationsData) {
+  // ─── Station Scouting Records Breakdown ───────────────────────────────────
+  Widget _buildStationsBreakdown(dynamic stationsData, List<_ScoutingEvidenceImage> allEvidence) {
     if (stationsData is! List || stationsData.isEmpty) {
       return const SizedBox.shrink();
     }
@@ -977,20 +1605,33 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
             ),
           ),
           subtitle: Text(
-            'Detailed breakdown for all ${stationsData.length} stations',
+            'Detailed records and evidence for all ${stationsData.length} stations',
             style: GoogleFonts.manrope(fontSize: 12, color: Colors.grey[600]),
           ),
           children: stationsData.asMap().entries.map((entry) {
             final idx = entry.key;
             final station = entry.value as Map<String, dynamic>;
-            return _buildStationCard(idx + 1, station);
+            final stationTitle = station['title'] ?? 'Station ${idx + 1}';
+
+            // Find all evidence photos specific to this station
+            final stationEvidence = allEvidence.where((e) {
+              if (e.stationTitle != null && e.stationTitle!.toLowerCase() == stationTitle.toString().toLowerCase()) {
+                return true;
+              }
+              if (e.stationIndex != null && e.stationIndex == idx + 1) {
+                return true;
+              }
+              return false;
+            }).toList();
+
+            return _buildStationCard(idx + 1, station, stationEvidence);
           }).toList(),
         ),
       ),
     );
   }
 
-  Widget _buildStationCard(int number, Map<String, dynamic> station) {
+  Widget _buildStationCard(int number, Map<String, dynamic> station, List<_ScoutingEvidenceImage> stationEvidence) {
     final title = station['title'] ?? 'Station $number';
     final plantsInspected = station['plantsInspected'] ?? 20;
     final damaged = station['damaged'] ?? 0;
@@ -999,9 +1640,10 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
     final eggMasses = station['eggMasses'] ?? 0;
     final pupae = station['pupae'] ?? 0;
     final notes = station['notes']?.toString() ?? '';
+    final plantDamageScores = (station['plantDamageScores'] as List?) ?? [];
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: _cream,
@@ -1071,6 +1713,104 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
                 _StationPill(label: 'No pests found', color: Colors.green[700]!),
             ],
           ),
+
+          // Station-specific Photo Evidence (Pests & Damaged Plants)
+          if (stationEvidence.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              'Station Evidence Photos (${stationEvidence.length}):',
+              style: GoogleFonts.manrope(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: Colors.grey[700],
+              ),
+            ),
+            const SizedBox(height: 6),
+            SizedBox(
+              height: 80,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: stationEvidence.length,
+                itemBuilder: (context, sIdx) {
+                  final sImg = stationEvidence[sIdx];
+                  return GestureDetector(
+                    onTap: () => _openFullscreenGallery(images: stationEvidence, initialIndex: sIdx),
+                    child: Container(
+                      width: 80,
+                      margin: const EdgeInsets.only(right: 8),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: DatabaseImage(source: sImg.source, fit: BoxFit.cover),
+                          ),
+                          Positioned(
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: sImg.color.withValues(alpha: 0.85),
+                                borderRadius: const BorderRadius.vertical(bottom: Radius.circular(7)),
+                              ),
+                              child: Text(
+                                sImg.category == 'damage'
+                                    ? (sImg.plantNumber != null ? 'P#${sImg.plantNumber}' : 'Damage')
+                                    : sImg.categoryLabel,
+                                style: const TextStyle(
+                                  fontSize: 8.5,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                                textAlign: TextAlign.center,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+
+          // Plant damage score pills
+          if (plantDamageScores.isNotEmpty &&
+              plantDamageScores.any((e) => e['whorlScore'] != null || e['cobScore'] != null)) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: plantDamageScores.map((ps) {
+                final pNum = ps['plantNumber'] ?? 1;
+                final whorl = ps['whorlScore'];
+                final cob = ps['cobScore'];
+                if (whorl == null && cob == null) return const SizedBox.shrink();
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF7B1FA2).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: const Color(0xFF7B1FA2).withValues(alpha: 0.25)),
+                  ),
+                  child: Text(
+                    'Plant #$pNum: ${whorl != null ? 'Whorl $whorl/9' : ''}${cob != null ? ' Cob $cob/9' : ''}',
+                    style: GoogleFonts.manrope(fontSize: 10.5, fontWeight: FontWeight.w600, color: const Color(0xFF7B1FA2)),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+
           if (notes.isNotEmpty) ...[
             const SizedBox(height: 6),
             Text(
@@ -1106,71 +1846,334 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
     );
   }
 
-  List<String> _extractAllImages(Map<String, dynamic> data) {
-    final List<String> list = [];
-    final capturedImages = data['capturedImages'] as Map<String, dynamic>?;
-    if (capturedImages != null) {
-      for (final stageKey in ['larvae', 'eggMasses', 'damage', 'pupae', 'moths']) {
-        final stageList = capturedImages[stageKey] as List?;
-        if (stageList != null) {
-          for (final img in stageList) {
-            if (img is String && img.isNotEmpty && !list.contains(img)) {
-              list.add(img);
-            }
-          }
-        }
+  // ─── Evidence Extraction Logic ────────────────────────────────────────────
+  List<_ScoutingEvidenceImage> _extractAllEvidence(Map<String, dynamic> data) {
+    final List<_ScoutingEvidenceImage> results = [];
+    final Set<String> seenSources = {};
+
+    void addImage({
+      required String source,
+      required String category,
+      String? stationTitle,
+      int? stationIndex,
+      int? plantNumber,
+    }) {
+      if (source.isEmpty || seenSources.contains(source)) return;
+      seenSources.add(source);
+
+      String label;
+      Color color;
+      IconData icon;
+
+      switch (category.toLowerCase()) {
+        case 'larvae':
+          label = 'Larvae';
+          color = const Color(0xFFFF9800);
+          icon = Icons.bug_report;
+          break;
+        case 'moths':
+        case 'moth':
+          label = 'Adult Moth';
+          color = const Color(0xFF2196F3);
+          icon = Icons.bug_report_outlined;
+          break;
+        case 'eggmasses':
+        case 'eggs':
+        case 'egg':
+          label = 'Egg Mass';
+          color = const Color(0xFFE91E63);
+          icon = Icons.circle;
+          break;
+        case 'pupae':
+        case 'pupa':
+          label = 'Pupae';
+          color = const Color(0xFF9C27B0);
+          icon = Icons.coffee;
+          break;
+        case 'damage':
+        case 'damagephotos':
+        case 'plantdamage':
+        default:
+          label = 'Damaged Plant';
+          color = const Color(0xFF7B1FA2);
+          icon = Icons.eco_rounded;
+          break;
       }
+
+      results.add(_ScoutingEvidenceImage(
+        source: source,
+        category: category.toLowerCase().contains('damage') ? 'damage' : category,
+        categoryLabel: label,
+        stationTitle: stationTitle,
+        stationIndex: stationIndex,
+        plantNumber: plantNumber,
+        color: color,
+        icon: icon,
+      ));
     }
-    // Also check stationsData photos
+
+    // 1. From data['stationsData']
     final stationsData = data['stationsData'] as List?;
     if (stationsData != null) {
-      for (final s in stationsData) {
+      for (int i = 0; i < stationsData.length; i++) {
+        final s = stationsData[i];
         if (s is Map<String, dynamic>) {
+          final title = s['title'] as String? ?? 'Station ${i + 1}';
+
+          // Check direct damagePhotos in station
+          final sDamagePhotos = s['damagePhotos'] as List?;
+          if (sDamagePhotos != null) {
+            for (int pIdx = 0; pIdx < sDamagePhotos.length; pIdx++) {
+              final img = sDamagePhotos[pIdx];
+              if (img is String && img.isNotEmpty) {
+                addImage(
+                  source: img,
+                  category: 'damage',
+                  stationTitle: title,
+                  stationIndex: i + 1,
+                  plantNumber: pIdx + 1,
+                );
+              }
+            }
+          }
+
+          // Check capturedImages map in station
           final sImgs = s['capturedImages'] as Map<String, dynamic>?;
           if (sImgs != null) {
-            for (final listEntry in sImgs.values) {
-              if (listEntry is List) {
-                for (final img in listEntry) {
-                  if (img is String && img.isNotEmpty && !list.contains(img)) {
-                    list.add(img);
+            for (final entry in sImgs.entries) {
+              final key = entry.key;
+              final val = entry.value;
+              if (val is List) {
+                for (int itemIdx = 0; itemIdx < val.length; itemIdx++) {
+                  final img = val[itemIdx];
+                  if (img is String && img.isNotEmpty) {
+                    addImage(
+                      source: img,
+                      category: key,
+                      stationTitle: title,
+                      stationIndex: i + 1,
+                      plantNumber: key == 'damage' ? itemIdx + 1 : null,
+                    );
                   }
                 }
+              }
+            }
+          }
+
+          // Check damageImages list in station
+          final sDamageImages = s['damageImages'] as List?;
+          if (sDamageImages != null) {
+            for (int pIdx = 0; pIdx < sDamageImages.length; pIdx++) {
+              final img = sDamageImages[pIdx];
+              if (img is String && img.isNotEmpty) {
+                addImage(
+                  source: img,
+                  category: 'damage',
+                  stationTitle: title,
+                  stationIndex: i + 1,
+                  plantNumber: pIdx + 1,
+                );
               }
             }
           }
         }
       }
     }
-    return list;
+
+    // 2. From data['capturedImages'] at root
+    final capturedImages = data['capturedImages'] as Map<String, dynamic>?;
+    if (capturedImages != null) {
+      for (final entry in capturedImages.entries) {
+        final key = entry.key;
+        final val = entry.value;
+        if (val is List) {
+          String parsedCategory = key;
+          String? parsedStation;
+          if (key.contains('_')) {
+            final parts = key.split('_');
+            parsedStation = parts.first;
+            parsedCategory = parts.sublist(1).join('_');
+          }
+
+          for (int itemIdx = 0; itemIdx < val.length; itemIdx++) {
+            final img = val[itemIdx];
+            if (img is String && img.isNotEmpty) {
+              addImage(
+                source: img,
+                category: parsedCategory,
+                stationTitle: parsedStation,
+                plantNumber: parsedCategory.toLowerCase().contains('damage') ? itemIdx + 1 : null,
+              );
+            }
+          }
+        }
+      }
+    }
+
+    // 3. From data['allDamagePhotos'] or data['damagePhotos'] at root
+    for (final field in ['allDamagePhotos', 'damagePhotos']) {
+      final directPhotos = data[field] as List?;
+      if (directPhotos != null) {
+        for (int itemIdx = 0; itemIdx < directPhotos.length; itemIdx++) {
+          final img = directPhotos[itemIdx];
+          if (img is String && img.isNotEmpty) {
+            addImage(
+              source: img,
+              category: 'damage',
+              plantNumber: itemIdx + 1,
+            );
+          }
+        }
+      }
+    }
+
+    return results;
   }
 
-  void _openFullscreenImage(String imageSource) {
+  // ─── Interactive Fullscreen Gallery Dialog ────────────────────────────────
+  void _openFullscreenGallery({
+    required List<_ScoutingEvidenceImage> images,
+    int initialIndex = 0,
+  }) {
+    if (images.isEmpty) return;
+
     showDialog(
       context: context,
-      builder: (ctx) => Dialog(
-        backgroundColor: Colors.black,
-        insetPadding: EdgeInsets.zero,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            Center(
-              child: InteractiveViewer(
-                minScale: 0.8,
-                maxScale: 4.0,
-                child: DatabaseImage(source: imageSource, fit: BoxFit.contain),
+      builder: (ctx) {
+        int currentIndex = initialIndex.clamp(0, images.length - 1);
+        final pageController = PageController(initialPage: currentIndex);
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final currentImg = images[currentIndex];
+
+            return Dialog(
+              backgroundColor: Colors.black,
+              insetPadding: EdgeInsets.zero,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  PageView.builder(
+                    controller: pageController,
+                    itemCount: images.length,
+                    onPageChanged: (idx) {
+                      setDialogState(() => currentIndex = idx);
+                    },
+                    itemBuilder: (context, idx) {
+                      final item = images[idx];
+                      return Center(
+                        child: InteractiveViewer(
+                          minScale: 0.8,
+                          maxScale: 4.0,
+                          child: DatabaseImage(source: item.source, fit: BoxFit.contain),
+                        ),
+                      );
+                    },
+                  ),
+
+                  // Top Header Bar
+                  Positioned(
+                    top: 40,
+                    left: 16,
+                    right: 16,
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: currentImg.color.withValues(alpha: 0.9),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(currentImg.icon, size: 14, color: Colors.white),
+                              const SizedBox(width: 5),
+                              Text(
+                                currentImg.displayTag,
+                                style: GoogleFonts.manrope(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.6),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            '${currentIndex + 1} / ${images.length}',
+                            style: GoogleFonts.manrope(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(Icons.close_rounded, color: Colors.white, size: 28),
+                          onPressed: () => Navigator.pop(ctx),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Left Navigation Button
+                  if (images.length > 1 && currentIndex > 0)
+                    Positioned(
+                      left: 12,
+                      top: 0,
+                      bottom: 0,
+                      child: Center(
+                        child: CircleAvatar(
+                          backgroundColor: Colors.black.withValues(alpha: 0.5),
+                          child: IconButton(
+                            icon: const Icon(Icons.chevron_left_rounded, color: Colors.white, size: 28),
+                            onPressed: () {
+                              pageController.previousPage(
+                                duration: const Duration(milliseconds: 250),
+                                curve: Curves.easeInOut,
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    ),
+
+                  // Right Navigation Button
+                  if (images.length > 1 && currentIndex < images.length - 1)
+                    Positioned(
+                      right: 12,
+                      top: 0,
+                      bottom: 0,
+                      child: Center(
+                        child: CircleAvatar(
+                          backgroundColor: Colors.black.withValues(alpha: 0.5),
+                          child: IconButton(
+                            icon: const Icon(Icons.chevron_right_rounded, color: Colors.white, size: 28),
+                            onPressed: () {
+                              pageController.nextPage(
+                                duration: const Duration(milliseconds: 250),
+                                curve: Curves.easeInOut,
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
-            ),
-            Positioned(
-              top: 40,
-              right: 20,
-              child: IconButton(
-                icon: const Icon(Icons.close_rounded, color: Colors.white, size: 28),
-                onPressed: () => Navigator.pop(ctx),
-              ),
-            ),
-          ],
-        ),
-      ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -2208,6 +3211,299 @@ class _ResolveCTA extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SCOUTING EVIDENCE DATA MODELS & GALLERY
+// ══════════════════════════════════════════════════════════════════════════════
+
+class _ScoutingEvidenceImage {
+  final String source;
+  final String category; // 'damage', 'larvae', 'moths', 'eggMasses', 'pupae'
+  final String categoryLabel; // 'Damaged Plant', 'Larvae', 'Adult Moth', 'Egg Mass', 'Pupae'
+  final String? stationTitle; // 'Station 1'
+  final int? stationIndex; // 1
+  final int? plantNumber; // 1
+  final Color color;
+  final IconData icon;
+
+  const _ScoutingEvidenceImage({
+    required this.source,
+    required this.category,
+    required this.categoryLabel,
+    this.stationTitle,
+    this.stationIndex,
+    this.plantNumber,
+    required this.color,
+    required this.icon,
+  });
+
+  String get displayTag {
+    if (category == 'damage') {
+      final pStr = plantNumber != null ? 'Damaged Plant #$plantNumber' : 'Plant Damage';
+      if (stationTitle != null) {
+        return '$stationTitle · $pStr';
+      }
+      return pStr;
+    }
+    if (stationTitle != null) {
+      return '$stationTitle · $categoryLabel';
+    }
+    return categoryLabel;
+  }
+}
+
+class _ScoutingEvidenceGalleryCard extends StatefulWidget {
+  final List<_ScoutingEvidenceImage> images;
+  final Function(List<_ScoutingEvidenceImage> list, int index) onOpenFullscreen;
+
+  const _ScoutingEvidenceGalleryCard({
+    required this.images,
+    required this.onOpenFullscreen,
+  });
+
+  @override
+  State<_ScoutingEvidenceGalleryCard> createState() => _ScoutingEvidenceGalleryCardState();
+}
+
+class _ScoutingEvidenceGalleryCardState extends State<_ScoutingEvidenceGalleryCard> {
+  String _selectedCategory = 'all';
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.images.isEmpty) return const SizedBox.shrink();
+
+    final categories = <String, int>{'all': widget.images.length};
+    for (final img in widget.images) {
+      categories[img.category] = (categories[img.category] ?? 0) + 1;
+    }
+
+    final filtered = _selectedCategory == 'all'
+        ? widget.images
+        : widget.images.where((img) => img.category == _selectedCategory).toList();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1B3015).withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.photo_library_rounded, color: Color(0xFF1B3015), size: 20),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Scouting Photo Evidence Gallery',
+                      style: GoogleFonts.epilogue(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFF1B3015),
+                      ),
+                    ),
+                    Text(
+                      '${widget.images.length} verified evidence photo${widget.images.length > 1 ? 's' : ''} uploaded',
+                      style: GoogleFonts.manrope(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          // Filter Chips
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: categories.entries.map((entry) {
+                final cat = entry.key;
+                final count = entry.value;
+                final isSelected = _selectedCategory == cat;
+
+                String label;
+                Color chipColor;
+                switch (cat) {
+                  case 'larvae':
+                    label = '🐛 Larvae ($count)';
+                    chipColor = const Color(0xFFFF9800);
+                    break;
+                  case 'moths':
+                    label = '🦋 Moths ($count)';
+                    chipColor = const Color(0xFF2196F3);
+                    break;
+                  case 'eggMasses':
+                    label = '🥚 Eggs ($count)';
+                    chipColor = const Color(0xFFE91E63);
+                    break;
+                  case 'pupae':
+                    label = '🟤 Pupae ($count)';
+                    chipColor = const Color(0xFF9C27B0);
+                    break;
+                  case 'damage':
+                    label = '🌿 Damaged Plants ($count)';
+                    chipColor = const Color(0xFF7B1FA2);
+                    break;
+                  default:
+                    label = 'All Photos ($count)';
+                    chipColor = const Color(0xFF1B3015);
+                    break;
+                }
+
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text(
+                      label,
+                      style: GoogleFonts.manrope(
+                        fontSize: 12,
+                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                        color: isSelected ? Colors.white : Colors.grey[800],
+                      ),
+                    ),
+                    selected: isSelected,
+                    selectedColor: chipColor,
+                    backgroundColor: const Color(0xFFF8F5EF),
+                    showCheckmark: false,
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      side: BorderSide(
+                        color: isSelected ? chipColor : Colors.grey.shade300,
+                      ),
+                    ),
+                    onSelected: (val) {
+                      if (val) setState(() => _selectedCategory = cat);
+                    },
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+
+          const SizedBox(height: 14),
+
+          // Photo Thumbnails
+          SizedBox(
+            height: 130,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: filtered.length,
+              itemBuilder: (context, idx) {
+                final item = filtered[idx];
+                return GestureDetector(
+                  onTap: () => widget.onOpenFullscreen(filtered, idx),
+                  child: Container(
+                    width: 130,
+                    margin: const EdgeInsets.only(right: 12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8F5EF),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(14),
+                          child: DatabaseImage(source: item.source, fit: BoxFit.cover),
+                        ),
+                        const DecoratedBox(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.all(Radius.circular(14)),
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              stops: [0.4, 1.0],
+                              colors: [Colors.transparent, Colors.black87],
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          top: 6,
+                          left: 6,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: item.color.withValues(alpha: 0.9),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(item.icon, size: 10, color: Colors.white),
+                                const SizedBox(width: 3),
+                                Text(
+                                  item.categoryLabel,
+                                  style: GoogleFonts.manrope(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          top: 6,
+                          right: 6,
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.5),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.fullscreen_rounded, size: 12, color: Colors.white),
+                          ),
+                        ),
+                        Positioned(
+                          bottom: 6,
+                          left: 8,
+                          right: 8,
+                          child: Text(
+                            item.displayTag,
+                            style: GoogleFonts.manrope(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
           ),
         ],
       ),

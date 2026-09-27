@@ -4789,8 +4789,14 @@ Future<void> _createClusteredReport() async {
     final avgCobScore = _averageScore(
         allPlantScores.where((e) => e['cobScore'] != null).map((e) => e['cobScore'] as int));
 
-    // ─── Get all captured images ────────────────────────────────────────
+    // ─── Get all captured images & damage photos ───────────────────────
     final allCapturedImages = _getAllCapturedImages();
+    final allDamagePhotos = <String>[];
+    for (final s in _stationData) {
+      final capturedDamage = List<String>.from(s['capturedImages']?['damage'] ?? []);
+      final directDamagePhotos = List<String>.from(s['damagePhotos'] ?? []);
+      allDamagePhotos.addAll([...capturedDamage, ...directDamagePhotos]);
+    }
 
     // ─── Build report data ──────────────────────────────────────────────
     Map<String, dynamic> reportData = {
@@ -4842,6 +4848,8 @@ Future<void> _createClusteredReport() async {
       },
       // ─── ADD CAPTURED IMAGES ──────────────────────────────────────────
       'capturedImages': allCapturedImages,
+      'allDamagePhotos': allDamagePhotos,
+      'damagePhotos': allDamagePhotos,
       // FAW plant damage assessment
       'damageAssessment': {
         'plantScores': allPlantScores,
@@ -4867,6 +4875,8 @@ Future<void> _createClusteredReport() async {
         'notes': s['notes'],
         'damageAssessmentChoice': s['damageAssessmentChoice'],
         'plantDamageScores': s['plantDamageScores'],
+        'capturedImages': s['capturedImages'] != null ? Map<String, dynamic>.from(s['capturedImages']) : null,
+        'damagePhotos': s['damagePhotos'] != null ? List<String>.from(s['damagePhotos']) : null,
         // Include image count for reference
         'imageCount': {
           'eggMasses': (s['capturedImages']?['eggMasses'] as List?)?.length ?? 0,

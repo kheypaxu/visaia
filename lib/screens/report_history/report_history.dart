@@ -149,12 +149,31 @@ class UnifiedReportItem {
         : (totalInspected > 0 ? (totalDamaged / totalInspected) * 100 : 0.0);
     final exceedsThreshold = data['exceedsThreshold'] == true || damagePercentage >= 10.0;
 
-    // Pick first available image from capturedImages
+    // Pick first available image from capturedImages, damagePhotos, or stationsData
     String? firstImage;
     final capturedImages = data['capturedImages'] as Map<String, dynamic>?;
     if (capturedImages != null) {
       for (final k in ['larvae', 'eggMasses', 'damage', 'pupae', 'moths']) {
         final list = capturedImages[k] as List?;
+        if (list != null && list.isNotEmpty && list.first is String) {
+          firstImage = list.first as String;
+          break;
+        }
+      }
+      if (firstImage == null) {
+        for (final listEntry in capturedImages.values) {
+          if (listEntry is List && listEntry.isNotEmpty && listEntry.first is String) {
+            firstImage = listEntry.first as String;
+            break;
+          }
+        }
+      }
+    }
+
+    // Check direct damage photo lists
+    if (firstImage == null) {
+      for (final k in ['allDamagePhotos', 'damagePhotos']) {
+        final list = data[k] as List?;
         if (list != null && list.isNotEmpty && list.first is String) {
           firstImage = list.first as String;
           break;
@@ -168,6 +187,11 @@ class UnifiedReportItem {
       if (stationsData != null) {
         for (final s in stationsData) {
           if (s is Map<String, dynamic>) {
+            final sDamagePhotos = s['damagePhotos'] as List?;
+            if (sDamagePhotos != null && sDamagePhotos.isNotEmpty && sDamagePhotos.first is String) {
+              firstImage = sDamagePhotos.first as String;
+              break;
+            }
             final sImgs = s['capturedImages'] as Map<String, dynamic>?;
             if (sImgs != null) {
               for (final listEntry in sImgs.values) {
@@ -241,6 +265,11 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
   String _searchQuery = '';
   bool _isSearchOpen = false;
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
+
+  Stream<List<UnifiedReportItem>>? _unifiedStream;
+  String? _currentStreamUid;
+  List<UnifiedReportItem>? _lastLoadedReports;
 
   final List<String> _statusFilters = [
     'All',
@@ -258,11 +287,17 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
   }
 
   // ─── Combined Stream for reports + clustered_reports ───────────────────────
   Stream<List<UnifiedReportItem>> _getUnifiedStream(String uid) {
+    if (_unifiedStream != null && _currentStreamUid == uid) {
+      return _unifiedStream!;
+    }
+    _currentStreamUid = uid;
+
     late StreamController<List<UnifiedReportItem>> controller;
     StreamSubscription? subReports;
     StreamSubscription? subClusteredFarmer;
@@ -293,6 +328,7 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
 
       final items = itemsMap.values.toList()
         ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      _lastLoadedReports = items;
       controller.add(items);
     }
 
@@ -338,7 +374,8 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
       },
     );
 
-    return controller.stream;
+    _unifiedStream = controller.stream;
+    return _unifiedStream!;
   }
 
   @override
@@ -355,16 +392,17 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
       backgroundColor: _cream,
       body: StreamBuilder<List<UnifiedReportItem>>(
         stream: _getUnifiedStream(uid),
+        initialData: _lastLoadedReports,
         builder: (context, snapshot) {
-          if (snapshot.hasError) {
+          if (snapshot.hasError && (snapshot.data == null || snapshot.data!.isEmpty)) {
             return _buildErrorState(snapshot.error.toString());
           }
 
-          if (snapshot.connectionState == ConnectionState.waiting) {
+          if (snapshot.connectionState == ConnectionState.waiting && snapshot.data == null) {
             return _buildLoadingState();
           }
 
-          final allReports = snapshot.data ?? [];
+          final allReports = snapshot.data ?? _lastLoadedReports ?? [];
 
           // Filter by active farm
           final farmFiltered = activeFarmId != null
@@ -504,9 +542,14 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
                 onPressed: () {
                   setState(() {
                     _isSearchOpen = !_isSearchOpen;
-                    if (!_isSearchOpen) {
+                    if (_isSearchOpen) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        _searchFocusNode.requestFocus();
+                      });
+                    } else {
                       _searchQuery = '';
                       _searchController.clear();
+                      _searchFocusNode.unfocus();
                     }
                   });
                 },
@@ -525,7 +568,8 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
               ),
               child: TextField(
                 controller: _searchController,
-                autofocus: true,
+                focusNode: _searchFocusNode,
+                autofocus: false,
                 style: GoogleFonts.manrope(color: Colors.white, fontSize: 13),
                 cursorColor: Colors.white,
                 decoration: InputDecoration(
@@ -903,7 +947,12 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
             Text(error, style: GoogleFonts.manrope(fontSize: 12, color: Colors.grey[500]), textAlign: TextAlign.center),
             const SizedBox(height: 16),
             ElevatedButton(
-              onPressed: () => setState(() {}),
+              onPressed: () {
+                setState(() {
+                  _unifiedStream = null;
+                  _currentStreamUid = null;
+                });
+              },
               style: ElevatedButton.styleFrom(backgroundColor: _forestGreen),
               child: const Text('Retry', style: TextStyle(color: Colors.white)),
             ),
