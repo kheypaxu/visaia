@@ -508,34 +508,55 @@ Widget build(BuildContext context) {
                   );
                 },
               ),
-              GestureDetector(
-                onTap: () {
-                  Navigator.push(context,
-                      MaterialPageRoute(builder: (context) => AlertsPage()));
-                },
-                child: Stack(
-                  alignment: Alignment.topRight,
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.only(top: 8, right: 8),
-                      child: Icon(Icons.notifications_none_rounded,
-                          color: Color(0xFF0C503C), size: 28),
-                    ),
-                    Positioned(
-                      right: 8,
-                      top: 10,
-                      child: Container(
-                        height: 10,
-                        width: 10,
-                        decoration: BoxDecoration(
-                          color: Colors.red,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 2),
+              StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('alerts')
+                    .where('farmerId', isEqualTo: FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid)
+                    .where('status', isEqualTo: 'unread')
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  final unreadCount = snapshot.data?.docs.length ?? 0;
+                  return GestureDetector(
+                    onTap: () {
+                      Navigator.push(context,
+                          MaterialPageRoute(builder: (context) => const AlertsPage()));
+                    },
+                    child: Stack(
+                      alignment: Alignment.topRight,
+                      children: [
+                        const Padding(
+                          padding: EdgeInsets.only(top: 8, right: 8),
+                          child: Icon(Icons.notifications_none_rounded,
+                              color: Color(0xFF0C503C), size: 28),
                         ),
-                      ),
+                        if (unreadCount > 0)
+                          Positioned(
+                            right: 6,
+                            top: 8,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                              constraints: const BoxConstraints(minWidth: 14, minHeight: 14),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFDC2626),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: Colors.white, width: 1.5),
+                              ),
+                              child: Text(
+                                unreadCount > 9 ? '9+' : '$unreadCount',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 8.5,
+                                  fontWeight: FontWeight.w900,
+                                  height: 1.1,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
-                  ],
-                ),
+                  );
+                },
               ),
               const SizedBox(width: 8),
               GestureDetector(
