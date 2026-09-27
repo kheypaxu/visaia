@@ -362,7 +362,7 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
     }
   }
 
-  Future<String?> _saveToCycle(String cycleId) async {
+  Future<String?> _saveToCycle(String cycleId, [int? selectedWeek]) async {
     final uid = _effectiveUid;
     if (uid.isEmpty) {
       throw Exception('Please sign in to save activities');
@@ -405,8 +405,11 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
       dayNumber = diff >= 0 ? diff + 1 : 1;
     } else if (widget.currentDayIndex != null) {
       dayNumber = widget.currentDayIndex!;
+    } else if (selectedWeek != null) {
+      dayNumber = (selectedWeek - 1) * 7 + 1;
     }
     
+    final weekNumber = selectedWeek ?? (((dayNumber - 1) / 7).floor() + 1);
     final dayId = 'day_${dayNumber.toString().padLeft(2, '0')}';
     final activityId = DateTime.now().millisecondsSinceEpoch.toString();
 
@@ -427,6 +430,8 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
       'timestamp': FieldValue.serverTimestamp(),
       'date': Timestamp.fromDate(_selectedDate),
       'dayNumber': dayNumber,
+      'weekNumber': weekNumber,
+      'weekId': 'week_$weekNumber',
       'cycleId': cycleId,
       'userId': uid,
       'isScheduled': isScheduled,
@@ -459,7 +464,7 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
       context,
       userId: _effectiveUid,
       cycleId: widget.cycleId,
-      onCycleSelected: (cycleId) async {
+      onCycleSelected: (cycleId, selectedWeek) async {
         if (cycleId.isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Please select a cycle')),
@@ -469,16 +474,16 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
         
         setState(() => _isSaving = true);
         try {
-          final activityId = await _saveToCycle(cycleId);
+          final activityId = await _saveToCycle(cycleId, selectedWeek);
           if (_status == DailyLogStatus.scheduled && activityId != null) {
             await _createScheduledActivityNotification(cycleId, activityId);
           }
           if (mounted) {
-            String message = 'Activity saved successfully!';
+            String message = 'Activity saved successfully to Week $selectedWeek!';
             if (_status == DailyLogStatus.scheduled) {
-              message = 'Activity scheduled! You\'ll be notified when it\'s time.';
+              message = 'Activity scheduled for Week $selectedWeek! You\'ll be notified when it\'s time.';
             } else if (_status == DailyLogStatus.inProgress) {
-              message = 'Activity recorded as in progress!';
+              message = 'Activity recorded as in progress for Week $selectedWeek!';
             }
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(

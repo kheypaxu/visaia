@@ -23,6 +23,7 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
   String? _error;
   Map<String, dynamic>? _cycleData;
   Map<String, dynamic>? _fieldData;
+  List<int> _unscoutedWeeks = [];
 
   @override
   void initState() {
@@ -70,6 +71,60 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
         } catch (e) {
           debugPrint('Error fetching field: $e');
         }
+      }
+
+      // Check for unscouted weeks up to current week
+      try {
+        final plantingTimestamp = cycle['plantingDate'] as Timestamp?;
+        final harvestTimestamp = cycle['harvestDate'] as Timestamp?;
+        if (plantingTimestamp != null && harvestTimestamp != null) {
+          final pDate = plantingTimestamp.toDate();
+          final hDate = harvestTimestamp.toDate();
+          final totalDays = hDate.difference(pDate).inDays;
+          final totalWeeks = (totalDays / 7).ceil().clamp(1, 20);
+          final elapsedDays = DateTime.now().difference(pDate).inDays;
+          final currentWeek = ((elapsedDays / 7).floor() + 1).clamp(1, totalWeeks);
+
+          final weeksSnap = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(widget.uid)
+              .collection('cycles')
+              .doc(widget.cycleId)
+              .collection('weeks')
+              .get();
+
+          final completedWeekIndices = <int>{};
+          for (final doc in weeksSnap.docs) {
+            final data = doc.data();
+            final docId = doc.id;
+            final weekNum = int.tryParse(docId.replaceAll('week_', ''));
+            if (weekNum != null) {
+              final stations = data['stations'] as List?;
+              final completedStations = data['completedStations'] as int? ?? 0;
+              final allCompleted = (stations != null &&
+                      stations.isNotEmpty &&
+                      stations.every((s) => s['completed'] == true)) ||
+                  completedStations >= 5;
+              if (allCompleted) {
+                completedWeekIndices.add(weekNum);
+              }
+            }
+          }
+
+          final unscouted = <int>[];
+          for (int w = 1; w <= currentWeek; w++) {
+            if (!completedWeekIndices.contains(w)) {
+              unscouted.add(w);
+            }
+          }
+          if (mounted) {
+            setState(() {
+              _unscoutedWeeks = unscouted;
+            });
+          }
+        }
+      } catch (e) {
+        debugPrint('Error checking unscouted weeks: $e');
       }
     } catch (e) {
       setState(() {
@@ -316,7 +371,8 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
   int get _elapsedDays {
     if (_cycleData == null) return 0;
     final planting = (_cycleData!['plantingDate'] as Timestamp).toDate();
-    return DateTime.now().difference(planting).inDays;
+    final days = DateTime.now().difference(planting).inDays;
+    return days < 0 ? 0 : days;
   }
 
   double get _progress {
@@ -348,13 +404,18 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
   String _formatTimeAgo(Timestamp timestamp) {
     final DateTime dateTime = timestamp.toDate();
     final Duration diff = DateTime.now().difference(dateTime);
-    if (diff.inDays > 7) return DateFormat('MMM d').format(dateTime);
-    if (diff.inDays > 0)
+    if (diff.inDays > 7) {
+      return DateFormat('MMM d').format(dateTime);
+    }
+    if (diff.inDays > 0) {
       return '${diff.inDays}d ago';
-    if (diff.inHours > 0)
+    }
+    if (diff.inHours > 0) {
       return '${diff.inHours}h ago';
-    if (diff.inMinutes > 0)
+    }
+    if (diff.inMinutes > 0) {
       return '${diff.inMinutes}m ago';
+    }
     return 'Just now';
   }
 
@@ -608,7 +669,8 @@ Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
   Widget _buildGrowthProgress() {
     final plantingDate = _cycleData?['plantingDate'];
     final harvestDate = _cycleData?['harvestDate'];
-    final remainingDays = _totalDays - _elapsedDays;
+    final isOverdue = _totalDays > 0 && _elapsedDays > _totalDays;
+    final remainingDays = isOverdue ? 0 : (_totalDays - _elapsedDays);
     final progressPercent = (_progress * 100).toInt();
 
     return Container(
@@ -639,15 +701,16 @@ Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
                 padding: const EdgeInsets.symmetric(
                     horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1B5E37).withValues(alpha: 0.08),
+                  color: (isOverdue ? const Color(0xFFE65100) : const Color(0xFF1B5E37))
+                      .withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
                   '$progressPercent%',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w800,
-                    color: Color(0xFF1B5E37),
+                    color: isOverdue ? const Color(0xFFE65100) : const Color(0xFF1B5E37),
                   ),
                 ),
               ),
@@ -665,14 +728,24 @@ Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
                     fontSize: 14,
                     fontWeight: FontWeight.w600),
               ),
-              Text(
-                '$remainingDays days left',
-                style: const TextStyle(
-                  color: Color(0xFF1B5E37),
-                  fontWeight: FontWeight.w700,
-                  fontSize: 13,
+              if (isOverdue)
+                Text(
+                  'Past Harvest (${_elapsedDays - _totalDays}d)',
+                  style: const TextStyle(
+                    color: Color(0xFFE65100),
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
+                )
+              else
+                Text(
+                  '$remainingDays days left',
+                  style: const TextStyle(
+                    color: Color(0xFF1B5E37),
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
                 ),
-              ),
             ],
           ),
           const SizedBox(height: 14),
@@ -682,8 +755,8 @@ Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
               value: _progress,
               minHeight: 8,
               backgroundColor: const Color(0xFFE8EAE5),
-              valueColor: const AlwaysStoppedAnimation<Color>(
-                  Color(0xFF1B5E37)),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                  isOverdue ? const Color(0xFFE65100) : const Color(0xFF1B5E37)),
             ),
           ),
           const SizedBox(height: 20),
@@ -714,6 +787,95 @@ Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
               ],
             ),
           ),
+          if (isOverdue) ...[
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF3E0),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFFFB74D).withValues(alpha: 0.6)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.warning_amber_rounded, color: Color(0xFFE65100), size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Crop is ${_elapsedDays - _totalDays} day${_elapsedDays - _totalDays == 1 ? "" : "s"} past its estimated harvest date. Please review unscouted weeks and record harvest.',
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFFB23B00),
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          if (_unscoutedWeeks.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => MonitoringScreen(
+                      cycleId: widget.cycleId,
+                      userId: widget.uid,
+                    ),
+                  ),
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F8F4),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFF81C784).withValues(alpha: 0.6)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.pending_actions_rounded, color: Color(0xFF1B5E37), size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Pending Scouting (${_unscoutedWeeks.length} week${_unscoutedWeeks.length == 1 ? "" : "s"})',
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF1B5E37),
+                                ),
+                              ),
+                              const Icon(Icons.chevron_right_rounded, size: 18, color: Color(0xFF1B5E37)),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Week${_unscoutedWeeks.length > 1 ? "s" : ""} ${_unscoutedWeeks.join(", ")} not yet scouted. Tap to open monitoring and complete 5-station inspections.',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF2E6347),
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

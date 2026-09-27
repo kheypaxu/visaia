@@ -23,6 +23,7 @@ class AssignPestScreen extends StatefulWidget {
 
 class _AssignPestScreenState extends State<AssignPestScreen> {
   String? _selectedCycleId;
+  int _selectedWeek = 1;
   int _selectedStation = 1;
   List<Map<String, dynamic>> _cycles = [];
   bool _isLoading = true;
@@ -33,6 +34,39 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
   static const _bgColor = Color(0xFFF4F8F5);
   static const _mutedText = Color(0xFF9E9E9E);
   static const _borderColor = Color(0xFFDDEEE4);
+
+  Map<String, dynamic>? get _selectedCycle {
+    if (_selectedCycleId == null) return null;
+    return _cycles.firstWhere(
+      (c) => c['id'] == _selectedCycleId,
+      orElse: () => {},
+    );
+  }
+
+  int get _cycleTotalWeeks {
+    final cycle = _selectedCycle;
+    if (cycle == null || cycle.isEmpty) return 12;
+    final plantingDate = cycle['plantingDate'] as DateTime?;
+    final harvestDate = cycle['harvestDate'] as DateTime?;
+    if (plantingDate != null && harvestDate != null) {
+      final days = harvestDate.difference(plantingDate).inDays;
+      final weeks = (days / 7).ceil();
+      return weeks.clamp(1, 24);
+    }
+    return 12;
+  }
+
+  int get _cycleCurrentWeek {
+    final cycle = _selectedCycle;
+    if (cycle == null || cycle.isEmpty) return 1;
+    final plantingDate = cycle['plantingDate'] as DateTime?;
+    if (plantingDate != null) {
+      final days = DateTime.now().difference(plantingDate).inDays;
+      final week = (days / 7).floor() + 1;
+      return week.clamp(1, _cycleTotalWeeks);
+    }
+    return 1;
+  }
 
   // ─── Risk Level System (5 Levels based on Life Stage + DAP) ────────────
   
@@ -64,11 +98,17 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
     // Map life stage to key
     String ls = lifeStage.toLowerCase();
     String lifeStageKey;
-    if (ls.contains('egg')) lifeStageKey = 'egg';
-    else if (ls.contains('larva') || ls.contains('caterpillar')) lifeStageKey = 'larva';
-    else if (ls.contains('pupa')) lifeStageKey = 'pupa';
-    else if (ls.contains('moth') || ls.contains('adult')) lifeStageKey = 'moth';
-    else lifeStageKey = 'none';
+    if (ls.contains('egg')) {
+      lifeStageKey = 'egg';
+    } else if (ls.contains('larva') || ls.contains('caterpillar')) {
+      lifeStageKey = 'larva';
+    } else if (ls.contains('pupa')) {
+      lifeStageKey = 'pupa';
+    } else if (ls.contains('moth') || ls.contains('adult')) {
+      lifeStageKey = 'moth';
+    } else {
+      lifeStageKey = 'none';
+    }
     
     // Get growth stage from DAP
     String growthStageKey = _getGrowthStageFromDAP(dap);
@@ -168,6 +208,10 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
       print('✓ Active cycles after filtering: ${activeCycles.length}');
       setState(() {
         _cycles = activeCycles;
+        if (activeCycles.isNotEmpty && _selectedCycleId == null) {
+          _selectedCycleId = activeCycles.first['id'] as String;
+          _selectedWeek = _cycleCurrentWeek;
+        }
         _isLoading = false;
       });
     } catch (e) {
@@ -187,6 +231,7 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
     setState(() => _isSaving = true);
     print('🔵 Starting pest record save...');
     print('  Cycle: $_selectedCycleId');
+    print('  Week: $_selectedWeek');
     print('  Station: $_selectedStation');
     print('  Pest: ${widget.pestName}');
     print('  Stage: ${widget.detectedStage}');
@@ -200,14 +245,14 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
           .safeGet();
 
       final plantingDate = (cycleDoc.data()?['plantingDate'] as Timestamp?)?.toDate();
-      if (plantingDate == null) throw Exception('Invalid cycle planting date');
-
-      final daysSincePlanting = DateTime.now().difference(plantingDate).inDays;
-      final weekNumber = (daysSincePlanting / 7).floor() + 1;
+      final weekNumber = _selectedWeek;
       final weekId = 'week_$weekNumber';
 
       // ─── Calculate Risk Level ──────────────────────────────────────────
-      final dap = daysSincePlanting;
+      final daysSincePlanting = plantingDate != null
+          ? DateTime.now().difference(plantingDate).inDays
+          : ((weekNumber - 1) * 7 + 1);
+      final dap = daysSincePlanting < 0 ? 0 : daysSincePlanting;
       final riskLevel = _calculateRiskLevel(
         lifeStage: widget.detectedStage,
         dap: dap,
@@ -219,9 +264,7 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
       print('    DAP: $dap days');
       print('    Growth Stage: $growthStage ($growthStageDisplay)');
       print('    Risk Level: $riskLevel');
-
-      print('  Days since planting: $daysSincePlanting');
-      print('  Week: $weekNumber ($weekId)');
+      print('    Week: $weekNumber ($weekId)');
 
       final weekRef = FirebaseFirestore.instance
           .collection('users')
@@ -357,7 +400,7 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Added 1 ${widget.detectedStage} to Station $_selectedStation'),
+            content: Text('Added 1 ${widget.detectedStage} to Station $_selectedStation (Week $_selectedWeek)'),
             backgroundColor: _green,
             duration: const Duration(seconds: 1),
           ),
@@ -370,6 +413,7 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
           'growthStage': growthStage,
           'growthStageDisplay': growthStageDisplay,
           'riskLevel': riskLevel,
+          'weekNumber': _selectedWeek,
         });
       }
     } catch (e) {
@@ -425,7 +469,7 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
                         Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: _green.withOpacity(0.1),
+                            color: _green.withValues(alpha: 0.1),
                             shape: BoxShape.circle,
                           ),
                           child: const Icon(Icons.bug_report, color: _green, size: 28),
@@ -494,6 +538,48 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
                     ),
                   ),
                   const SizedBox(height: 20),
+
+                  // Week selection
+                  if (_selectedCycleId != null) ...[
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: _borderColor),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'SCOUTING WEEK',
+                                style: GoogleFonts.inter(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: _mutedText,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                              Text(
+                                'Week $_selectedWeek of $_cycleTotalWeeks',
+                                style: GoogleFonts.inter(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: _green,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 14),
+                          _buildWeekSelector(),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                  ],
 
                   // Station selection
                   Container(
@@ -590,8 +676,84 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
           ),
         );
       }).toList(),
-      onChanged: (value) => setState(() => _selectedCycleId = value),
+      onChanged: (value) {
+        setState(() {
+          _selectedCycleId = value;
+          _selectedWeek = _cycleCurrentWeek;
+        });
+      },
       hint: Text('Select cropping cycle', style: GoogleFonts.inter(color: _mutedText)),
+    );
+  }
+
+  Widget _buildWeekSelector() {
+    final totalWeeks = _cycleTotalWeeks;
+    final currentWeek = _cycleCurrentWeek;
+
+    return SizedBox(
+      height: 44,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: totalWeeks,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final weekNum = index + 1;
+          final isSelected = _selectedWeek == weekNum;
+          final isCurrent = weekNum == currentWeek;
+
+          return GestureDetector(
+            onTap: () => setState(() => _selectedWeek = weekNum),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: isSelected ? _green : Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isSelected ? _green : _borderColor,
+                  width: 1.5,
+                ),
+                boxShadow: isSelected
+                    ? [BoxShadow(color: _green.withValues(alpha: 0.25), blurRadius: 6, offset: const Offset(0, 2))]
+                    : null,
+              ),
+              child: Center(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Week $weekNum',
+                      style: GoogleFonts.inter(
+                        fontSize: 13,
+                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+                        color: isSelected ? Colors.white : _darkGreen,
+                      ),
+                    ),
+                    if (isCurrent) ...[
+                      const SizedBox(width: 5),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                        decoration: BoxDecoration(
+                          color: isSelected ? Colors.white.withValues(alpha: 0.25) : _green.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          'Now',
+                          style: GoogleFonts.inter(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            color: isSelected ? Colors.white : _green,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -615,7 +777,7 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
                 width: 2,
               ),
               boxShadow: isSelected
-                  ? [BoxShadow(color: _green.withOpacity(0.3), blurRadius: 8)]
+                  ? [BoxShadow(color: _green.withValues(alpha: 0.3), blurRadius: 8)]
                   : null,
             ),
             child: Center(

@@ -391,7 +391,7 @@ class _HarvestRecordingScreenState extends State<HarvestRecordingScreen> {
               borderRadius: BorderRadius.circular(12),
             ),
             child: DropdownButtonFormField<String>(
-              value: _earlyHarvestReason.isEmpty ? null : _earlyHarvestReason,
+              initialValue: _earlyHarvestReason.isEmpty ? null : _earlyHarvestReason,
               hint: const Text('Select reason for early harvest'),
               decoration: const InputDecoration(
                 border: InputBorder.none,

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -424,38 +425,203 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
     }
   }
 
-@override
-Widget build(BuildContext context) {
-  // Watch the provider — when farmId changes, this rebuilds
-  final farmProvider = context.watch<FarmProvider>();
-  final activeFarmId = farmProvider.activeFarmId;
+  Future<void> _handlePop(bool didPop) async {
+    if (didPop) return;
 
-  final bottomPadding = MediaQuery.of(context).padding.bottom;
-  final bool isMapScreen = _selectedItem == NavItem.map;
-  
-  // Get user initials for fallback avatar
-  final user = FirebaseAuth.instance.currentUser;
-  String initials = '?';
-  final displayName = user?.displayName ?? _cacheService.cachedName;
-  final email = user?.email ?? _cacheService.cachedEmail;
-
-  if (displayName != null && displayName.isNotEmpty) {
-    final parts = displayName.split(' ');
-    if (parts.length >= 2) {
-      initials = '${parts[0][0]}${parts[1][0]}';
-    } else {
-      initials = parts[0][0].toUpperCase();
+    // 1. If quick add-log floating menu is open, close it first
+    if (_isMenuOpen) {
+      _toggleMenu();
+      return;
     }
-  } else if (email != null && email.isNotEmpty) {
-    initials = email[0].toUpperCase();
+
+    // 2. If user is on a non-home tab, switch back to Home tab first
+    if (_selectedItem != NavItem.home) {
+      _onNavTapped(NavItem.home);
+      return;
+    }
+
+    // 3. If already on Home tab, prompt exit confirmation modal
+    final shouldExit = await _showExitConfirmationModal();
+    if (shouldExit == true) {
+      await SystemNavigator.pop();
+    }
   }
 
-  return Scaffold(
-    backgroundColor: const Color(0xFF102216),
-    appBar: isMapScreen
-        ? null
-        : AppBar(
-            backgroundColor: Colors.white,
+  Future<bool?> _showExitConfirmationModal() {
+    return showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return Container(
+          padding: EdgeInsets.fromLTRB(
+            24,
+            16,
+            24,
+            MediaQuery.of(sheetContext).padding.bottom + 20,
+          ),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            boxShadow: [
+              BoxShadow(
+                color: Color(0x29000000),
+                blurRadius: 24,
+                offset: Offset(0, -4),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Top drag pill
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // Icon badge
+              Container(
+                width: 60,
+                height: 60,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0C503C).withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.power_settings_new_rounded,
+                  color: Color(0xFF0C503C),
+                  size: 30,
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Title
+              Text(
+                'Exit VISAIA?',
+                style: GoogleFonts.epilogue(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  color: const Color(0xFF102216),
+                  letterSpacing: -0.3,
+                ),
+              ),
+              const SizedBox(height: 8),
+
+              // Description
+              Text(
+                'Are you sure you want to close the app? Any unsaved changes in progress might be lost.',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.manrope(
+                  fontSize: 13.5,
+                  color: const Color(0xFF6B7280),
+                  fontWeight: FontWeight.w500,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              // Action buttons
+              Row(
+                children: [
+                  // Cancel button
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(sheetContext).pop(false),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        side: BorderSide(color: Colors.grey.shade300, width: 1.2),
+                        backgroundColor: Colors.grey.shade50,
+                      ),
+                      child: Text(
+                        'Cancel',
+                        style: GoogleFonts.manrope(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF374151),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+
+                  // Exit button
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.of(sheetContext).pop(true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0C503C),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: Text(
+                        'Exit',
+                        style: GoogleFonts.manrope(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Watch the provider — when farmId changes, this rebuilds
+    final farmProvider = context.watch<FarmProvider>();
+    final activeFarmId = farmProvider.activeFarmId;
+
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    final bool isMapScreen = _selectedItem == NavItem.map;
+
+    // Get user initials for fallback avatar
+    final user = FirebaseAuth.instance.currentUser;
+    String initials = '?';
+    final displayName = user?.displayName ?? _cacheService.cachedName;
+    final email = user?.email ?? _cacheService.cachedEmail;
+
+    if (displayName != null && displayName.isNotEmpty) {
+      final parts = displayName.split(' ');
+      if (parts.length >= 2) {
+        initials = '${parts[0][0]}${parts[1][0]}';
+      } else {
+        initials = parts[0][0].toUpperCase();
+      }
+    } else if (email != null && email.isNotEmpty) {
+      initials = email[0].toUpperCase();
+    }
+
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        _handlePop(didPop);
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFF102216),
+        appBar: isMapScreen
+            ? null
+            : AppBar(
+                backgroundColor: Colors.white,
             elevation: 0,
             scrolledUnderElevation: 0,
             centerTitle: false,
@@ -622,7 +788,8 @@ Widget build(BuildContext context) {
         ),
       ],
     ),
-  );
+  ),
+);
 }
 
   Widget _buildCircularMenu(double bottomPadding, String? activeFarmId) {
@@ -702,7 +869,7 @@ Widget build(BuildContext context) {
             GestureDetector(
               onTap: _toggleMenu,
               child: Container(
-                  color: Colors.black.withOpacity(0.3 * _menuController.value)),
+                  color: Colors.black.withValues(alpha: 0.3 * _menuController.value)),
             ),
             ...List.generate(actions.length, (index) {
               final action = actions[index];

@@ -226,26 +226,27 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
       _stationData.where((s) => s['completed'] as bool? ?? false).length;
 
   int get _totalDamaged =>
-      _stationData.fold(0, (sum, item) => sum + (item['damaged'] as int? ?? 0));
+      _stationData.fold(0, (acc, item) => acc + (item['damaged'] as int? ?? 0));
 
   int get _totalEggs =>
-      _stationData.fold(0, (sum, item) => sum + (item['eggMasses'] as int? ?? 0));
+      _stationData.fold(0, (acc, item) => acc + (item['eggMasses'] as int? ?? 0));
 
   int get _totalLarvae =>
-      _stationData.fold(0, (sum, item) => sum + (item['larvae'] as int? ?? 0));
+      _stationData.fold(0, (acc, item) => acc + (item['larvae'] as int? ?? 0));
 
   int get _totalPupae =>
-      _stationData.fold(0, (sum, item) => sum + (item['pupae'] as int? ?? 0));
+      _stationData.fold(0, (acc, item) => acc + (item['pupae'] as int? ?? 0));
 
   int get _totalMoths =>
-      _stationData.fold(0, (sum, item) => sum + (item['moths'] as int? ?? 0));
+      _stationData.fold(0, (acc, item) => acc + (item['moths'] as int? ?? 0));
 
   // UI state
   bool _showControlModal = false;
   bool _showSuccessModal = false;
   // Clustered report UI state
-  bool _showClusteredReportButton = false;
   bool _isSavingReport = false;
+  Set<int> _completedWeeks = {};
+  List<int> _unscoutedWeeks = [];
 
   List<Map<String, dynamic>> _getDefaultStations(int count) {
     return List.generate(count, (i) => {
@@ -671,18 +672,16 @@ Future<void> _checkThresholdAfterCompletion() async {
   setState(() => _isCalculatingThreshold = false);
   double damagePercent = (totalInspected > 0) ? (totalDamaged / totalInspected) * 100 : 0.0;
   
+  // Automatically generate and save the clustered report for this week!
+  await _createClusteredReport();
+  await _loadAllWeeksStatus();
+
   if (damagePercent >= 10.0) {
     _wasThresholdTriggered = true;
     _showControlMethodModalWithResult(damagePercent, totalDamaged, totalInspected);
-    setState(() {
-      _showClusteredReportButton = true;
-    });
   } else {
     _wasThresholdTriggered = false;
     _showSafeModal(damagePercent, totalDamaged, totalInspected);
-    setState(() {
-      _showClusteredReportButton = true;
-    });
   }
 }
 
@@ -712,12 +711,32 @@ void _showControlMethodModalWithResult(double percent, int damaged, int inspecte
             'Damaged plants: $damaged out of $inspected inspected (${percent.toStringAsFixed(1)}%).',
             style: GoogleFonts.inter(fontSize: 14),
           ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFEBEE),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.auto_awesome, color: kAccentRed, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'High-level weekly clustered report automatically generated and saved.',
+                    style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w600, color: kAccentRed),
+                  ),
+                ),
+              ],
+            ),
+          ),
           const SizedBox(height: 12),
           Text(
             'Immediate control measures are strongly recommended to prevent yield loss.',
             style: GoogleFonts.inter(fontSize: 13, color: kTextGrey),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
           Text(
             'Select a control method:',
             style: GoogleFonts.inter(fontWeight: FontWeight.w600),
@@ -734,7 +753,11 @@ void _showControlMethodModalWithResult(double percent, int damaged, int inspecte
             Navigator.pop(context);
             setState(() => _showControlModal = true);
           },
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.white),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: kActionGreen,
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
           child: const Text('View Control Methods'),
         ),
       ],
@@ -768,29 +791,37 @@ void _showSafeModal(double percent, int damaged, int inspected) {
             'Damaged plants: $damaged out of $inspected inspected (${percent.toStringAsFixed(1)}%).',
             style: GoogleFonts.inter(fontSize: 14),
           ),
-          const SizedBox(height: 8),
-          Text(
-            'No immediate control action required. You can create your low-level weekly clustered report.',
-            style: GoogleFonts.inter(fontSize: 13, color: kTextGrey),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE8F5E9),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.auto_awesome, color: kActionGreen, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'All 5 stations scouted! Low-level weekly clustered report automatically generated and saved.',
+                    style: GoogleFonts.inter(fontSize: 12.5, fontWeight: FontWeight.w600, color: kActionGreen),
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Later', style: TextStyle(color: kTextGrey)),
-        ),
         ElevatedButton(
-          onPressed: () {
-            Navigator.pop(context);
-            _createClusteredReport();
-          },
+          onPressed: () => Navigator.pop(context),
           style: ElevatedButton.styleFrom(
             backgroundColor: kActionGreen,
             foregroundColor: Colors.white,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
-          child: const Text('Save Report'),
+          child: const Text('Done'),
         ),
       ],
     ),
@@ -1089,6 +1120,7 @@ Future<void> _loadCycleData() async {
       _trapsInstalled = cycle['trapsInstalled'] == true;
     });
 
+    await _loadAllWeeksStatus();
     await _loadWeekData(_selectedWeek);
     await _loadDailyLogData(_dailySelectedDay);
     await _updateCycleGrowthStage();
@@ -1106,6 +1138,51 @@ Future<void> _loadCycleData() async {
     });
   }
 }
+
+  Future<void> _loadAllWeeksStatus() async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(_userId)
+          .collection('cycles')
+          .doc(widget.cycleId)
+          .collection('weeks')
+          .get();
+
+      final completed = <int>{};
+      for (final doc in snap.docs) {
+        final weekNum = int.tryParse(doc.id.replaceAll('week_', ''));
+        if (weekNum != null) {
+          final stations = doc.data()['stations'] as List?;
+          final completedStations = doc.data()['completedStations'] as int? ?? 0;
+          final isAllCompleted = (stations != null &&
+                  stations.isNotEmpty &&
+                  stations.every((s) => s['completed'] == true)) ||
+              completedStations >= 5;
+          if (isAllCompleted) {
+            completed.add(weekNum);
+          }
+        }
+      }
+
+      final maxWeekToCheck = _currentWeekFromPlanting.clamp(1, _totalWeeks);
+      final unscouted = <int>[];
+      for (int w = 1; w <= maxWeekToCheck; w++) {
+        if (!completed.contains(w)) {
+          unscouted.add(w);
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _completedWeeks = completed;
+          _unscoutedWeeks = unscouted;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading all weeks status: $e');
+    }
+  }
 
   Future<void> _loadWeekData(int weekIndex) async {
     if (weekIndex < 0 || weekIndex >= _totalWeeks) return;
@@ -1134,15 +1211,12 @@ Future<void> _loadCycleData() async {
 
       if (weekData != null && weekData['stations'] != null) {
         final stations = _normalizeLoadedStations(weekData['stations']);
-        final allCompleted = stations.isNotEmpty &&
-            stations.every((s) => s['completed'] == true);
-        int totalDamaged = stations.fold(0, (sum, item) => sum + (item['damaged'] as int? ?? 0));
-        int totalInspected = stations.fold(0, (sum, item) => sum + (item['plantsInspected'] as int? ?? 0));
+        int totalDamaged = stations.fold(0, (acc, item) => acc + (item['damaged'] as int? ?? 0));
+        int totalInspected = stations.fold(0, (acc, item) => acc + (item['plantsInspected'] as int? ?? 0));
         double damagePercent = totalInspected > 0 ? (totalDamaged / totalInspected) * 100 : 0.0;
         setState(() {
           _stationData = stations;
           _expandedStationIndex = -1;
-          _showClusteredReportButton = allCompleted;
           _wasThresholdTriggered = damagePercent >= 10.0;
           _recommendedTaskState[weekIndex] = loadedTaskState;
           _loadedWeekIndex = weekIndex;
@@ -1151,7 +1225,6 @@ Future<void> _loadCycleData() async {
         setState(() {
           _stationData = _getDefaultStations(5);
           _expandedStationIndex = -1;
-          _showClusteredReportButton = false;
           _wasThresholdTriggered = false;
           _recommendedTaskState[weekIndex] = loadedTaskState;
           _loadedWeekIndex = weekIndex;
@@ -1262,6 +1335,7 @@ Future<void> _loadCycleData() async {
     };
     try {
       await _firestoreService.saveWeek(widget.cycleId, weekId, data);
+      _loadAllWeeksStatus();
     } catch (e) {
       if (!silent && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1943,7 +2017,7 @@ Future<GeoPoint?> _getFieldLocation() async {
     }
     return null;
   } catch (e) {
-    print('Error getting field location: $e');
+    debugPrint('Error getting field location: $e');
     return null;
   }
 }
@@ -2067,7 +2141,7 @@ void _showChemicalInfoDialog() {
                   ],
                 ),
               );
-            }).toList(),
+            }),
           ],
         ),
       ),
@@ -2274,8 +2348,12 @@ Widget _buildGrowthStageCard() {
           padding: const EdgeInsets.only(left: 20),
           child: Row(
             children: List.generate(_totalWeeks, (index) {
+              final weekNum = index + 1;
               bool isSelected = index == _selectedWeek;
-              bool isLocked = index + 1 > _currentWeekFromPlanting;
+              bool isLocked = weekNum > _currentWeekFromPlanting;
+              bool isCompleted = _completedWeeks.contains(weekNum);
+              bool isUnscouted = !isLocked && !isCompleted && weekNum <= _currentWeekFromPlanting;
+
               return GestureDetector(
                 onTap: () async {
                   final weekFirstDay = index * 7;
@@ -2299,8 +2377,11 @@ Widget _buildGrowthStageCard() {
                   decoration: BoxDecoration(
                     color: isSelected
                         ? kActionGreen
-                        : const Color(0xFFF5F5F5),
+                        : (isCompleted ? const Color(0xFFE8F5E9) : const Color(0xFFF5F5F5)),
                     shape: BoxShape.circle,
+                    border: isUnscouted && !isSelected
+                        ? Border.all(color: const Color(0xFFFFB74D), width: 1.5)
+                        : null,
                   ),
                   child: Stack(
                     alignment: Alignment.center,
@@ -2315,7 +2396,7 @@ Widget _buildGrowthStageCard() {
                                   color: isSelected
                                       ? Colors.white70
                                       : kTextGrey)),
-                          Text('${index + 1}',
+                          Text('$weekNum',
                               style: GoogleFonts.inter(
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold,
@@ -2331,6 +2412,36 @@ Widget _buildGrowthStageCard() {
                           child: Icon(Icons.lock,
                               size: 10,
                               color: kTextGrey.withValues(alpha: 0.5)),
+                        )
+                      else if (isCompleted)
+                        Positioned(
+                          right: 4,
+                          top: 4,
+                          child: Container(
+                            padding: const EdgeInsets.all(2),
+                            decoration: BoxDecoration(
+                              color: isSelected ? Colors.white : kActionGreen,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              Icons.check,
+                              size: 8,
+                              color: isSelected ? kActionGreen : Colors.white,
+                            ),
+                          ),
+                        )
+                      else if (isUnscouted && !isSelected)
+                        Positioned(
+                          right: 4,
+                          top: 4,
+                          child: Container(
+                            width: 8,
+                            height: 8,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFFE65100),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
                         ),
                     ],
                   ),
@@ -2339,6 +2450,35 @@ Widget _buildGrowthStageCard() {
             }),
           ),
         ),
+        if (_unscoutedWeeks.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF8E1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFFFD54F).withValues(alpha: 0.6)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.info_outline_rounded, color: Color(0xFFE65100), size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Unscouted Week${_unscoutedWeeks.length > 1 ? "s" : ""}: ${_unscoutedWeeks.join(", ")} (pending 5-station inspection)',
+                      style: GoogleFonts.inter(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFFB23B00),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
         Padding(
           padding: const EdgeInsets.only(left: 20, top: 16),
           child: Column(
@@ -2489,50 +2629,6 @@ Widget _buildGrowthStageCard() {
               isLocked: _isCurrentWeekLocked,
             );
           }),
-          if (_showClusteredReportButton)
-            Padding(
-              padding: const EdgeInsets.only(top: 16),
-              child: ElevatedButton.icon(
-                onPressed: _isSavingReport ? null : _createClusteredReport,
-                icon: _isSavingReport
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : Icon(
-                        _wasThresholdTriggered
-                            ? Icons.warning_amber_rounded
-                            : Icons.assignment_turned_in_rounded,
-                        color: Colors.white,
-                      ),
-                label: Text(
-                  _isSavingReport
-                      ? 'Saving Clustered Report...'
-                      : (_wasThresholdTriggered
-                          ? 'Create High-Level Clustered Report'
-                          : 'Create Low-Level Clustered Report'),
-                  style: GoogleFonts.inter(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 15,
-                    color: Colors.white,
-                  ),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _wasThresholdTriggered
-                      ? const Color(0xFFC62828)
-                      : kActionGreen,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  minimumSize: const Size(double.infinity, 54),
-                ),
-              ),
-            ),
         ],
       ),
     );
@@ -2719,7 +2815,7 @@ Widget _buildRecommendedTasksSection() {
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
-                '${completedTasks.length}/${visibleCount}',
+                '${completedTasks.length}/$visibleCount',
                 style: GoogleFonts.inter(
                   fontSize: 11,
                   color: _selectedControlMethod == 'chemical'
@@ -4604,7 +4700,7 @@ Widget _buildCompactScoringGuide(String title, List<Map<String, String>> scale) 
       'lastUpdated': FieldValue.serverTimestamp(),
     });
   } catch (e) {
-    print('Error updating growth stage: $e');
+    debugPrint('Error updating growth stage: $e');
   }
 }
 
@@ -4649,7 +4745,7 @@ Future<void> _createPlantDamageReport(DateTime reportDate, int weekNumber) async
   final dap = scoutingReportDap(_plantingDate!, reportDate);
   final growthInfo = getGrowthStage(dap);
 
-  int totalInspected = _stationData.fold(0, (sum, s) => sum + (s['plantsInspected'] as int? ?? 0));
+  int totalInspected = _stationData.fold(0, (acc, s) => acc + (s['plantsInspected'] as int? ?? 0));
   double damagePercent = totalInspected > 0 ? (_totalDamaged / totalInspected) * 100 : 0.0;
 
   // Collect per-plant damage scores and damage photos across all stations
@@ -4736,7 +4832,7 @@ Future<void> _createClusteredReport() async {
   setState(() => _isSavingReport = true);
 
   try {
-    int totalInspected = _stationData.fold(0, (sum, s) => sum + (s['plantsInspected'] as int? ?? 0));
+    int totalInspected = _stationData.fold(0, (acc, s) => acc + (s['plantsInspected'] as int? ?? 0));
     double damagePercent = totalInspected > 0 ? (_totalDamaged / totalInspected) * 100 : 0.0;
     final bool exceedsThreshold = damagePercent >= 10.0;
     final String reportLevel = exceedsThreshold ? 'High' : 'Low';
@@ -4908,15 +5004,15 @@ Future<void> _createClusteredReport() async {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(exceedsThreshold
-              ? '✅ High-level clustered report and plant damage report saved successfully!'
-              : '✅ Low-level clustered report and plant damage report saved successfully!'),
+              ? '✅ High-level clustered report generated & saved!'
+              : '✅ Low-level clustered report generated & saved!'),
           backgroundColor: kActionGreen,
         ),
       );
       setState(() {
-        _showClusteredReportButton = false;
         _isSavingReport = false;
       });
+      _loadAllWeeksStatus();
     }
   } catch (e) {
     if (mounted) {

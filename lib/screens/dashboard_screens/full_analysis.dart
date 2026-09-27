@@ -38,7 +38,8 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
   double _totalYield = 0;
   double _totalLosses = 0;
   double _avgMarketPrice = 0;
-  List<_CompletedCropInfo> _completedCrops = [];
+  List<_CropItemInfo> _pendingAuditCrops = [];
+  List<_CropItemInfo> _completedCrops = [];
   List<_MonthlyRevenue> _monthlyRevenues = [];
   List<String> _completedCycleIds = [];
   bool _showOneYear = false;
@@ -96,9 +97,8 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
           .doc(widget.userId)
           .collection('cycles');
 
-      final completedSnap = await cyclesRef
+      final querySnap = await cyclesRef
           .where('farmId', isEqualTo: widget.activeFarmId)
-          .where('isCompleted', isEqualTo: true)
           .get();
 
       double grossIncome = 0;
@@ -108,18 +108,39 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
       int priceCount = 0;
       final Map<String, double> monthlyIncome = {};
       final List<String> completedCycleIds = [];
+      final List<_CropItemInfo> pendingAuditCrops = [];
+      final List<_CropItemInfo> completedCrops = [];
 
-      for (final doc in completedSnap.docs) {
+      for (final doc in querySnap.docs) {
         final data = doc.data();
-        final totalValue = (data['totalValue'] as num?)?.toDouble() ??
-            (data['grossIncome'] as num?)?.toDouble() ??
+        final isCompleted = data['isCompleted'] == true ||
+            data['status'] == 'completed' ||
+            data['status'] == 'harvested';
+
+        // Only process harvested / completed crops
+        if (!isCompleted) continue;
+
+        final isAuditCompleted = data['isAuditCompleted'] == true;
+        final cropVariety = data['cropVariety'] ?? data['cropType'] ?? 'Unknown Crop';
+        final fieldName = data['fieldName'] ?? 'Unknown Field';
+
+        final totalValue = (data['grossIncome'] as num?)?.toDouble() ??
+            (data['totalValue'] as num?)?.toDouble() ??
             (data['income'] as num?)?.toDouble() ??
             0;
-        final yield_ = (data['totalYield'] as num?)?.toDouble() ?? 0;
+        final yield_ = (data['totalYield'] as num?)?.toDouble() ??
+            (data['goodYield'] as num?)?.toDouble() ??
+            (data['actualYield'] as num?)?.toDouble() ??
+            0;
         final damagedYield = (data['damagedYield'] as num?)?.toDouble() ?? 0;
         final marketPrice = (data['marketPrice'] as num?)?.toDouble() ?? 0;
-        final pestLoss = (data['pestLoss'] as num?)?.toDouble() ?? 0;
-        final otherLoss = (data['otherLoss'] as num?)?.toDouble() ?? 0;
+        final pestLoss = (data['damageCost'] as num?)?.toDouble() ??
+            (data['pestLoss'] as num?)?.toDouble() ??
+            0;
+        final otherLoss = (data['totalCycleCost'] as num?)?.toDouble() ??
+            (data['otherLoss'] as num?)?.toDouble() ??
+            0;
+        final netIncome = (data['netIncome'] as num?)?.toDouble() ?? (totalValue - pestLoss - otherLoss);
 
         grossIncome += totalValue;
         totalYield += yield_;
@@ -131,23 +152,26 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
 
         completedCycleIds.add(doc.id);
 
-        final harvestTs = data['actualHarvestDate'] ?? data['completedAt'];
+        final harvestTs = data['actualHarvestDate'] ?? data['completedAt'] ?? data['auditCompletedAt'];
         if (harvestTs is Timestamp) {
           final monthKey = DateFormat('MMM').format(harvestTs.toDate());
           monthlyIncome[monthKey] = (monthlyIncome[monthKey] ?? 0) + totalValue;
         }
-      }
 
-      final List<_CompletedCropInfo> completedCrops = [];
-      for (final doc in completedSnap.docs) {
-        final data = doc.data();
-        final cropVariety = data['cropVariety'] ?? data['cropType'] ?? 'Unknown Crop';
-        final fieldName = data['fieldName'] ?? 'Unknown Field';
-        completedCrops.add(_CompletedCropInfo(
+        final cropItem = _CropItemInfo(
           cycleId: doc.id,
           name: cropVariety,
           plot: fieldName,
-        ));
+          isAuditCompleted: isAuditCompleted,
+          grossIncome: totalValue,
+          netIncome: netIncome,
+        );
+
+        if (isAuditCompleted) {
+          completedCrops.add(cropItem);
+        } else {
+          pendingAuditCrops.add(cropItem);
+        }
       }
 
       setState(() {
@@ -155,6 +179,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
         _totalYield = totalYield;
         _totalLosses = totalLosses;
         _avgMarketPrice = priceCount > 0 ? totalPriceSum / priceCount : 0;
+        _pendingAuditCrops = pendingAuditCrops;
         _completedCrops = completedCrops;
         _completedCycleIds = completedCycleIds;
         _rawMonthlyIncome = monthlyIncome;
@@ -181,6 +206,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
       final month = DateTime(now.year, now.month - i, 1);
       final key = DateFormat('MMM').format(month);
       months.add(key);
+      months.length;
       monthValues.add(_rawMonthlyIncome[key] ?? 0);
     }
 
@@ -322,30 +348,134 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                       const SizedBox(height: 20),
                       _buildRevenueChart(),
 
-                      const SizedBox(height: 30),
+                      const SizedBox(height: 32),
 
-                      Text(
-                        'Completed Crops',
-                        style: GoogleFonts.epilogue(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.black,
-                        ),
+                      // ─── 1. PENDING AUDIT SECTION ─────────────────────────
+                      Row(
+                        children: [
+                          Text(
+                            'Pending Audit',
+                            style: GoogleFonts.epilogue(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.black,
+                            ),
+                          ),
+                          if (_pendingAuditCrops.isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFEF3C7),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: const Color(0xFFF59E0B)),
+                              ),
+                              child: Text(
+                                '${_pendingAuditCrops.length} Pending',
+                                style: GoogleFonts.manrope(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: const Color(0xFFB45309),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Harvested crops awaiting financial verification. Complete the audit to finalize records.',
+                        style: GoogleFonts.manrope(color: textGray, fontSize: 13),
+                      ),
+                      const SizedBox(height: 16),
+
+                      if (_pendingAuditCrops.isEmpty)
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(vertical: 22, horizontal: 20),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: const Color(0xFFE8EAE6)),
+                          ),
+                          child: Center(
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(Icons.check_circle_outline_rounded, color: Color(0xFF2E7D32), size: 18),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'All harvested crops have been audited',
+                                  style: GoogleFonts.manrope(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: textGray,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      else
+                        ..._pendingAuditCrops.map(
+                          (crop) => _buildCropCard(crop),
+                        ),
+
+                      const SizedBox(height: 32),
+
+                      // ─── 2. COMPLETED CROPS SECTION ───────────────────────
+                      Row(
+                        children: [
+                          Text(
+                            'Completed Crops',
+                            style: GoogleFonts.epilogue(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.black,
+                            ),
+                          ),
+                          if (_completedCrops.isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE8F5E9),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: const Color(0xFFA5D6A7)),
+                              ),
+                              child: Text(
+                                '${_completedCrops.length} Audited',
+                                style: GoogleFonts.manrope(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: const Color(0xFF1B5E37),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Crops with audited and finalized financial figures (locked & read-only).',
+                        style: GoogleFonts.manrope(color: textGray, fontSize: 13),
+                      ),
+                      const SizedBox(height: 16),
 
                       if (_completedCrops.isEmpty)
                         Container(
-                          padding: const EdgeInsets.all(40),
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(32),
                           decoration: BoxDecoration(
                             color: Colors.white,
-                            borderRadius: BorderRadius.circular(24),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: const Color(0xFFE8EAE6)),
                           ),
                           child: Center(
                             child: Text(
-                              'No completed crops in this farm',
+                              'No audited crops yet in this farm',
                               style: GoogleFonts.manrope(
-                                fontSize: 14,
+                                fontSize: 13.5,
                                 color: textGray,
                               ),
                             ),
@@ -353,12 +483,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                         )
                       else
                         ..._completedCrops.map(
-                          (crop) => _buildCropItem(
-                            context,
-                            crop.cycleId,
-                            crop.name,
-                            crop.plot,
-                          ),
+                          (crop) => _buildCropCard(crop),
                         ),
 
                       const SizedBox(height: 40),
@@ -516,103 +641,141 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
     );
   }
 
-  Widget _buildCropItem(
-      BuildContext context, String cycleId, String name, String plot) {
+  Widget _buildCropCard(_CropItemInfo crop) {
+    final isPending = !crop.isAuditCompleted;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: isPending ? const Color(0xFFF59E0B).withValues(alpha: 0.35) : const Color(0xFFE8EAE6),
+          width: isPending ? 1.2 : 1.0,
+        ),
+        boxShadow: isPending
+            ? [
+                BoxShadow(
+                  color: const Color(0xFFF59E0B).withValues(alpha: 0.06),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ]
+            : null,
       ),
       child: Column(
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    name,
-                    style: GoogleFonts.manrope(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.location_on_outlined,
-                        size: 14,
-                        color: textGray,
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      crop.name,
+                      style: GoogleFonts.manrope(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFF1F2937),
                       ),
-                      const SizedBox(width: 4),
-                      Text(
-                        plot,
-                        style: GoogleFonts.manrope(
-                          fontSize: 13,
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.location_on_outlined,
+                          size: 14,
                           color: textGray,
                         ),
-                      ),
-                    ],
-                  ),
-                ],
+                        const SizedBox(width: 4),
+                        Text(
+                          crop.plot,
+                          style: GoogleFonts.manrope(
+                            fontSize: 13,
+                            color: textGray,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE8F5E9),
-                  borderRadius: BorderRadius.circular(25),
-                ),
-                child: Text(
-                  'Completed',
-                  style: GoogleFonts.manrope(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
+                  color: isPending ? const Color(0xFFFEF3C7) : const Color(0xFFE8F5E9),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: isPending ? const Color(0xFFF59E0B) : const Color(0xFFA5D6A7),
                   ),
                 ),
-              )
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      isPending ? Icons.edit_note_rounded : Icons.verified_rounded,
+                      size: 14,
+                      color: isPending ? const Color(0xFFB45309) : const Color(0xFF1B5E37),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      isPending ? 'Pending Audit' : 'Completed & Audited',
+                      style: GoogleFonts.manrope(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: isPending ? const Color(0xFFB45309) : const Color(0xFF1B5E37),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 30),
+          const SizedBox(height: 20),
           InkWell(
-            onTap: () {
-              Navigator.push(
+            onTap: () async {
+              final result = await Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (context) => CropFinanceScreen(
                     userId: widget.userId,
                     activeFarmId: widget.activeFarmId,
-                    cycleId: cycleId,
+                    cycleId: crop.cycleId,
                   ),
                 ),
               );
+              if (result == true || mounted) {
+                _loadData();
+              }
             },
-            borderRadius: BorderRadius.circular(25),
+            borderRadius: BorderRadius.circular(20),
             child: Container(
               width: double.infinity,
-              height: 45,
+              height: 46,
               decoration: BoxDecoration(
-                color: const Color(0xFFF3F5EE),
-                borderRadius: BorderRadius.circular(25),
+                color: isPending ? const Color(0xFF0D4D33) : const Color(0xFFF3F5EE),
+                borderRadius: BorderRadius.circular(20),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(
-                    'View Full Analysis',
-                    style: GoogleFonts.manrope(
-                      fontWeight: FontWeight.w900,
-                      color: darkGreen,
-                    ),
+                  Icon(
+                    isPending ? Icons.edit_document : Icons.arrow_forward_rounded,
+                    size: 16,
+                    color: isPending ? Colors.white : darkGreen,
                   ),
                   const SizedBox(width: 8),
-                  const Icon(
-                    Icons.arrow_forward,
-                    size: 16,
-                    color: Color.fromARGB(255, 1, 39, 24),
+                  Text(
+                    isPending ? 'Complete Financial Audit' : 'View Financial Report',
+                    style: GoogleFonts.manrope(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13.5,
+                      color: isPending ? Colors.white : darkGreen,
+                    ),
                   ),
                 ],
               ),
@@ -898,15 +1061,21 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
   }
 }
 
-class _CompletedCropInfo {
+class _CropItemInfo {
   final String cycleId;
   final String name;
   final String plot;
+  final bool isAuditCompleted;
+  final double grossIncome;
+  final double netIncome;
 
-  _CompletedCropInfo({
+  _CropItemInfo({
     required this.cycleId,
     required this.name,
     required this.plot,
+    required this.isAuditCompleted,
+    this.grossIncome = 0.0,
+    this.netIncome = 0.0,
   });
 }
 

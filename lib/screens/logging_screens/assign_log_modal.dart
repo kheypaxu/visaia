@@ -5,13 +5,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:visaia/services/auth_cache_service.dart';
 
 import 'package:visaia/services/firestore_safe_ext.dart';
-import 'package:visaia/services/connectivity_service.dart';
 
 void showAssignLogSheet(
   BuildContext context, {
   required String userId,
   required String cycleId,
-  required Function(String selectedCycleId) onCycleSelected,
+  required Function(String selectedCycleId, int selectedWeek) onCycleSelected,
 }) {
   showModalBottomSheet(
     context: context,
@@ -28,7 +27,7 @@ void showAssignLogSheet(
 class AssignLogSheetContent extends StatefulWidget {
   final String userId;
   final String cycleId;
-  final Function(String selectedCycleId) onCycleSelected;
+  final Function(String selectedCycleId, int selectedWeek) onCycleSelected;
 
   const AssignLogSheetContent({
     super.key,
@@ -43,12 +42,46 @@ class AssignLogSheetContent extends StatefulWidget {
 
 class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
   String? _selectedCycleId;
+  int _selectedWeek = 1;
   List<Map<String, dynamic>> _cycles = [];
   bool _isLoading = true;
 
   static const Color _green = Color(0xFF1A5C30);
   static const Color _darkGreen = Color(0xFF0C503C);
   static const Color _textGray = Color(0xFF616161);
+
+  Map<String, dynamic>? get _selectedCycle {
+    if (_selectedCycleId == null) return null;
+    return _cycles.firstWhere(
+      (c) => c['id'] == _selectedCycleId,
+      orElse: () => {},
+    );
+  }
+
+  int get _cycleTotalWeeks {
+    final cycle = _selectedCycle;
+    if (cycle == null || cycle.isEmpty) return 12;
+    final plantingDate = cycle['plantingDate'] as DateTime?;
+    final harvestDate = cycle['harvestDate'] as DateTime?;
+    if (plantingDate != null && harvestDate != null) {
+      final days = harvestDate.difference(plantingDate).inDays;
+      final weeks = (days / 7).ceil();
+      return weeks.clamp(1, 24);
+    }
+    return 12;
+  }
+
+  int get _cycleCurrentWeek {
+    final cycle = _selectedCycle;
+    if (cycle == null || cycle.isEmpty) return 1;
+    final plantingDate = cycle['plantingDate'] as DateTime?;
+    if (plantingDate != null) {
+      final days = DateTime.now().difference(plantingDate).inDays;
+      final week = (days / 7).floor() + 1;
+      return week.clamp(1, _cycleTotalWeeks);
+    }
+    return 1;
+  }
 
   @override
   void initState() {
@@ -92,6 +125,8 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
           'fieldName': data['fieldName'] ?? 'Main Field',
           'cropVariety': data['cropVariety'] ?? '',
           'farmId': data['farmId'] ?? '',
+          'plantingDate': (data['plantingDate'] as Timestamp?)?.toDate(),
+          'harvestDate': (data['harvestDate'] as Timestamp?)?.toDate(),
         };
       }).toList();
 
@@ -100,7 +135,7 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
       if (widget.cycleId.isNotEmpty &&
           activeCycles.any((c) => c['id'] == widget.cycleId)) {
         preSelected = widget.cycleId;
-      } else if (activeCycles.length == 1) {
+      } else if (activeCycles.isNotEmpty) {
         preSelected = activeCycles.first['id'] as String;
       }
 
@@ -108,6 +143,7 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
         setState(() {
           _cycles = activeCycles;
           _selectedCycleId = preSelected;
+          _selectedWeek = _cycleCurrentWeek;
           _isLoading = false;
         });
       }
@@ -124,6 +160,77 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
     if (lower.contains('wheat') || lower.contains('grain')) return Icons.grain_rounded;
     if (lower.contains('soy')) return Icons.spa_rounded;
     return Icons.agriculture_rounded;
+  }
+
+  Widget _buildWeekSelector() {
+    final totalWeeks = _cycleTotalWeeks;
+    final currentWeek = _cycleCurrentWeek;
+
+    return SizedBox(
+      height: 44,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: totalWeeks,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final weekNum = index + 1;
+          final isSelected = _selectedWeek == weekNum;
+          final isCurrent = weekNum == currentWeek;
+
+          return GestureDetector(
+            onTap: () => setState(() => _selectedWeek = weekNum),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: isSelected ? _green : const Color(0xFFF7FBF8),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isSelected ? _green : const Color(0xFFDDEEE4),
+                  width: 1.5,
+                ),
+                boxShadow: isSelected
+                    ? [BoxShadow(color: _green.withValues(alpha: 0.25), blurRadius: 6, offset: const Offset(0, 2))]
+                    : null,
+              ),
+              child: Center(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Week $weekNum',
+                      style: GoogleFonts.inter(
+                        fontSize: 13,
+                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+                        color: isSelected ? Colors.white : _darkGreen,
+                      ),
+                    ),
+                    if (isCurrent) ...[
+                      const SizedBox(width: 5),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                        decoration: BoxDecoration(
+                          color: isSelected ? Colors.white.withValues(alpha: 0.25) : _green.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          'Now',
+                          style: GoogleFonts.inter(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            color: isSelected ? Colors.white : _green,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   @override
@@ -242,7 +349,12 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
                         final cropVariety = cycle['cropVariety'] as String;
 
                         return GestureDetector(
-                          onTap: () => setState(() => _selectedCycleId = cycleId),
+                          onTap: () {
+                            setState(() {
+                              _selectedCycleId = cycleId;
+                              _selectedWeek = _cycleCurrentWeek;
+                            });
+                          },
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 180),
                             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -320,6 +432,35 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
                         );
                       },
                     ),
+
+                    // Week Selection
+                    if (_selectedCycleId != null) ...[
+                      const SizedBox(height: 18),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'TARGET SCOUTING WEEK',
+                            style: GoogleFonts.inter(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.8,
+                              color: _textGray,
+                            ),
+                          ),
+                          Text(
+                            'Week $_selectedWeek of $_cycleTotalWeeks',
+                            style: GoogleFonts.inter(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: _green,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      _buildWeekSelector(),
+                    ],
                     const SizedBox(height: 20),
                   ],
                 ),
@@ -335,7 +476,7 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
               child: ElevatedButton.icon(
                 onPressed: _selectedCycleId != null
                     ? () {
-                        widget.onCycleSelected(_selectedCycleId!);
+                        widget.onCycleSelected(_selectedCycleId!, _selectedWeek);
                         Navigator.pop(context);
                       }
                     : null,
