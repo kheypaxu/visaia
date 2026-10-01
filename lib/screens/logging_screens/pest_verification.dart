@@ -77,6 +77,56 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
     return DatabaseImage(source: imageData);
   }
 
+  void _showImagePreview(BuildContext context, String imageRef, String title) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            color: Colors.black,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  color: Colors.black87,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        title,
+                        style: GoogleFonts.inter(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Colors.white, size: 20),
+                        onPressed: () => Navigator.pop(context),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                    ],
+                  ),
+                ),
+                Flexible(
+                  child: InteractiveViewer(
+                    maxScale: 4.0,
+                    child: _buildImage(imageRef),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Compresses the image to reduce file size while maintaining clarity,
   /// then stores it in its own Firestore document and returns its reference.
   Future<String?> _compressAndUploadImage(File imageFile, String typePrefix) async {
@@ -679,17 +729,24 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
                     itemBuilder: (context, imgIndex) {
                       return Stack(
                         children: [
-                          Container(
-                            width: 84,
-                            height: 84,
-                            margin: const EdgeInsets.only(right: 10),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: Colors.grey.shade200),
+                          GestureDetector(
+                            onTap: () => _showImagePreview(
+                              context,
+                              images[imgIndex],
+                              '${pest['label']} Photo #${imgIndex + 1}',
                             ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(10),
-                              child: _buildImage(images[imgIndex]),
+                            child: Container(
+                              width: 84,
+                              height: 84,
+                              margin: const EdgeInsets.only(right: 10),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: Colors.grey.shade200),
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: _buildImage(images[imgIndex]),
+                              ),
                             ),
                           ),
                           Positioned(
@@ -889,77 +946,151 @@ class _PestVerificationScreenState extends State<PestVerificationScreen> {
             ],
           ),
           
-          // Damage image thumbnails
-          if (_damagePhotos.isNotEmpty) ...[
-            const SizedBox(height: 14),
-            SizedBox(
-              height: 84,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                itemCount: _damagePhotos.length,
-                itemBuilder: (context, imgIndex) {
-                  return Stack(
-                    children: [
-                      Container(
-                        width: 84,
-                        height: 84,
-                        margin: const EdgeInsets.only(right: 10),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.grey.shade200),
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: _buildImage(_damagePhotos[imgIndex]),
-                        ),
-                      ),
-                      Positioned(
-                        top: 4,
-                        right: 14,
-                        child: GestureDetector(
-                          onTap: () => _removeDamagePhoto(imgIndex),
-                          child: Container(
-                            padding: const EdgeInsets.all(3),
-                            decoration: const BoxDecoration(
-                              color: Colors.black87,
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.close,
-                              size: 12,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ),
-                      Positioned(
-                        bottom: 4,
-                        left: 4,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.6),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            'Plant #${imgIndex + 1}',
-                            style: const TextStyle(
-                              fontSize: 9,
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
+          const SizedBox(height: 12),
+          Text(
+            'Each photo is matched to Plant 1, Plant 2, etc. for the 1-5 damage scoring table:',
+            style: GoogleFonts.inter(
+              fontSize: 11.5,
+              color: _textGrey,
+              fontWeight: FontWeight.w500,
             ),
-          ],
+          ),
+          const SizedBox(height: 12),
+
+          // Individual Plant Evidence Grid / Slots
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: List.generate(damaged, (index) {
+              final plantNum = index + 1;
+              final hasPhoto = index < _damagePhotos.length;
+              final photoRef = hasPhoto ? _damagePhotos[index] : null;
+
+              return Container(
+                width: 102,
+                decoration: BoxDecoration(
+                  color: hasPhoto ? const Color(0xFFF6EEFF) : Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: hasPhoto ? _purple.withValues(alpha: 0.4) : Colors.grey.shade300,
+                    width: 1.2,
+                  ),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Prominent Plant Label Header
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      decoration: BoxDecoration(
+                        color: hasPhoto ? _purple : Colors.grey.shade500,
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
+                      ),
+                      child: Center(
+                        child: Text(
+                          'Plant $plantNum',
+                          style: GoogleFonts.inter(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Image or Placeholder
+                    if (hasPhoto && photoRef != null)
+                      Stack(
+                        children: [
+                          GestureDetector(
+                            onTap: () => _showImagePreview(
+                              context,
+                              photoRef,
+                              'Station ${widget.stationIndex + 1} - Plant $plantNum Damage Evidence',
+                            ),
+                            child: Container(
+                              height: 85,
+                              width: double.infinity,
+                              color: Colors.black12,
+                              child: _buildImage(photoRef),
+                            ),
+                          ),
+                          Positioned(
+                            top: 3,
+                            right: 3,
+                            child: GestureDetector(
+                              onTap: () => _removeDamagePhoto(index),
+                              child: Container(
+                                padding: const EdgeInsets.all(3),
+                                decoration: const BoxDecoration(
+                                  color: Colors.black87,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.close,
+                                  size: 11,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            bottom: 3,
+                            right: 3,
+                            child: GestureDetector(
+                              onTap: () => _showImagePreview(
+                                context,
+                                photoRef,
+                                'Station ${widget.stationIndex + 1} - Plant $plantNum Damage Evidence',
+                              ),
+                              child: Container(
+                                padding: const EdgeInsets.all(3),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.6),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.fullscreen,
+                                  size: 13,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      )
+                    else
+                      Container(
+                        height: 85,
+                        width: double.infinity,
+                        alignment: Alignment.center,
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.add_a_photo_outlined, size: 22, color: Colors.grey.shade400),
+                            const SizedBox(height: 3),
+                            Text(
+                              'Photo\nNeeded',
+                              textAlign: TextAlign.center,
+                              style: GoogleFonts.inter(
+                                fontSize: 9.5,
+                                color: Colors.grey.shade600,
+                                fontWeight: FontWeight.w600,
+                                height: 1.15,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            }),
+          ),
           
           if (isProcessing) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             const LinearProgressIndicator(),
           ],
           
