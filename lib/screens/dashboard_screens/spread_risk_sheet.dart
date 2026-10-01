@@ -96,10 +96,10 @@ class SpreadRiskSheet extends StatelessWidget {
               const SizedBox(height: 20),
               Row(
                 children: [
-                  Icon(Icons.map_rounded, color: _riskColor, size: 22),
+                  Icon(Icons.radar_rounded, color: _riskColor, size: 22),
                   const SizedBox(width: 8),
                   Text(
-                    'Spread Risk Visualization',
+                    'Proximity / Monitoring Zone',
                     style: GoogleFonts.epilogue(
                       fontSize: 19,
                       fontWeight: FontWeight.w800,
@@ -110,8 +110,8 @@ class SpreadRiskSheet extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                'Schematic view of the reported outbreak relative to your farm. '
-                'Not to exact scale — use it as a quick proximity guide.',
+                'Schematic view of nearby pest detections relative to your farm. '
+                'Represents a proximity monitoring zone for heightened surveillance, not guaranteed infestation or pest spread.',
                 style: GoogleFonts.manrope(fontSize: 13, color: textGray, height: 1.5),
               ),
               const SizedBox(height: 24),
@@ -154,9 +154,9 @@ class SpreadRiskSheet extends StatelessWidget {
               const SizedBox(height: 20),
 
               // --- Legend ---
-              _legendRow(dangerRed, 'Immediate Risk (0–2 km)', 'Inspect and act within 24 hours'),
-              _legendRow(amber, 'Caution Zone (2–5 km)', 'Monitor closely, prepare controls'),
-              _legendRow(darkGreen, 'Watch Zone (5 km+)', 'Stay alert, log any sightings'),
+              _legendRow(dangerRed, 'Immediate Monitoring Zone (0–2 km)', 'Nearby detection: inspect fields and increase monitoring within 24 hours'),
+              _legendRow(amber, 'Caution Monitoring Zone (2–5 km)', 'Monitor closely, prepare preventative controls'),
+              _legendRow(darkGreen, 'General Monitoring Zone (5 km+)', 'Maintain routine scouting, log any sightings'),
               const SizedBox(height: 20),
 
               // --- Quick facts ---

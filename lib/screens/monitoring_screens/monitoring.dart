@@ -4593,38 +4593,38 @@ Widget _buildCompactScoringGuide(String title, List<Map<String, String>> scale) 
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Choose Your Control Method',
+            Text('Select Intervention Pathway',
                 style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
             Text(
-                'Explore detailed steps for each management strategy based on environmental impact.',
-                style: GoogleFonts.inter(fontSize: 14, color: kTextGrey)),
+                'Select your planned pest management strategy. Choose between chemical intervention or biological/pheromone monitoring.',
+                style: GoogleFonts.inter(fontSize: 13.5, color: kTextGrey)),
             const SizedBox(height: 24),
-            GestureDetector(
-              onTap: () => _selectControlMethod('biological'),
-              child: _modalOption(
-                  Icons.bug_report,
-                  'Biological Control',
-                  'Utilize natural predators and parasitoids to manage pests with zero chemical footprint.',
-                  false,
-                  const Color(0xFF2E7D32)),
-            ),
-            const SizedBox(height: 16),
             GestureDetector(
               onTap: () => _selectControlMethod('chemical'),
               child: _modalOption(
                   Icons.science_outlined,
-                  'Chemical Control',
-                  'Targeted synthetic applications. Recommended only as a last resort for acute infestations.',
+                  'Option A: Chemical Control',
+                  'Targeted insecticide application when pest damage exceeds economic threshold. Flow: Validated → Control Applied → Follow-up → Resolved.',
                   true,
                   const Color(0xFFC62828)),
             ),
-            const SizedBox(height: 32),
+            const SizedBox(height: 16),
+            GestureDetector(
+              onTap: () => _selectControlMethod('biological'),
+              child: _modalOption(
+                  Icons.bug_report,
+                  'Option B: Biological / Pheromone Trap Control',
+                  'Deploy pheromone traps & Trichogramma biocontrol. Traps serve as early surveillance (Pheromone Trap → Monitoring → Follow-up → Resolution). Note: Traps do not imply confirmed infestation.',
+                  false,
+                  const Color(0xFF2E7D32)),
+            ),
+            const SizedBox(height: 28),
             Center(
               child: InkWell(
                 onTap: () => setState(() => _showControlModal = false),
                 child: const Text(
-                    'Continue with physical control? Back to monitoring',
+                    'Return to Monitoring Dashboard',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                         decoration: TextDecoration.underline,

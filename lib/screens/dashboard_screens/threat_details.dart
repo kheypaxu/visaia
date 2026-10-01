@@ -65,8 +65,8 @@ class ThreatDetailsScreen extends StatelessWidget {
           final double? distance = data['distanceKm'] is num ? (data['distanceKm'] as num).toDouble() : null;
 
           final Color themeColor = _resolveThemeColor(type, risk);
-          final String categoryTitle = _resolveCategoryTitle(type, risk);
-          final IconData categoryIcon = _resolveCategoryIcon(type, risk);
+          final String categoryTitle = _resolveCategoryTitle(type, risk, data);
+          final IconData categoryIcon = _resolveCategoryIcon(type, risk, data);
 
           return Stack(
             children: [
@@ -653,9 +653,9 @@ class ThreatDetailsScreen extends StatelessWidget {
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               elevation: 0,
             ),
-            icon: const Icon(Icons.map_rounded, size: 20),
+            icon: const Icon(Icons.radar_rounded, size: 20),
             label: Text(
-              'View Interactive Spread Risk Map',
+              'View Proximity / Monitoring Zone',
               style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14.5),
             ),
           ),
@@ -741,19 +741,33 @@ class ThreatDetailsScreen extends StatelessWidget {
     return darkGreen;
   }
 
-  String _resolveCategoryTitle(String type, String risk) {
+  String _resolveCategoryTitle(String type, String risk, [Map<String, dynamic>? data]) {
+    final sender = (data?['sender'] ?? data?['source'] ?? data?['issuer'] ?? '').toString().toLowerCase();
+    final title = (data?['title'] ?? '').toString().toLowerCase();
+
     if (type.contains('validation_rejected')) return 'VALIDATION REJECTED';
-    if (type.contains('validation_confirmed') || type.contains('validated')) return 'RCPC VALIDATED';
-    if (risk == 'high') return 'CRITICAL THREAT';
-    if (risk == 'moderate') return 'NEARBY OUTBREAK';
+    if (type.contains('validation_confirmed') || type.contains('validated')) return 'DA-RCPC VALIDATED';
+    if (type.contains('mao') || sender.contains('mao') || title.contains('mao') || type.contains('local_advisory')) {
+      return 'MAO LOCAL ADVISORY';
+    }
+    if (type.contains('rcpc') || type.contains('technical') || sender.contains('rcpc') || type.contains('pest_advisory')) {
+      return 'DA-RCPC TECHNICAL ADVISORY';
+    }
+    if (risk == 'high') return 'CRITICAL PEST ALERT';
+    if (risk == 'moderate') return 'PROXIMITY MONITORING ALERT';
     return 'AGRICULTURAL ADVISORY';
   }
 
-  IconData _resolveCategoryIcon(String type, String risk) {
+  IconData _resolveCategoryIcon(String type, String risk, [Map<String, dynamic>? data]) {
+    final sender = (data?['sender'] ?? data?['source'] ?? data?['issuer'] ?? '').toString().toLowerCase();
+    final title = (data?['title'] ?? '').toString().toLowerCase();
+
     if (type.contains('validation_rejected')) return Icons.cancel_rounded;
     if (type.contains('validation_confirmed') || type.contains('validated')) return Icons.verified_rounded;
+    if (type.contains('mao') || sender.contains('mao') || title.contains('mao')) return Icons.location_city_rounded;
+    if (type.contains('rcpc') || type.contains('technical') || sender.contains('rcpc')) return Icons.biotech_rounded;
     if (risk == 'high') return Icons.warning_amber_rounded;
-    if (risk == 'moderate') return Icons.bug_report_rounded;
+    if (risk == 'moderate') return Icons.radar_rounded;
     return Icons.campaign_rounded;
   }
 

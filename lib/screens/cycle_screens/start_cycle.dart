@@ -260,6 +260,19 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
       return;
     }
 
+    if (plantingDate != null && harvestDate != null && harvestDate!.isBefore(plantingDate!)) {
+      _showSnackBar('Harvest date cannot occur before planting date.', isError: true);
+      return;
+    }
+
+    if (seedDensityController.text.isNotEmpty) {
+      final density = double.tryParse(seedDensityController.text);
+      if (density != null && density < 0) {
+        _showSnackBar('Seed density cannot be negative.', isError: true);
+        return;
+      }
+    }
+
     try {
       // Calculate the current growth stage based on planting date
       final now = DateTime.now();

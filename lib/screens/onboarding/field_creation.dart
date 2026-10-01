@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:visaia/utils/geo_utils.dart';
 
 class FieldCreation extends StatefulWidget {
   final List<LatLng> farmBoundary;
@@ -322,17 +323,38 @@ class _FieldCreationState extends State<FieldCreation> {
                     width: double.infinity,
                     height: 50,
                     child: ElevatedButton(
-                      onPressed: _fieldPoints.length >= 3 &&
-                              _fieldNameController.text.isNotEmpty
-                          ? () {
-                              Navigator.pop(context, {
-                                'name': _fieldNameController.text,
-                                'acres': 0,
-                                'crop': null,
-                                'boundaries': _fieldPoints,
-                              });
-                            }
-                          : null,
+                      onPressed: () {
+                        if (_fieldNameController.text.trim().isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Please enter a field name.')),
+                          );
+                          return;
+                        }
+                        if (_fieldPoints.length < 3) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Please map at least 3 points for the field boundary.')),
+                          );
+                          return;
+                        }
+                        if (GeoUtils.hasInvalidCoordinates(_fieldPoints)) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Invalid GPS coordinates detected.')),
+                          );
+                          return;
+                        }
+                        if (GeoUtils.hasSelfIntersection(_fieldPoints)) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Invalid field boundary: polygon lines cannot cross each other.')),
+                          );
+                          return;
+                        }
+                        Navigator.pop(context, {
+                          'name': _fieldNameController.text.trim(),
+                          'acres': 0,
+                          'crop': null,
+                          'boundaries': _fieldPoints,
+                        });
+                      },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF2E8B57),
                         foregroundColor: Colors.white,

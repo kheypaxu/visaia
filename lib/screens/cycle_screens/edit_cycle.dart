@@ -411,8 +411,16 @@ class _EditCropCycleScreenState extends State<EditCropCycleScreen> {
     }
 
     if (harvestDate.isBefore(plantingDate)) {
-      _showSnackBar('Harvest date must be after planting date');
+      _showSnackBar('Harvest date cannot occur before planting date');
       return;
+    }
+
+    if (_seedDensityController.text.isNotEmpty) {
+      final density = double.tryParse(_seedDensityController.text);
+      if (density != null && density < 0) {
+        _showSnackBar('Seed density cannot be negative');
+        return;
+      }
     }
 
     setState(() => _isSaving = true);

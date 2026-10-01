@@ -296,16 +296,16 @@ class FarmReportPdfService {
               ),
               pw.SizedBox(height: 20),
 
-              // ── Table 3: Fall Armyworm Reports ──
+              // ── Table 3: Fall Armyworm & Pest Surveillance Reports ──
               _buildSectionTable(
-                headerTitle: 'Fall Armyworm Reports',
+                headerTitle: 'Fall Armyworm & Pest Surveillance Reports',
                 headerBgColor: _lightSage,
                 headerTextColor: _darkGreen,
                 rows: [
-                  ['Total Report', '${data.totalReports} Reports'],
-                  ['Pending Report', '${data.pendingReports} Reports'],
-                  ['Validated Report', '${data.validatedReports} ${data.validatedReports == 1 ? 'Report' : 'Reports'}'],
-                  ['Resolved Report', '${data.resolvedReports} Reports'],
+                  ['Total Preliminary AI Reports', '${data.totalReports} Reports'],
+                  ['Pending Expert Validation', '${data.pendingReports} Reports'],
+                  ['Validated Reports (DA-RCPC)', '${data.validatedReports} ${data.validatedReports == 1 ? 'Report' : 'Reports'}'],
+                  ['Resolved Reports', '${data.resolvedReports} Reports'],
                 ],
               ),
 
@@ -458,7 +458,7 @@ class FarmReportPdfService {
                       border: pw.Border(right: pw.BorderSide(color: _borderGrey, width: 1)),
                     ),
                     child: pw.Text(
-                      'Growth Progess',
+                      'Growth Progress',
                       style: pw.TextStyle(
                         fontSize: 11,
                         fontWeight: pw.FontWeight.bold,
@@ -597,7 +597,7 @@ class FarmReportPdfService {
 
     final buffer = StringBuffer();
     buffer.writeln('VISAIA FARM REPORT');
-    buffer.writeln('Report Date,${dateStr}');
+    buffer.writeln('Report Date,$dateStr');
     buffer.writeln('');
     buffer.writeln('FARM INFORMATION');
     buffer.writeln('Farm Owner,"${data.ownerName}"');
@@ -610,12 +610,12 @@ class FarmReportPdfService {
     buffer.writeln('Cycle About to Harvest,"${data.cycleName}"');
     buffer.writeln('Week,"${data.weekText}"');
     buffer.writeln('Growth Stage,"${data.growthStage}"');
-    buffer.writeln('Growth Progress,"${progressPercent}%"');
+    buffer.writeln('Growth Progress,"$progressPercent%"');
     buffer.writeln('');
-    buffer.writeln('FALL ARMYWORM REPORTS');
-    buffer.writeln('Total Reports,${data.totalReports}');
-    buffer.writeln('Pending Reports,${data.pendingReports}');
-    buffer.writeln('Validated Reports,${data.validatedReports}');
+    buffer.writeln('PEST SURVEILLANCE & AI REPORTS');
+    buffer.writeln('Total Preliminary AI Reports,${data.totalReports}');
+    buffer.writeln('Pending Expert Validation,${data.pendingReports}');
+    buffer.writeln('Validated Reports (DA-RCPC),${data.validatedReports}');
     buffer.writeln('Resolved Reports,${data.resolvedReports}');
     buffer.writeln('');
     buffer.writeln('FINANCIALS & PRODUCTION');

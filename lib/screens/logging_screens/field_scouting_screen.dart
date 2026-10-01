@@ -388,6 +388,46 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
       final larvae = int.tryParse(_larvaeController.text) ?? 0;
       final pupae = int.tryParse(_pupaeController.text) ?? 0;
       final notes = _notesController.text;
+
+      // Validation rules
+      if (plantsInspected <= 0) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Inspected plants count must be greater than zero.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          setState(() => _isSaving = false);
+        }
+        return;
+      }
+
+      if (damaged < 0 || eggMasses < 0 || larvae < 0 || pupae < 0) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Numeric counts cannot be negative.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          setState(() => _isSaving = false);
+        }
+        return;
+      }
+
+      if (damaged > plantsInspected) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Damaged plants count cannot exceed inspected plants.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          setState(() => _isSaving = false);
+        }
+        return;
+      }
       
       final fawObserved = damaged > 0 || eggMasses > 0 || larvae > 0 || pupae > 0;
       

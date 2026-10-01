@@ -175,14 +175,37 @@ class _HarvestRecordingScreenState extends State<HarvestRecordingScreen> {
       _showSnackbar('Please enter actual yield');
       return false;
     }
+    final actualYield = double.tryParse(_actualYieldController.text);
+    if (actualYield == null || actualYield < 0) {
+      _showSnackbar('Actual yield cannot be negative');
+      return false;
+    }
+
     if (_damagedYieldController.text.isEmpty) {
       _showSnackbar('Please enter damaged yield');
       return false;
     }
+    final damagedYield = double.tryParse(_damagedYieldController.text);
+    if (damagedYield == null || damagedYield < 0) {
+      _showSnackbar('Damaged yield cannot be negative');
+      return false;
+    }
+
+    if (damagedYield > actualYield) {
+      _showSnackbar('Damaged yield cannot exceed actual yield');
+      return false;
+    }
+
     if (_marketPriceController.text.isEmpty) {
       _showSnackbar('Please enter market price');
       return false;
     }
+    final marketPrice = double.tryParse(_marketPriceController.text);
+    if (marketPrice == null || marketPrice < 0) {
+      _showSnackbar('Market price cannot be negative');
+      return false;
+    }
+
     if (widget.isEarlyHarvest && _earlyHarvestReason.isEmpty) {
       _showSnackbar('Please select a reason for early harvest');
       return false;

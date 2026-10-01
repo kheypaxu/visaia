@@ -513,7 +513,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
           final farmerData = farmerSnapshot.data!.data() ?? {};
           final fullName = farmerData['fullName'] ?? 'Unknown User';
-          final status = farmerData['status'] ?? 'Unverified';
+          final rawStatus = (farmerData['accountStatus'] ?? farmerData['verificationStatus'] ?? farmerData['status'] ?? 'Pending').toString();
+          String accountStatus;
+          Color statusColor;
+          IconData statusIcon;
+          if (rawStatus.toLowerCase().contains('verify') || rawStatus.toLowerCase() == 'verified') {
+            accountStatus = 'Verified';
+            statusColor = const Color(0xFF16A34A);
+            statusIcon = Icons.verified_rounded;
+          } else if (rawStatus.toLowerCase().contains('reject')) {
+            accountStatus = 'Rejected';
+            statusColor = const Color(0xFFDC2626);
+            statusIcon = Icons.cancel_rounded;
+          } else {
+            accountStatus = 'Pending';
+            statusColor = const Color(0xFFD97706);
+            statusIcon = Icons.pending_rounded;
+          }
+
+          final rsbsaId = (farmerData['rsbsaId'] ?? farmerData['rsbsaNumber'] ?? '').toString();
           final profileImage = farmerData['profileImage'];
 
           return SafeArea(
@@ -586,18 +604,57 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ),
                           textAlign: TextAlign.center,
                         ),
-                        const SizedBox(height: 6),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
+                        const SizedBox(height: 8),
+                        Wrap(
+                          alignment: WrapAlignment.center,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 8,
+                          runSpacing: 6,
                           children: [
-                            const Icon(Icons.verified,
-                                size: 16, color: Colors.green),
-                            const SizedBox(width: 4),
-                            Text(
-                              status.toString().toUpperCase(),
-                              style: GoogleFonts.manrope(
-                                fontWeight: FontWeight.w700,
-                                color: ProfileScreen.textGray,
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: statusColor.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: statusColor.withValues(alpha: 0.3)),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(statusIcon, size: 14, color: statusColor),
+                                  const SizedBox(width: 5),
+                                  Text(
+                                    'VISAIA Account: $accountStatus',
+                                    style: GoogleFonts.manrope(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      color: statusColor,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF1F5F9),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: const Color(0xFFCBD5E1)),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.badge_outlined, size: 14, color: Color(0xFF475569)),
+                                  const SizedBox(width: 5),
+                                  Text(
+                                    rsbsaId.isNotEmpty ? 'RSBSA Registered' : 'RSBSA Unregistered',
+                                    style: GoogleFonts.manrope(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: const Color(0xFF475569),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ],

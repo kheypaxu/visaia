@@ -706,11 +706,64 @@ class _AIResultScreenState extends State<AIResultScreen>
 
   // ── Overview Tab ────────────────────────────────────────────────────────
   Widget _buildOverviewTab() {
+    final bool isNonFaw = !widget.pestName.toLowerCase().contains('fall armyworm') &&
+        !widget.pestName.toLowerCase().contains('faw');
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Preliminary AI Result Status Banner
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            margin: const EdgeInsets.only(bottom: 14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF8E1), // Warm amber background
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFFFB300), width: 1.2),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFFFFB300).withValues(alpha: 0.1),
+                  blurRadius: 8,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.pending_actions_rounded, color: Color(0xFFE65100), size: 24),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Pending Expert Validation',
+                        style: GoogleFonts.manrope(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w800,
+                          color: const Color(0xFFB76E00),
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        'This is a preliminary AI result and is subject to DA-RCPC Expert validation.',
+                        style: GoogleFonts.manrope(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: const Color(0xFF6D4C41),
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
           // Identity Card
           Container(
             padding: const EdgeInsets.all(20),
@@ -718,14 +771,36 @@ class _AIResultScreenState extends State<AIResultScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'DETECTED PEST',
-                  style: GoogleFonts.manrope(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    color: _muted,
-                    letterSpacing: 1.2,
-                  ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'AI CLASSIFICATION',
+                      style: GoogleFonts.manrope(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: _muted,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    if (isNonFaw)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE3F2FD),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFF90CAF9)),
+                        ),
+                        child: Text(
+                          'Non-FAW Specimen',
+                          style: GoogleFonts.manrope(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            color: const Color(0xFF1565C0),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 6),
                 Text(
@@ -773,7 +848,7 @@ class _AIResultScreenState extends State<AIResultScreen>
                     Expanded(
                       child: _overviewInfoCell(
                         icon: Icons.verified_rounded,
-                        label: 'Confidence',
+                        label: 'AI Match Confidence',
                         value: '${widget.confidencePercent}%',
                       ),
                     ),
@@ -942,44 +1017,94 @@ class _AIResultScreenState extends State<AIResultScreen>
 
   // ── Analysis Tab ────────────────────────────────────────────────────────
   Widget _buildAnalysisTab() {
+    final bool isNonFaw = !widget.pestName.toLowerCase().contains('fall armyworm') &&
+        !widget.pestName.toLowerCase().contains('faw');
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        decoration: _cardDecoration(),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (isNonFaw) ...[
+            Container(
+              padding: const EdgeInsets.all(16),
+              margin: const EdgeInsets.only(bottom: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF0FDF4),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFBBF7D0)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.psychology_alt_rounded, color: Color(0xFF15803D), size: 22),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'AI-Assisted Explanation',
+                          style: GoogleFonts.manrope(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            color: const Color(0xFF166534),
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          'The AI classified this image as ${widget.pestName} (Non-FAW). The diagnostic explanation below explains the characteristics and guidance.',
+                          style: GoogleFonts.manrope(
+                            fontSize: 12,
+                            color: const Color(0xFF374151),
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: _cardDecoration(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: _lightGreen,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(Icons.analytics_rounded,
-                      color: _green, size: 16),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: _lightGreen,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.analytics_rounded,
+                          color: _green, size: 16),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      'Farmer-Facing Explanation',
+                      style: GoogleFonts.manrope(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: _darkGreen,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 10),
-                Text(
-                  'Detailed Analysis',
-                  style: GoogleFonts.manrope(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: _darkGreen,
-                  ),
+                const SizedBox(height: 16),
+                MarkdownBody(
+                  data: widget.analysis,
+                  styleSheet: _markdownStyleSheet(isDark: false),
+                  selectable: true,
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            MarkdownBody(
-              data: widget.analysis,
-              styleSheet: _markdownStyleSheet(isDark: false),
-              selectable: true,
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -988,69 +1113,188 @@ class _AIResultScreenState extends State<AIResultScreen>
   Widget _buildTreatmentTab() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: _darkGreen,
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(
-              color: _green.withOpacity(0.2),
-              blurRadius: 18,
-              offset: const Offset(0, 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Available Control Paths Guidance Header
+          Container(
+            padding: const EdgeInsets.all(16),
+            margin: const EdgeInsets.only(bottom: 14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _border),
             ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(Icons.healing_rounded,
-                      color: Colors.white, size: 16),
-                ),
-                const SizedBox(width: 10),
                 Text(
-                  'Treatment Plan',
+                  'SELECTABLE CONTROL PATHWAYS',
                   style: GoogleFonts.manrope(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: _muted,
+                    letterSpacing: 0.8,
                   ),
                 ),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: _accentGreen.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: _accentGreen.withOpacity(0.3)),
-                  ),
-                  child: Text(
-                    _riskLevel.toUpperCase(),
-                    style: GoogleFonts.manrope(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      color: _accentGreen,
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    // Option A: Chemical Control
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFEF2F2),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFFECACA)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(Icons.science_outlined, color: Color(0xFFDC2626), size: 16),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    'Option A: Chemical',
+                                    style: GoogleFonts.manrope(
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w800,
+                                      color: const Color(0xFF991B1B),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Direct insecticide for severe infestations exceeding threshold.',
+                              style: GoogleFonts.manrope(
+                                fontSize: 10.5,
+                                color: const Color(0xFF7F1D1D),
+                                height: 1.3,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 8),
+                    // Option B: Biological & Pheromone Trap
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF0FDF4),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFBBF7D0)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(Icons.eco_outlined, color: Color(0xFF16A34A), size: 16),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    'Option B: Biological',
+                                    style: GoogleFonts.manrope(
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w800,
+                                      color: const Color(0xFF166534),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Pheromone lures & Trichogramma biocontrol monitoring.',
+                              style: GoogleFonts.manrope(
+                                fontSize: 10.5,
+                                color: const Color(0xFF14532D),
+                                height: 1.3,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            MarkdownBody(
-              data: widget.treatment,
-              styleSheet: _markdownStyleSheet(isDark: true),
-              selectable: true,
+          ),
+
+          // Treatment Plan Card
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: _darkGreen,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: _green.withValues(alpha: 0.2),
+                  blurRadius: 18,
+                  offset: const Offset(0, 6),
+                ),
+              ],
             ),
-          ],
-        ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.healing_rounded,
+                          color: Colors.white, size: 16),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      'Treatment Plan & Guidance',
+                      style: GoogleFonts.manrope(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: _accentGreen.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: _accentGreen.withValues(alpha: 0.3)),
+                      ),
+                      child: Text(
+                        _riskLevel.toUpperCase(),
+                        style: GoogleFonts.manrope(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: _accentGreen,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                MarkdownBody(
+                  data: widget.treatment,
+                  styleSheet: _markdownStyleSheet(isDark: true),
+                  selectable: true,
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

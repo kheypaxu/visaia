@@ -544,6 +544,9 @@ class _AlertsPageState extends State<AlertsPage> {
     final risk = (data['risk'] ?? 'Moderate').toString().toLowerCase();
     final double? distance = data['distanceKm'] is num ? (data['distanceKm'] as num).toDouble() : null;
 
+    final sender = (data['sender'] ?? data['source'] ?? data['issuer'] ?? '').toString().toLowerCase();
+    final titleLower = (data['title'] ?? '').toString().toLowerCase();
+
     String category;
     IconData alertIcon;
     Color accentColor;
@@ -555,22 +558,32 @@ class _AlertsPageState extends State<AlertsPage> {
       accentColor = rejectRose;
       accentBg = rejectBg;
     } else if (type.contains('validation_confirmed') || type.contains('validated')) {
-      category = 'RCPC VALIDATED';
+      category = 'DA-RCPC VALIDATED';
       alertIcon = Icons.verified_rounded;
       accentColor = successEmerald;
       accentBg = successBg;
+    } else if (type.contains('mao') || sender.contains('mao') || titleLower.contains('mao') || type.contains('local_advisory')) {
+      category = 'MAO LOCAL ADVISORY';
+      alertIcon = Icons.location_city_rounded;
+      accentColor = const Color(0xFF0D9488);
+      accentBg = const Color(0xFFF0FDFA);
+    } else if (type.contains('rcpc') || type.contains('technical') || sender.contains('rcpc') || type.contains('pest_advisory')) {
+      category = 'DA-RCPC TECHNICAL ADVISORY';
+      alertIcon = Icons.biotech_rounded;
+      accentColor = infoBlue;
+      accentBg = infoBg;
     } else if (risk == 'high') {
-      category = 'CRITICAL THREAT';
+      category = 'CRITICAL PEST ALERT';
       alertIcon = Icons.warning_amber_rounded;
       accentColor = dangerRed;
       accentBg = dangerBg;
     } else if (risk == 'moderate' || distance != null) {
-      category = 'NEARBY OUTBREAK';
-      alertIcon = Icons.bug_report_rounded;
+      category = 'PROXIMITY ALERT';
+      alertIcon = Icons.radar_rounded;
       accentColor = warningAmber;
       accentBg = warningBg;
     } else {
-      category = 'ADVISORY';
+      category = 'AGRICULTURAL ADVISORY';
       alertIcon = Icons.campaign_rounded;
       accentColor = infoBlue;
       accentBg = infoBg;
@@ -747,8 +760,8 @@ class _AlertsPageState extends State<AlertsPage> {
                               lifeStage: lifeStage,
                             );
                           },
-                          icon: const Icon(Icons.map_outlined, size: 14),
-                          label: const Text('Spread Map'),
+                          icon: const Icon(Icons.radar_outlined, size: 14),
+                          label: const Text('Monitoring Zone'),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: warningAmber,
                             side: const BorderSide(color: Color(0xFFFDE68A)),

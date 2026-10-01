@@ -86,20 +86,24 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
     final fieldName = (data['fieldName'] ?? 'Field').toString();
     final timestamp = data['reportDate'] ?? data['timestamp'] ?? data['createdAt'];
 
-    final totalInspected = data['totalInspected'] is num ? (data['totalInspected'] as num).toInt() : 100;
-    final totalDamaged = data['totalDamaged'] is num ? (data['totalDamaged'] as num).toInt() : 0;
+    final totalInspected = data['correctedInspected'] is num
+        ? (data['correctedInspected'] as num).toInt()
+        : (data['totalInspected'] is num ? (data['totalInspected'] as num).toInt() : 100);
+    final totalDamaged = data['correctedDamaged'] is num
+        ? (data['correctedDamaged'] as num).toInt()
+        : (data['totalDamaged'] is num ? (data['totalDamaged'] as num).toInt() : 0);
     final damagePercentage = data['damagePercentage'] is num
         ? (data['damagePercentage'] as num).toDouble()
         : (totalInspected > 0 ? (totalDamaged / totalInspected) * 100 : 0.0);
     final exceedsThreshold = data['exceedsThreshold'] == true || damagePercentage >= 10.0;
 
-    final totals = (data['totals'] as Map<String, dynamic>?) ?? {};
+    final totals = (data['correctedTotals'] as Map<String, dynamic>?) ?? (data['totals'] as Map<String, dynamic>?) ?? {};
     final eggs = totals['eggs'] is num ? (totals['eggs'] as num).toInt() : 0;
     final larvae = totals['larvae'] is num ? (totals['larvae'] as num).toInt() : 0;
     final pupae = totals['pupae'] is num ? (totals['pupae'] as num).toInt() : 0;
     final moths = totals['moths'] is num ? (totals['moths'] as num).toInt() : 0;
 
-    final risk = (data['riskLevel'] ?? data['severityLevel'] ?? (exceedsThreshold ? 'High' : 'Moderate')).toString();
+    final risk = (data['correctedRisk'] ?? data['riskLevel'] ?? data['severityLevel'] ?? (exceedsThreshold ? 'High' : 'Moderate')).toString();
     final isResolved = status.toLowerCase() == 'resolved';
     final isRejected = status.toLowerCase() == 'rejected';
     final isValidated = status.toLowerCase() == 'validated';
@@ -326,6 +330,10 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
                     const SizedBox(height: 16),
                   ],
 
+                  // 6b. Diagnostic Traceability Card
+                  _buildTraceabilityCard(data),
+                  const SizedBox(height: 16),
+
                   // 7. Stations Inspection Breakdown (Accordion with Station Photos & Damage Scores)
                   _buildStationsBreakdown(data['stationsData'], allEvidence),
 
@@ -515,11 +523,14 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
                   const SizedBox(height: 16),
 
                   // 2. RCPC Official Verification Box (if validated or has officer notes)
-                  if (isValidated || data['advisoryMessage'] != null || data['validationNotes'] != null)
+                  if (isValidated || data['advisoryMessage'] != null || data['validationNotes'] != null) ...[
                     _buildRcpcValidationCard(data),
-
-                  if (isValidated || data['advisoryMessage'] != null || data['validationNotes'] != null)
                     const SizedBox(height: 16),
+                  ],
+
+                  // 2b. Diagnostic Traceability Card
+                  _buildTraceabilityCard(data),
+                  const SizedBox(height: 16),
 
                   // 3. Quick stats row
                   _QuickStatsRow(
@@ -1434,7 +1445,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
     final mitigationAction = (data['mitigationAction'] ?? '').toString();
     final advisoryMessage = (data['advisoryMessage'] ?? '').toString();
     final validationNotes = (data['validationNotes'] ?? '').toString();
-    final validatedBy = (data['validatedBy'] ?? 'RCPC Officer').toString();
+    final validatedBy = (data['validatedBy'] ?? 'DA-RCPC Officer').toString();
     final validatedAt = data['validatedAt'];
 
     String formattedDate = '';
@@ -1476,7 +1487,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'RCPC Official Validation',
+                      'DA-RCPC Official Validation',
                       style: GoogleFonts.epilogue(
                         fontSize: 16,
                         fontWeight: FontWeight.w800,
@@ -1502,7 +1513,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
-                'Diagnosis: ${expertDiagnosis.toUpperCase()}',
+                'Expert Diagnosis: ${expertDiagnosis.toUpperCase()}',
                 style: GoogleFonts.manrope(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
@@ -1531,7 +1542,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
           if (advisoryMessage.isNotEmpty) ...[
             const SizedBox(height: 12),
             Text(
-              'Advisory Message:',
+              'Technical Advisory Message:',
               style: GoogleFonts.manrope(
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
@@ -1551,11 +1562,191 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
           if (validationNotes.isNotEmpty && validationNotes != advisoryMessage) ...[
             const SizedBox(height: 10),
             Text(
-              'Officer Notes: $validationNotes',
+              'Expert Notes: $validationNotes',
               style: GoogleFonts.manrope(
                 fontSize: 12.5,
                 fontStyle: FontStyle.italic,
                 color: const Color(0xFF64748B),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTraceabilityCard(Map<String, dynamic> data) {
+    final originalDetection = (data['originalDetection'] ?? data['detection'] ?? 'Pest Detection').toString();
+    final originalLifeStage = (data['originalLifeStage'] ?? data['lifeStage'] ?? 'Unknown').toString();
+    final originalRisk = (data['originalRisk'] ?? data['risk'] ?? data['riskLevel'] ?? 'Moderate').toString();
+    final confidence = data['confidence'] is num ? (data['confidence'] as num).toDouble() : null;
+
+    final expertDiagnosis = (data['expertDiagnosis'] ?? '').toString();
+    final correctedLifeStage = (data['correctedLifeStage'] ?? '').toString();
+    final validatedBy = (data['validatedBy'] ?? 'DA-RCPC Expert').toString();
+    final validatedAt = data['validatedAt'];
+    final validationNotes = (data['validationNotes'] ?? data['rejectionReason'] ?? '').toString();
+
+    String formattedDate = '';
+    if (validatedAt is Timestamp) {
+      formattedDate = DateFormat('MMM d, yyyy · h:mm a').format(validatedAt.toDate());
+    }
+
+    final hasExpertReview = expertDiagnosis.isNotEmpty || correctedLifeStage.isNotEmpty || validatedAt != null || validationNotes.isNotEmpty;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.history_edu_rounded, color: Color(0xFF0D4D33), size: 20),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                'Diagnostic Traceability',
+                style: GoogleFonts.epilogue(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  color: const Color(0xFF1B3015),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          // 1. Original AI Result
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.smart_toy_outlined, size: 16, color: Color(0xFF64748B)),
+                    const SizedBox(width: 6),
+                    Text(
+                      'ORIGINAL AI RESULT (Preliminary)',
+                      style: GoogleFonts.manrope(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFF64748B),
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Classification: $originalDetection · Stage: $originalLifeStage · Risk: $originalRisk${confidence != null ? ' (${(confidence * 100).round()}% match)' : ''}',
+                  style: GoogleFonts.manrope(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF1E293B),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          if (hasExpertReview) ...[
+            const SizedBox(height: 10),
+            // 2. Expert Correction / Review
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEFF6FF),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFBFDBFE)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.verified_outlined, size: 16, color: Color(0xFF2563EB)),
+                      const SizedBox(width: 6),
+                      Text(
+                        'DA-RCPC EXPERT VALIDATION',
+                        style: GoogleFonts.manrope(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w800,
+                          color: const Color(0xFF1D4ED8),
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Reviewed by $validatedBy${formattedDate.isNotEmpty ? ' on $formattedDate' : ''}',
+                    style: GoogleFonts.manrope(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFF1E3A8A),
+                    ),
+                  ),
+                  if (expertDiagnosis.isNotEmpty && expertDiagnosis != 'match') ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Corrected Diagnosis: ${expertDiagnosis.toUpperCase()}',
+                      style: GoogleFonts.manrope(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF2563EB),
+                      ),
+                    ),
+                  ],
+                  if (correctedLifeStage.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Corrected Life Stage: $correctedLifeStage',
+                      style: GoogleFonts.manrope(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF2563EB),
+                      ),
+                    ),
+                  ],
+                  if (validationNotes.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Expert Notes: $validationNotes',
+                      style: GoogleFonts.manrope(
+                        fontSize: 12,
+                        fontStyle: FontStyle.italic,
+                        color: const Color(0xFF475569),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
           ],
@@ -2582,10 +2773,15 @@ class _StatusBanner extends StatelessWidget {
     Color bg;
 
     if (s == 'validated') {
-      title = 'Validated by RCPC';
-      description = 'Official review complete. Follow recommendations below.';
+      title = 'Validated by DA-RCPC';
+      description = 'Official review complete. Validated by DA-RCPC expert.';
       icon = Icons.verified_rounded;
       bg = Colors.blue.withValues(alpha: 0.1);
+    } else if (s.contains('control') || s == 'control_applied') {
+      title = 'Control Applied';
+      description = 'Intervention applied. Field is currently under monitoring & follow-up.';
+      icon = Icons.healing_rounded;
+      bg = Colors.teal.withValues(alpha: 0.1);
     } else if (s == 'resolved') {
       title = 'Issue Resolved';
       description = resolutionExplanation != null && resolutionExplanation!.isNotEmpty
@@ -2594,17 +2790,17 @@ class _StatusBanner extends StatelessWidget {
       icon = Icons.check_circle_rounded;
       bg = Colors.green.withValues(alpha: 0.1);
     } else if (s == 'rejected') {
-      title = 'Report Rejected';
+      title = 'Report Declined / Rejected';
       description = rejectionReason != null && rejectionReason!.isNotEmpty
           ? 'Reason: $rejectionReason'
-          : 'Report was declined by RCPC officers.';
+          : 'Report was declined by DA-RCPC officers.';
       icon = Icons.cancel_rounded;
       bg = Colors.red.withValues(alpha: 0.1);
     } else {
-      title = 'Pending RCPC Review';
-      description = 'Report submitted. Awaiting official validation from RCPC officers.';
-      icon = Icons.schedule_rounded;
-      bg = Colors.orange.withValues(alpha: 0.1);
+      title = 'Pending Expert Validation';
+      description = 'This is a preliminary AI result and is subject to DA-RCPC Expert validation.';
+      icon = Icons.pending_actions_rounded;
+      bg = const Color(0xFFFFF8E1);
     }
 
     return Container(

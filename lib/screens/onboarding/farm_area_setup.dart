@@ -349,7 +349,30 @@ class _FarmAreaSetupState extends State<FarmAreaSetup> {
   }
 
   Future<void> _handleProceed() async {
-    if (_points.length < 3 || _nameController.text.isEmpty) return;
+    if (_nameController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please enter a farm name.")),
+      );
+      return;
+    }
+    if (_points.length < 3) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please map at least 3 boundary points.")),
+      );
+      return;
+    }
+    if (GeoUtils.hasInvalidCoordinates(_points)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Invalid GPS location coordinates detected. Please check boundary points.")),
+      );
+      return;
+    }
+    if (GeoUtils.hasSelfIntersection(_points)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Invalid farm boundary: polygon lines cannot cross each other.")),
+      );
+      return;
+    }
 
     try {
       final uid = FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid;

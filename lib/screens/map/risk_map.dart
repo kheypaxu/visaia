@@ -1294,7 +1294,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
               /// DETAILS
               _infoRow(
                 Icons.radar,
-                "Spread Radius",
+                "Proximity / Monitoring Zone",
                 radius >= 1000
                     ? "${(radius / 1000).toStringAsFixed(1)} km"
                     : "${radius.toInt()} m",
