@@ -2645,7 +2645,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
                   ),
                   const SizedBox(height: 6),
                   DropdownButtonFormField<String>(
-                    initialValue: selectedReason,
+                    value: selectedReason,
                     isExpanded: true,
                     decoration: InputDecoration(
                       hintText: 'Select resolution outcome...',
