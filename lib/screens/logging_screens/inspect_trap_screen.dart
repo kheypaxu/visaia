@@ -46,7 +46,16 @@ extension TrapConditionExt on TrapCondition {
 // ─── Inspect Trap Form Screen ─────────────────────────────────────────────────
 
 class InspectTrapScreen extends StatefulWidget {
-  const InspectTrapScreen({super.key});
+  final String? cycleId;
+  final String? userId;
+  final String? initialTrapName;
+
+  const InspectTrapScreen({
+    super.key,
+    this.cycleId,
+    this.userId,
+    this.initialTrapName,
+  });
 
   @override
   State<InspectTrapScreen> createState() => _InspectTrapScreenState();
@@ -109,7 +118,9 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
     setState(() => _isLoading = true);
     
     try {
-      final uid = FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid;
+      final uid = widget.userId ??
+          FirebaseAuth.instance.currentUser?.uid ??
+          AuthCacheService().cachedUid;
       if (uid == null) {
         setState(() {
           _errorMessage = 'User not authenticated';
@@ -118,47 +129,74 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
         return;
       }
 
-      // Get the active farm ID from the provider
-      final farmProvider = context.read<FarmProvider>();
-      final activeFarmId = farmProvider.activeFarmId;
-
-      if (activeFarmId == null) {
-        setState(() {
-          _errorMessage = 'No active farm selected. Please select a farm first.';
-          _isLoading = false;
-        });
-        return;
-      }
-
-      // Fetch cycles for this user that belong to the active farm
-      final cyclesSnapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .collection('cycles')
-          .where('farmId', isEqualTo: activeFarmId)
-          .where('isCompleted', isEqualTo: false)
-          .safeGet();
-
       final cycles = <Map<String, dynamic>>[];
-      
-      for (final doc in cyclesSnapshot.docs) {
-        final data = doc.data();
-        final controlMethod = data['controlMethod'] as String?;
-        final trapsInstalled = data['trapsInstalled'] == true;
-        
-        // Only include cycles with biological control AND traps installed
-        if (controlMethod == 'biological' && trapsInstalled) {
-          // Get trap names from the cycle
+
+      if (widget.cycleId != null) {
+        final cycleDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('cycles')
+            .doc(widget.cycleId)
+            .safeGet();
+
+        if (cycleDoc.exists) {
+          final data = cycleDoc.data()!;
           final traps = data['traps'] as List? ?? [];
-          final trapNames = traps.map((t) => t['name'] as String? ?? 'Trap ${traps.indexOf(t) + 1}').toList();
-          
+          final trapNames = traps
+              .map((t) =>
+                  (t is Map ? t['name'] : null) as String? ??
+                  'Trap ${traps.indexOf(t) + 1}')
+              .toList();
+
           cycles.add({
-            'id': doc.id,
-            'name': data['cycleName'] ?? 'Unknown Cycle',
+            'id': cycleDoc.id,
+            'name': data['cycleName'] ?? 'Current Cycle',
             'fieldName': data['fieldName'] ?? '',
-            'trapsInstalled': trapsInstalled,
+            'trapsInstalled': data['trapsInstalled'] == true,
             'trapNames': trapNames.isEmpty ? ['Trap 1'] : trapNames,
           });
+        }
+      } else {
+        // Get the active farm ID from the provider if available
+        String? activeFarmId;
+        try {
+          final farmProvider = context.read<FarmProvider>();
+          activeFarmId = farmProvider.activeFarmId;
+        } catch (_) {}
+
+        var query = FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('cycles')
+            .where('isCompleted', isEqualTo: false);
+
+        if (activeFarmId != null) {
+          query = query.where('farmId', isEqualTo: activeFarmId);
+        }
+
+        final cyclesSnapshot = await query.safeGet();
+
+        for (final doc in cyclesSnapshot.docs) {
+          final data = doc.data();
+          final controlMethod = data['controlMethod'] as String?;
+          final trapsInstalled = data['trapsInstalled'] == true;
+          
+          if (trapsInstalled || controlMethod == 'biological') {
+            final traps = data['traps'] as List? ?? [];
+            final trapNames = traps
+                .map((t) =>
+                    (t is Map ? t['name'] : null) as String? ??
+                    'Trap ${traps.indexOf(t) + 1}')
+                .toList();
+            
+            cycles.add({
+              'id': doc.id,
+              'name': data['cycleName'] ?? 'Unknown Cycle',
+              'fieldName': data['fieldName'] ?? '',
+              'trapsInstalled': trapsInstalled,
+              'trapNames': trapNames.isEmpty ? ['Trap 1'] : trapNames,
+            });
+          }
         }
       }
 
@@ -167,12 +205,21 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
         _isLoading = false;
         _canInspectTraps = cycles.isNotEmpty;
         if (cycles.isNotEmpty) {
-          _selectedCycleId = cycles.first['id'];
-          final firstCycle = cycles.first;
-          final trapNames = firstCycle['trapNames'] as List? ?? ['Trap 1'];
-          if (trapNames.isNotEmpty) {
+          _selectedCycleId = widget.cycleId ?? cycles.first['id'];
+          final activeCycle = cycles.firstWhere(
+            (c) => c['id'] == _selectedCycleId,
+            orElse: () => cycles.first,
+          );
+          final trapNames = (activeCycle['trapNames'] as List?) ?? ['Trap 1'];
+          if (widget.initialTrapName != null &&
+              trapNames.contains(widget.initialTrapName)) {
+            _selectedTrap = widget.initialTrapName!;
+          } else if (trapNames.isNotEmpty) {
             _selectedTrap = trapNames.first;
           }
+        } else {
+          _errorMessage =
+              'No active cropping cycle with pheromone traps found. Please configure traps first.';
         }
       });
     } catch (e) {
@@ -389,6 +436,29 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
             'date': Timestamp.fromDate(_selectedDate),
           });
         }
+      }
+
+      // Also update traps metadata in cycle document
+      if (cycleDoc != null && cycleDoc.exists) {
+        final existingTraps = List<Map<String, dynamic>>.from(
+          (cycleDoc.data()?['traps'] as List? ?? []).map((e) => Map<String, dynamic>.from(e as Map)),
+        );
+        for (var t in existingTraps) {
+          if (t['name'] == _selectedTrap) {
+            t['lastInspectedAt'] = Timestamp.fromDate(_selectedDate);
+            t['lastMothCount'] = _mothCount;
+            t['lastCondition'] = _selectedCondition!.label;
+          }
+        }
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('cycles')
+            .doc(_selectedCycleId)
+            .update({
+          'traps': existingTraps,
+          'lastTrapInspectionDate': Timestamp.fromDate(_selectedDate),
+        });
       }
 
       if (mounted) {

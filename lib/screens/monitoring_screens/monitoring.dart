@@ -12,6 +12,7 @@ import 'package:flutter/gestures.dart';
 import 'package:visaia/screens/logging_screens/field_scouting_demo.dart';
 import 'package:visaia/screens/logging_screens/trap_lists.dart';
 import 'package:visaia/screens/logging_screens/trap_guide.dart';
+import 'package:visaia/screens/logging_screens/inspect_trap_screen.dart';
 import 'package:visaia/utils/growth_stage.dart';
 import 'package:visaia/utils/scouting_report_date.dart';
 import 'package:visaia/utils/chemical_task_policy.dart';
@@ -1723,32 +1724,188 @@ Widget _buildControlMethodsCard() {
 if (isBiological) {
   bool trapsInstalled = _trapsInstalled;
   
+  if (trapsInstalled) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: const Color(0xFF2E7D32).withValues(alpha: 0.3),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 10,
+          )
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 4,
+                height: 38,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF0F5234),
+                  borderRadius: BorderRadius.all(Radius.circular(2)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: const BoxDecoration(
+                  color: Color(0xFFE8F0E8),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.pest_control_outlined,
+                  color: Color(0xFF0F5234),
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Biological & Trap Control Active',
+                      style: GoogleFonts.inter(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                        color: const Color(0xFF0F5234),
+                      ),
+                    ),
+                    Text(
+                      'Pheromone traps installed • Weekly surveillance',
+                      style: GoogleFonts.inter(
+                        fontSize: 11,
+                        color: kTextGrey,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => TrapSetupScreen(
+                          cycleId: widget.cycleId,
+                          userId: _userId,
+                          initialStep: 2,
+                          viewOnly: true,
+                        ),
+                      ),
+                    );
+                    await _loadDailyLogData(_dailySelectedDay);
+                    final cycleDoc = await FirebaseFirestore.instance
+                        .collection('users')
+                        .doc(_userId)
+                        .collection('cycles')
+                        .doc(widget.cycleId)
+                        .safeGet();
+                    if (cycleDoc.exists && mounted) {
+                      setState(() {
+                        _trapsInstalled = cycleDoc.data()?['trapsInstalled'] == true;
+                      });
+                    }
+                  },
+                  icon: const Icon(Icons.visibility, size: 16, color: Color(0xFF0F5234)),
+                  label: Text(
+                    'View Traps',
+                    style: GoogleFonts.inter(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFF0F5234),
+                    ),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Color(0xFFC8E6C9)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => InspectTrapScreen(
+                          cycleId: widget.cycleId,
+                          userId: _userId,
+                        ),
+                      ),
+                    );
+                    await _loadDailyLogData(_dailySelectedDay);
+                    final cycleDoc = await FirebaseFirestore.instance
+                        .collection('users')
+                        .doc(_userId)
+                        .collection('cycles')
+                        .doc(widget.cycleId)
+                        .safeGet();
+                    if (cycleDoc.exists && mounted) {
+                      setState(() {
+                        _trapsInstalled = cycleDoc.data()?['trapsInstalled'] == true;
+                      });
+                    }
+                  },
+                  icon: const Icon(Icons.add_chart_rounded, size: 16, color: Colors.white),
+                  label: Text(
+                    'Record Catch',
+                    style: GoogleFonts.inter(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF0F5234),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   return GestureDetector(
     onTap: () async {
-      if (trapsInstalled) {
-        await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => TrapSetupScreen(
-              cycleId: widget.cycleId,
-              userId: _userId,
-              initialStep: 2,
-              viewOnly: true,
-            ),
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => TrapSetupScreen(
+            cycleId: widget.cycleId,
+            userId: _userId,
+            initialStep: 0,
           ),
-        );
-      } else {
-        await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => TrapSetupScreen(
-              cycleId: widget.cycleId,
-              userId: _userId,
-              initialStep: 0,
-            ),
-          ),
-        );
-      }
+        ),
+      );
       await _loadDailyLogData(_dailySelectedDay);
       final cycleDoc = await FirebaseFirestore.instance
           .collection('users')
@@ -1756,7 +1913,7 @@ if (isBiological) {
           .collection('cycles')
           .doc(widget.cycleId)
           .safeGet();
-      if (cycleDoc.exists) {
+      if (cycleDoc.exists && mounted) {
         setState(() {
           _trapsInstalled = cycleDoc.data()?['trapsInstalled'] == true;
         });
@@ -1769,10 +1926,8 @@ if (isBiological) {
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: trapsInstalled 
-              ? const Color(0xFF2E7D32).withValues(alpha: 0.3)
-              : const Color(0xFF2E7D32).withValues(alpha: 0.3),
-          width: 2,
+          color: const Color(0xFF2E7D32).withValues(alpha: 0.3),
+          width: 1.5,
         ),
         boxShadow: [
           BoxShadow(
@@ -1786,26 +1941,22 @@ if (isBiological) {
           Container(
             width: 4,
             height: 40,
-            decoration: BoxDecoration(
-              color: trapsInstalled 
-                  ? const Color(0xFF0F5234)
-                  : const Color(0xFF2E7D32),
-              borderRadius: const BorderRadius.all(Radius.circular(2))
-            )
+            decoration: const BoxDecoration(
+              color: Color(0xFF2E7D32),
+              borderRadius: BorderRadius.all(Radius.circular(2)),
+            ),
           ),
           const SizedBox(width: 12),
           Container(
             padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: trapsInstalled 
-                  ? const Color(0xFFE8F5E9)
-                  : const Color(0xFFE8F5E9),
+            decoration: const BoxDecoration(
+              color: Color(0xFFE8F5E9),
               shape: BoxShape.circle,
             ),
-            child: Icon(
-              trapsInstalled ? Icons.visibility : Icons.ads_click, 
-              color: const Color(0xFF2E7D32), 
-              size: 20
+            child: const Icon(
+              Icons.ads_click, 
+              color: Color(0xFF2E7D32), 
+              size: 20,
             ),
           ),
           const SizedBox(width: 12),
@@ -1814,24 +1965,20 @@ if (isBiological) {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  trapsInstalled ? 'View Traps' : 'Install Traps?',
+                  'Install Traps',
                   style: GoogleFonts.inter(
                     fontWeight: FontWeight.w600, 
                     fontSize: 14,
-                    color: const Color(0xFF2E7D32)
-                  )
+                    color: const Color(0xFF2E7D32),
+                  ),
                 ),
                 RichText(
                   text: TextSpan(
                     style: GoogleFonts.inter(fontSize: 11, color: kTextGrey),
                     children: [
+                      const TextSpan(text: 'Setup pheromone traps for pest monitoring. '),
                       TextSpan(
-                        text: trapsInstalled 
-                            ? '${_trapsInstalled ? 'View existing traps' : 'No traps installed'}. '
-                            : 'Track potential outbreaks. '
-                      ),
-                      TextSpan(
-                        text: trapsInstalled ? 'Manage traps?' : 'Know more?',
+                        text: 'Know more?',
                         style: const TextStyle(
                           color: Color.fromARGB(255, 120, 168, 64),
                           decoration: TextDecoration.underline,
@@ -1852,10 +1999,10 @@ if (isBiological) {
               ],
             ),
           ),
-          Icon(
-            trapsInstalled ? Icons.arrow_forward : Icons.arrow_forward,
-            color: const Color(0xFF2E7D32), 
-            size: 22
+          const Icon(
+            Icons.arrow_forward,
+            color: Color(0xFF2E7D32), 
+            size: 22,
           ),
         ],
       ),

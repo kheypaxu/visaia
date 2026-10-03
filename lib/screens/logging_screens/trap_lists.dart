@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import 'dart:math' as math;
 import 'package:visaia/services/firestore_safe_ext.dart';
+import 'package:visaia/screens/logging_screens/inspect_trap_screen.dart';
 
 /// Trap Setup Screen - Complete flow with map placement
 /// 
@@ -105,9 +106,75 @@ class _TrapSetupScreenState extends State<TrapSetupScreen> {
       }
 
       final fieldData = fieldDoc.data()!;
+      final boundaries = _extractBoundaries(fieldData);
+      final center = _calculateCenter(boundaries);
+
+      final savedTraps = cycleData['traps'] as List?;
+      final List<TrapItem> loadedTraps = [];
+      final List<TrapPlacement> loadedPlacements = [];
+
+      if (savedTraps != null && savedTraps.isNotEmpty) {
+        for (int i = 0; i < savedTraps.length; i++) {
+          final t = savedTraps[i] is Map
+              ? savedTraps[i] as Map<String, dynamic>
+              : <String, dynamic>{};
+          final name = t['name'] as String? ?? 'Trap ${i + 1}';
+          final zone = t['zone'] as String? ?? 'North Side';
+          final posMap = t['position'] as Map<String, dynamic>?;
+          final lat = (posMap?['lat'] as num?)?.toDouble() ?? center.latitude;
+          final lng = (posMap?['lng'] as num?)?.toDouble() ?? center.longitude;
+          final pos = LatLng(lat, lng);
+          final notes = t['notes'] as String? ?? '';
+
+          DateTime installDate = DateTime.now();
+          if (t['installationDate'] is Timestamp) {
+            installDate = (t['installationDate'] as Timestamp).toDate();
+          }
+
+          DateTime nextLure = installDate.add(const Duration(days: 42));
+          if (t['nextLureDate'] is Timestamp) {
+            nextLure = (t['nextLureDate'] as Timestamp).toDate();
+          }
+
+          DateTime? lastInspected;
+          if (t['lastInspectedAt'] is Timestamp) {
+            lastInspected = (t['lastInspectedAt'] as Timestamp).toDate();
+          }
+          final lastMoths = t['lastMothCount'] is num
+              ? (t['lastMothCount'] as num).toInt()
+              : null;
+          final lastCond = t['lastCondition'] as String?;
+
+          loadedPlacements.add(TrapPlacement(
+            position: pos,
+            placedAt: installDate,
+          ));
+
+          loadedTraps.add(TrapItem(
+            id: 'trap_${i + 1}',
+            name: name,
+            zone: zone,
+            position: pos,
+            installationDate: installDate,
+            nextLureDate: nextLure,
+            notes: notes,
+            lastInspectedAt: lastInspected,
+            lastMothCount: lastMoths,
+            lastCondition: lastCond,
+          ));
+        }
+      }
+
       setState(() {
-        _fieldBoundaries = _extractBoundaries(fieldData);
-        _fieldCenter = _calculateCenter(_fieldBoundaries);
+        _fieldBoundaries = boundaries;
+        _fieldCenter = center;
+        if (loadedTraps.isNotEmpty) {
+          _placedTraps.clear();
+          _placedTraps.addAll(loadedPlacements);
+          _traps.clear();
+          _traps.addAll(loadedTraps);
+          _trapCount = loadedTraps.length;
+        }
         _isLoadingField = false;
       });
     } catch (e) {
@@ -1422,7 +1489,7 @@ Future<void> _addToDailyLog() async {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Review & Document',
+                  widget.viewOnly ? 'Installed Traps' : 'Review & Document',
                   style: GoogleFonts.inter(
                     fontSize: 24,
                     fontWeight: FontWeight.w700,
@@ -1431,14 +1498,65 @@ Future<void> _addToDailyLog() async {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Verify the placement details for each installed unit.',
+                  widget.viewOnly
+                      ? 'Monitor trap locations, review pest catches, and record new inspections.'
+                      : 'Verify the placement details for each installed unit.',
                   style: GoogleFonts.inter(
                     fontSize: 14,
                     color: const Color(0xFF666666),
                   ),
                 ),
-                const SizedBox(height: 20),
-                _buildAddTrapButton(),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    _buildAddTrapButton(),
+                    if (widget.viewOnly) ...[
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => InspectTrapScreen(
+                                  cycleId: widget.cycleId,
+                                  userId: widget.userId,
+                                ),
+                              ),
+                            ).then((_) => _fetchFieldData());
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                vertical: 14, horizontal: 14),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0F5234),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(Icons.add_chart_rounded,
+                                    color: Colors.white, size: 18),
+                                const SizedBox(width: 8),
+                                Flexible(
+                                  child: Text(
+                                    'Record Catch',
+                                    overflow: TextOverflow.ellipsis,
+                                    style: GoogleFonts.inter(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
                 const SizedBox(height: 16),
 
                 // Mini map preview
@@ -1547,6 +1665,41 @@ Future<void> _addToDailyLog() async {
 
                 const SizedBox(height: 20),
 
+                if (_traps.isEmpty)
+                  Container(
+                    padding: const EdgeInsets.all(24),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFE8EDE8)),
+                    ),
+                    child: Column(
+                      children: [
+                        const Icon(Icons.info_outline,
+                            color: Color(0xFF888888), size: 36),
+                        const SizedBox(height: 12),
+                        Text(
+                          'No traps configured yet',
+                          style: GoogleFonts.inter(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 15,
+                            color: const Color(0xFF333333),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Tap "Add Another Trap" to place traps on your field.',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.inter(
+                            fontSize: 13,
+                            color: const Color(0xFF777777),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
                 ..._traps.map((trap) {
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 16),
@@ -1557,6 +1710,19 @@ Future<void> _addToDailyLog() async {
                           final index = _traps.indexOf(trap);
                           _traps[index].notes = notes;
                         });
+                        _saveTrapsToFirestore();
+                      },
+                      onInspectTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => InspectTrapScreen(
+                              cycleId: widget.cycleId,
+                              userId: widget.userId,
+                              initialTrapName: trap.name,
+                            ),
+                          ),
+                        ).then((_) => _fetchFieldData());
                       },
                     ),
                   );
@@ -1603,46 +1769,119 @@ Future<void> _addToDailyLog() async {
   // ========================
   // BOTTOM NAVIGATION
   // ========================
-Widget _buildBottomNavigation() {
-  return Container(
-    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withValues(alpha: 0.05),
-          blurRadius: 12,
-          offset: const Offset(0, -4),
+  Widget _buildBottomNavigation() {
+    if (widget.viewOnly) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 12,
+              offset: const Offset(0, -4),
+            ),
+          ],
         ),
-      ],
-    ),
-    child: SafeArea(
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          // PREV Button - Hide in view-only mode
-          if (_currentStep > 0 && !widget.viewOnly)
-            TextButton.icon(
-              onPressed: _prevStep,
-              icon: const Icon(
-                Icons.arrow_back,
-                size: 18,
-                color: Color(0xFF0F5234),
-              ),
-              label: Text(
-                'PREV',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF0F5234),
+        child: SafeArea(
+          child: Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => InspectTrapScreen(
+                          cycleId: widget.cycleId,
+                          userId: widget.userId,
+                        ),
+                      ),
+                    ).then((_) => _fetchFieldData());
+                  },
+                  icon: const Icon(Icons.search, size: 18, color: Colors.white),
+                  label: Text(
+                    'Record Trap Catch',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF0F5234),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
                 ),
               ),
-            )
-          else if (!widget.viewOnly)
-            const SizedBox(width: 80),
+              const SizedBox(width: 12),
+              OutlinedButton(
+                onPressed: () => Navigator.pop(context),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Color(0xFFDDEEE4)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                ),
+                child: Text(
+                  'Close',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF4A4A4A),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
-          // Step indicator - Hide in view-only mode
-          if (!widget.viewOnly)
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 12,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            // PREV Button
+            if (_currentStep > 0)
+              TextButton.icon(
+                onPressed: _prevStep,
+                icon: const Icon(
+                  Icons.arrow_back,
+                  size: 18,
+                  color: Color(0xFF0F5234),
+                ),
+                label: Text(
+                  'PREV',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF0F5234),
+                  ),
+                ),
+              )
+            else
+              const SizedBox(width: 80),
+
+            // Step indicator
             Text(
               'STEP ${_currentStep + 1} OF $_totalSteps',
               style: GoogleFonts.inter(
@@ -1653,39 +1892,39 @@ Widget _buildBottomNavigation() {
               ),
             ),
 
-          // NEXT/DONE Button
-          ElevatedButton.icon(
-            onPressed: _nextStep,
-            icon: Icon(
-              _currentStep == _totalSteps - 1 || widget.viewOnly 
-                  ? Icons.close 
-                  : Icons.arrow_forward,
-              size: 18,
-              color: Colors.white,
-            ),
-            label: Text(
-              widget.viewOnly ? 'CLOSE' 
-                  : (_currentStep == _totalSteps - 1 ? 'DONE' : 'NEXT'),
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
+            // NEXT/DONE Button
+            ElevatedButton.icon(
+              onPressed: _nextStep,
+              icon: Icon(
+                _currentStep == _totalSteps - 1
+                    ? Icons.check
+                    : Icons.arrow_forward,
+                size: 18,
                 color: Colors.white,
               ),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF0F5234),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+              label: Text(
+                _currentStep == _totalSteps - 1 ? 'DONE' : 'NEXT',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
+                ),
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0F5234),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
-  );
-}
+    );
+  }
 }
 
 // ========================
@@ -1712,6 +1951,9 @@ class TrapItem {
   final DateTime installationDate;
   final DateTime nextLureDate;
   String notes;
+  final DateTime? lastInspectedAt;
+  final int? lastMothCount;
+  final String? lastCondition;
 
   TrapItem({
     required this.id,
@@ -1721,6 +1963,9 @@ class TrapItem {
     required this.installationDate,
     required this.nextLureDate,
     this.notes = '',
+    this.lastInspectedAt,
+    this.lastMothCount,
+    this.lastCondition,
   });
 }
 
@@ -1730,15 +1975,20 @@ class TrapItem {
 class TrapCard extends StatelessWidget {
   final TrapItem trap;
   final Function(String) onNotesChanged;
+  final VoidCallback? onInspectTap;
 
   const TrapCard({
     super.key,
     required this.trap,
     required this.onNotesChanged,
+    this.onInspectTap,
   });
 
   @override
   Widget build(BuildContext context) {
+    final bool hasInspection = trap.lastInspectedAt != null;
+    final int mothCount = trap.lastMothCount ?? 0;
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -1764,9 +2014,9 @@ class TrapCard extends StatelessWidget {
                     color: const Color(0xFFE8F0E8),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: Icon(
+                  child: const Icon(
                     Icons.location_on,
-                    color: const Color(0xFF0F5234),
+                    color: Color(0xFF0F5234),
                     size: 18,
                   ),
                 ),
@@ -1878,7 +2128,97 @@ class TrapCard extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
+
+            // Catch & Inspection Status Box
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: (hasInspection && mothCount > 0)
+                    ? const Color(0xFFFFF3E0)
+                    : const Color(0xFFF1F8F1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: (hasInspection && mothCount > 0)
+                      ? const Color(0xFFFFB74D).withValues(alpha: 0.6)
+                      : const Color(0xFFA5D6A7).withValues(alpha: 0.6),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    (hasInspection && mothCount > 0)
+                        ? Icons.pest_control
+                        : (hasInspection
+                            ? Icons.verified_outlined
+                            : Icons.schedule_rounded),
+                    color: (hasInspection && mothCount > 0)
+                        ? const Color(0xFFE65100)
+                        : const Color(0xFF2E7D32),
+                    size: 20,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          hasInspection
+                              ? 'Last Checked: ${_formatDate(trap.lastInspectedAt!)}'
+                              : 'No inspection recorded yet',
+                          style: GoogleFonts.inter(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFF1A1A1A),
+                          ),
+                        ),
+                        if (hasInspection)
+                          Text(
+                            '$mothCount Moths Captured • Condition: ${trap.lastCondition ?? "Good"}',
+                            style: GoogleFonts.inter(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              color: mothCount > 0
+                                  ? const Color(0xFFE65100)
+                                  : const Color(0xFF2E7D32),
+                            ),
+                          )
+                        else
+                          Text(
+                            'Inspect weekly to monitor pest population dynamics',
+                            style: GoogleFonts.inter(
+                              fontSize: 10.5,
+                              color: const Color(0xFF666666),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            if (onInspectTap != null) ...[
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: onInspectTap,
+                  icon: const Icon(Icons.search, size: 16),
+                  label: const Text('Inspect Trap / Record Catch'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF0F5234),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
 
             Text(
               'Location Notes',
