@@ -46,7 +46,15 @@ class UnifiedReportItem {
   final String? expertDiagnosis;
   final String? advisoryMessage;
   final String? rejectionReason;
+  // Resolution specifics
+  final String? resolutionReason;
   final String? resolutionExplanation;
+  final String? managementActionTaken;
+  final DateTime? followUpMonitoringDate;
+  final DateTime? resolvedAt;
+  final String? resolvedBy;
+  final String? resolvedByUserName;
+  final String? reportCategory;
   final Map<String, dynamic> rawData;
 
   UnifiedReportItem({
@@ -79,7 +87,14 @@ class UnifiedReportItem {
     this.expertDiagnosis,
     this.advisoryMessage,
     this.rejectionReason,
+    this.resolutionReason,
     this.resolutionExplanation,
+    this.managementActionTaken,
+    this.followUpMonitoringDate,
+    this.resolvedAt,
+    this.resolvedBy,
+    this.resolvedByUserName,
+    this.reportCategory,
     required this.rawData,
   });
 
@@ -120,7 +135,14 @@ class UnifiedReportItem {
       expertDiagnosis: data['expertDiagnosis'] as String?,
       advisoryMessage: data['advisoryMessage'] as String?,
       rejectionReason: data['rejectionReason'] as String?,
+      resolutionReason: data['resolutionReason'] as String?,
       resolutionExplanation: data['resolutionExplanation'] as String?,
+      managementActionTaken: data['managementActionTaken'] as String?,
+      followUpMonitoringDate: (data['followUpMonitoringDate'] as Timestamp?)?.toDate(),
+      resolvedAt: (data['resolvedAt'] as Timestamp?)?.toDate(),
+      resolvedBy: data['resolvedBy'] as String?,
+      resolvedByUserName: data['resolvedByUserName'] as String?,
+      reportCategory: data['reportCategory'] as String? ?? 'Regular FAW Report',
       rawData: {
         ...data,
         'reportType': 'regular',
@@ -207,6 +229,10 @@ class UnifiedReportItem {
       }
     }
 
+    final category = exceedsThreshold
+        ? 'High-Level Scouting-Based Report'
+        : 'Low-Level Scouting-Based Report';
+
     return UnifiedReportItem(
       id: id,
       reportType: 'clustered',
@@ -235,7 +261,14 @@ class UnifiedReportItem {
       expertDiagnosis: data['expertDiagnosis'] as String?,
       advisoryMessage: data['advisoryMessage'] as String?,
       rejectionReason: data['rejectionReason'] as String?,
+      resolutionReason: data['resolutionReason'] as String?,
       resolutionExplanation: data['resolutionExplanation'] as String?,
+      managementActionTaken: data['managementActionTaken'] as String?,
+      followUpMonitoringDate: (data['followUpMonitoringDate'] as Timestamp?)?.toDate(),
+      resolvedAt: (data['resolvedAt'] as Timestamp?)?.toDate(),
+      resolvedBy: data['resolvedBy'] as String?,
+      resolvedByUserName: data['resolvedByUserName'] as String?,
+      reportCategory: data['reportCategory'] as String? ?? category,
       rawData: {
         ...data,
         'reportType': 'clustered',
@@ -1128,12 +1161,18 @@ class ReportCard extends StatelessWidget {
                     ] else if (isResolved) ...[
                       Icon(Icons.check_circle_rounded, size: 14, color: Colors.green[700]),
                       const SizedBox(width: 4),
-                      Text(
-                        'Resolved',
-                        style: GoogleFonts.manrope(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.green[700],
+                      Expanded(
+                        child: Text(
+                          item.resolutionReason != null && item.resolutionReason!.isNotEmpty
+                              ? 'Resolved: ${item.resolutionReason}'
+                              : 'Resolved',
+                          style: GoogleFonts.manrope(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.green[700],
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ] else ...[

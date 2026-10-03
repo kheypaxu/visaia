@@ -136,7 +136,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
               ),
             ),
             actions: [
-              if (!isResolved && !isRejected)
+              if (isValidated && !isResolved)
                 Padding(
                   padding: const EdgeInsets.only(right: 12),
                   child: _isResolving
@@ -276,6 +276,12 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
                     advisoryMessage: data['advisoryMessage'],
                   ),
 
+                  // 1b. Resolution Summary Record (if resolved)
+                  if (isResolved) ...[
+                    const SizedBox(height: 16),
+                    _buildResolutionSummaryCard(data),
+                  ],
+
                   const SizedBox(height: 16),
 
                   // 2. Key Metrics Grid
@@ -344,12 +350,17 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
 
                   const SizedBox(height: 20),
 
-                  // 9. Resolve CTA (if unresolved)
-                  if (!isResolved && !isRejected)
+                  // 9. Resolve CTA (only for validated reports)
+                  if (isValidated && !isResolved)
                     _ResolveCTA(
                       isResolving: _isResolving,
                       onNotYet: () => Navigator.pop(context),
                       onResolve: _showResolveConfirmation,
+                    )
+                  else if (!isResolved && !isRejected)
+                    _UnvalidatedInfoCard(
+                      reportType: 'clustered',
+                      isHighLevel: exceedsThreshold,
                     ),
                 ],
               ),
@@ -408,7 +419,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
               ),
             ),
             actions: [
-              if (!isResolved && !isRejected)
+              if (isValidated && !isResolved)
                 Padding(
                   padding: const EdgeInsets.only(right: 12),
                   child: _isResolving
@@ -520,6 +531,12 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
                     advisoryMessage: data['advisoryMessage'],
                   ),
 
+                  // 1b. Resolution Summary Record (if resolved)
+                  if (isResolved) ...[
+                    const SizedBox(height: 16),
+                    _buildResolutionSummaryCard(data),
+                  ],
+
                   const SizedBox(height: 16),
 
                   // 2. RCPC Official Verification Box (if validated or has officer notes)
@@ -609,13 +626,19 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
                     const SizedBox(height: 14),
                   ],
 
-                  // 8. Resolve CTA
-                  if (!isResolved && !isRejected) ...[
+                  // 8. Resolve CTA (only for validated reports)
+                  if (isValidated && !isResolved) ...[
                     const SizedBox(height: 8),
                     _ResolveCTA(
                       isResolving: _isResolving,
                       onNotYet: () => Navigator.pop(context),
                       onResolve: _showResolveConfirmation,
+                    ),
+                  ] else if (!isResolved && !isRejected) ...[
+                    const SizedBox(height: 8),
+                    _UnvalidatedInfoCard(
+                      reportType: 'regular',
+                      isHighLevel: false,
                     ),
                   ],
                 ],
@@ -2369,174 +2392,566 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // RESOLUTION LOGIC
+  // RESOLUTION LOGIC (FAW Report Resolution Guidelines)
   // ══════════════════════════════════════════════════════════════════════════
 
+  String _getReportCategoryName() {
+    if (!_isClustered) {
+      return 'Regular FAW Report';
+    }
+    final totalInspected = _currentData['correctedInspected'] is num
+        ? (_currentData['correctedInspected'] as num).toInt()
+        : (_currentData['totalInspected'] is num
+            ? (_currentData['totalInspected'] as num).toInt()
+            : 100);
+    final totalDamaged = _currentData['correctedDamaged'] is num
+        ? (_currentData['correctedDamaged'] as num).toInt()
+        : (_currentData['totalDamaged'] is num
+            ? (_currentData['totalDamaged'] as num).toInt()
+            : 0);
+    final damagePercentage = _currentData['damagePercentage'] is num
+        ? (_currentData['damagePercentage'] as num).toDouble()
+        : (totalInspected > 0 ? (totalDamaged / totalInspected) * 100 : 0.0);
+    final bool isHigh = _currentData['exceedsThreshold'] == true ||
+        _currentData['isHighLevel'] == true ||
+        damagePercentage >= 10.0 ||
+        (_currentData['riskLevel'] ?? _currentData['severityLevel'] ?? '')
+            .toString()
+            .toLowerCase()
+            .contains('high');
+    return isHigh
+        ? 'High-Level Scouting-Based Report'
+        : 'Low-Level Scouting-Based Report';
+  }
+
+  List<String> _getResolutionReasonsForCategory(String category) {
+    switch (category) {
+      case 'Regular FAW Report':
+        return const [
+          'No further FAW-associated damage observed',
+          'RCPC-recommended management completed',
+          'Biological control applied and condition improved',
+          'Chemical control applied and condition improved',
+          'Combined IPM/management actions completed',
+          'No further occurrence after continued monitoring',
+          'Crop harvested / cropping cycle completed',
+        ];
+      case 'Low-Level Scouting-Based Report':
+        return const [
+          'No increase in FAW-associated damage during monitoring',
+          'No further FAW-associated damage observed',
+          'Condition improved after routine/cultural management',
+          'Biological control applied and condition improved',
+          'Crop harvested / cropping cycle completed',
+        ];
+      case 'High-Level Scouting-Based Report':
+      default:
+        return const [
+          'RCPC-recommended management completed',
+          'Biological control applied and condition improved',
+          'Chemical control applied and condition improved',
+          'Combined IPM/management actions completed',
+          'No further FAW-associated damage observed after intervention',
+          'Condition improved and remained below concern during follow-up',
+          'Crop harvested / cropping cycle completed',
+        ];
+    }
+  }
+
   Future<void> _showResolveConfirmation() async {
+    final category = _getReportCategoryName();
+    final reasons = _getResolutionReasonsForCategory(category);
+
     final explanationController = TextEditingController();
-    String? validationError;
-    final explanation = await showModalBottomSheet<String>(
+    final managementActionController = TextEditingController();
+    DateTime? followUpDate = DateTime.now();
+
+    String? selectedReason;
+    String? reasonError;
+    String? explanationError;
+
+    final advisoryMessage = (_currentData['advisoryMessage'] ?? '').toString();
+    final bool isHighLevel = category == 'High-Level Scouting-Based Report';
+
+    final result = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (sheetContext) => StatefulBuilder(
-        builder: (context, setSheetState) => Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          padding: EdgeInsets.fromLTRB(
-            24,
-            12,
-            24,
-            24 + MediaQuery.viewInsetsOf(context).bottom,
-          ),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 36,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[300],
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Container(
-                  width: 56,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    color: Colors.green.withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.check_circle_outline_rounded,
-                    color: Colors.green,
-                    size: 28,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Mark as Resolved?',
-                  style: GoogleFonts.epilogue(
-                    fontSize: 19,
-                    fontWeight: FontWeight.w800,
-                    color: _forestGreen,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Describe the action you took and the result you observed. RCPC will see this explanation.',
-                  style: GoogleFonts.manrope(
-                    fontSize: 14,
-                    height: 1.5,
-                    color: Colors.grey[600],
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 18),
-                TextField(
-                  controller: explanationController,
-                  autofocus: true,
-                  minLines: 3,
-                  maxLines: 5,
-                  maxLength: 500,
-                  textCapitalization: TextCapitalization.sentences,
-                  decoration: InputDecoration(
-                    labelText: 'Resolution explanation',
-                    hintText:
-                        'Example: Applied biological control / Trichogramma and observed zero larvae upon follow-up...',
-                    alignLabelWithHint: true,
-                    errorText: validationError,
-                    filled: true,
-                    fillColor: _cream,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: BorderSide.none,
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: const BorderSide(
-                        color: _forestGreen,
-                        width: 1.5,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.pop(context),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          side: BorderSide(color: Colors.grey.shade300),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: Text(
-                          'Cancel',
-                          style: GoogleFonts.manrope(
-                            fontWeight: FontWeight.w600,
-                            color: Colors.grey[700],
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () {
-                          final text = explanationController.text.trim();
-                          if (text.isEmpty) {
-                            setSheetState(() => validationError = 'Explanation is required');
-                            return;
-                          }
-                          Navigator.pop(sheetContext, text);
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _forestGreen,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: Text(
-                          'Confirm Resolved',
-                          style: GoogleFonts.manrope(
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+        builder: (context, setSheetState) {
+          final bool requiresActionTaken = selectedReason != null &&
+              (selectedReason!.toLowerCase().contains('biological') ||
+                  selectedReason!.toLowerCase().contains('chemical') ||
+                  selectedReason!.toLowerCase().contains('management') ||
+                  selectedReason!.toLowerCase().contains('ipm') ||
+                  selectedReason!.toLowerCase().contains('control'));
+
+          final bool requiresFollowUpDate = selectedReason != null &&
+              (selectedReason!.toLowerCase().contains('monitoring') ||
+                  selectedReason!.toLowerCase().contains('damage observed') ||
+                  selectedReason!.toLowerCase().contains('improved') ||
+                  selectedReason!.toLowerCase().contains('occurrence') ||
+                  selectedReason!.toLowerCase().contains('intervention') ||
+                  selectedReason!.toLowerCase().contains('follow-up'));
+
+          return Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
             ),
-          ),
-        ),
+            padding: EdgeInsets.fromLTRB(
+              20,
+              12,
+              20,
+              24 + MediaQuery.viewInsetsOf(context).bottom,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Handle bar
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Header
+                  Row(
+                    children: [
+                      Container(
+                        width: 46,
+                        height: 46,
+                        decoration: BoxDecoration(
+                          color: Colors.green.withValues(alpha: 0.1),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.check_circle_outline_rounded,
+                          color: Colors.green,
+                          size: 26,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Mark Report as Resolved',
+                              style: GoogleFonts.epilogue(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w800,
+                                color: _forestGreen,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE8F5E9),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                category,
+                                style: GoogleFonts.manrope(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: const Color(0xFF2E7D32),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  const Divider(height: 1),
+                  const SizedBox(height: 16),
+
+                  // DA-RCPC Advisory Box (Section 6 & 12 of Guidelines)
+                  if (advisoryMessage.isNotEmpty || isHighLevel) ...[
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEFF6FF),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                            color: const Color(0xFFBFDBFE), width: 1.2),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.campaign_rounded,
+                                  color: Color(0xFF1D4ED8), size: 18),
+                              const SizedBox(width: 8),
+                              Text(
+                                'DA-RCPC Official Advisory',
+                                style: GoogleFonts.manrope(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w800,
+                                  color: const Color(0xFF1E40AF),
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (advisoryMessage.isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              advisoryMessage,
+                              style: GoogleFonts.manrope(
+                                fontSize: 12.5,
+                                height: 1.4,
+                                color: const Color(0xFF1E3A8A),
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 6),
+                          Text(
+                            'Review the DA-RCPC advisory before resolving this report. If the recommended action has not yet been completed or monitoring is still required, keep the report under monitoring.',
+                            style: GoogleFonts.manrope(
+                              fontSize: 11,
+                              fontStyle: FontStyle.italic,
+                              color: const Color(0xFF3B82F6),
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // 1. Resolution Reason Dropdown
+                  Text(
+                    'Resolution Reason *',
+                    style: GoogleFonts.manrope(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: _forestGreen,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedReason,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      hintText: 'Select resolution outcome...',
+                      hintStyle: GoogleFonts.manrope(
+                          fontSize: 13, color: Colors.grey[500]),
+                      errorText: reasonError,
+                      filled: true,
+                      fillColor: _cream,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 12),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide.none,
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: const BorderSide(
+                          color: _forestGreen,
+                          width: 1.5,
+                        ),
+                      ),
+                    ),
+                    items: reasons.map((r) {
+                      return DropdownMenuItem<String>(
+                        value: r,
+                        child: Text(
+                          r,
+                          style: GoogleFonts.manrope(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFF1F2937),
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 2,
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (val) {
+                      setSheetState(() {
+                        selectedReason = val;
+                        reasonError = null;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Select the reason that best explains why the FAW concern is considered addressed. Your explanation and follow-up information will be retained in Report History.',
+                    style: GoogleFonts.manrope(
+                      fontSize: 11,
+                      color: Colors.grey[600],
+                      height: 1.35,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  // 2. Dynamic Management Action Taken (if applicable)
+                  if (requiresActionTaken) ...[
+                    Text(
+                      'Management Action Taken (Optional)',
+                      style: GoogleFonts.manrope(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: _forestGreen,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: managementActionController,
+                      decoration: InputDecoration(
+                        hintText:
+                            'e.g., Applied Trichogramma / Sprayed Prevathon 5SC',
+                        hintStyle: GoogleFonts.manrope(
+                            fontSize: 12.5, color: Colors.grey[500]),
+                        filled: true,
+                        fillColor: _cream,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 12),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+
+                  // 3. Dynamic Follow-up Monitoring Date (if applicable)
+                  if (requiresFollowUpDate) ...[
+                    Text(
+                      'Follow-up Monitoring Date',
+                      style: GoogleFonts.manrope(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: _forestGreen,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    InkWell(
+                      onTap: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: followUpDate ?? DateTime.now(),
+                          firstDate: DateTime.now()
+                              .subtract(const Duration(days: 90)),
+                          lastDate:
+                              DateTime.now().add(const Duration(days: 30)),
+                        );
+                        if (picked != null) {
+                          setSheetState(() => followUpDate = picked);
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(14),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: _cream,
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.calendar_today_rounded,
+                                size: 16, color: _forestGreen),
+                            const SizedBox(width: 10),
+                            Text(
+                              followUpDate != null
+                                  ? DateFormat('MMMM d, yyyy')
+                                      .format(followUpDate!)
+                                  : 'Select Date',
+                              style: GoogleFonts.manrope(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: const Color(0xFF1F2937),
+                              ),
+                            ),
+                            const Spacer(),
+                            Text(
+                              'Change',
+                              style: GoogleFonts.manrope(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: _forestGreen,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+
+                  // 4. Resolution Explanation (Required)
+                  Text(
+                    'Resolution Explanation *',
+                    style: GoogleFonts.manrope(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: _forestGreen,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: explanationController,
+                    minLines: 3,
+                    maxLines: 5,
+                    maxLength: 500,
+                    textCapitalization: TextCapitalization.sentences,
+                    decoration: InputDecoration(
+                      hintText:
+                          'Describe field condition, actions taken, and the results observed upon follow-up...',
+                      hintStyle: GoogleFonts.manrope(
+                          fontSize: 12.5, color: Colors.grey[500]),
+                      errorText: explanationError,
+                      filled: true,
+                      fillColor: _cream,
+                      contentPadding: const EdgeInsets.all(14),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide.none,
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: const BorderSide(
+                          color: _forestGreen,
+                          width: 1.5,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Actions
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(context),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            side: BorderSide(color: Colors.grey.shade300),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: Text(
+                            'Keep Active',
+                            style: GoogleFonts.manrope(
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey[700],
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () {
+                            bool hasError = false;
+                            if (selectedReason == null ||
+                                selectedReason!.isEmpty) {
+                              setSheetState(() => reasonError =
+                                  'Please select a resolution reason');
+                              hasError = true;
+                            }
+                            final text = explanationController.text.trim();
+                            if (text.isEmpty) {
+                              setSheetState(() => explanationError =
+                                  'Resolution explanation is required');
+                              hasError = true;
+                            } else if (text.length < 5) {
+                              setSheetState(() => explanationError =
+                                  'Please provide at least 5 characters');
+                              hasError = true;
+                            }
+                            if (hasError) return;
+
+                            Navigator.pop(sheetContext, {
+                              'reason': selectedReason!,
+                              'explanation': text,
+                              'managementAction':
+                                  managementActionController.text.trim(),
+                              'followUpDate': followUpDate,
+                              'category': category,
+                            });
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green[700],
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: Text(
+                            'Confirm Resolved',
+                            style: GoogleFonts.manrope(
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
+
     explanationController.dispose();
-    if (explanation != null && mounted) {
-      await _markAsResolved(explanation);
+    managementActionController.dispose();
+
+    if (result != null && mounted) {
+      await _markAsResolved(
+        reason: result['reason'] as String,
+        explanation: result['explanation'] as String,
+        managementAction:
+            (result['managementAction'] as String?)?.isNotEmpty == true
+                ? result['managementAction'] as String
+                : null,
+        followUpDate: result['followUpDate'] as DateTime?,
+        reportCategory: result['category'] as String,
+      );
     }
   }
 
-  Future<void> _markAsResolved(String explanation) async {
+  Future<void> _markAsResolved({
+    required String reason,
+    required String explanation,
+    String? managementAction,
+    DateTime? followUpDate,
+    required String reportCategory,
+  }) async {
     setState(() => _isResolving = true);
     try {
       final user = _auth.currentUser;
       if (user == null) throw Exception('User not authenticated');
 
       final isClusteredReport = _isClustered;
-      final collectionName = isClusteredReport ? 'clustered_reports' : 'reports';
-      final reportRef = _firestore.collection(collectionName).doc(widget.reportId);
+      final collectionName =
+          isClusteredReport ? 'clustered_reports' : 'reports';
+      final reportRef =
+          _firestore.collection(collectionName).doc(widget.reportId);
 
       final userName = await _getUserName(user.uid);
       final resolution = {
@@ -2544,7 +2959,13 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
         'resolvedAt': FieldValue.serverTimestamp(),
         'resolvedBy': user.uid,
         'resolvedByUserName': userName,
+        'resolutionReason': reason,
         'resolutionExplanation': explanation,
+        if (managementAction != null && managementAction.isNotEmpty)
+          'managementActionTaken': managementAction,
+        if (followUpDate != null)
+          'followUpMonitoringDate': Timestamp.fromDate(followUpDate),
+        'reportCategory': reportCategory,
       };
 
       final batch = _firestore.batch();
@@ -2569,21 +2990,36 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
               children: [
                 const Icon(Icons.check_circle, color: Colors.white, size: 18),
                 const SizedBox(width: 10),
-                Text(
-                  'Report marked as resolved',
-                  style: GoogleFonts.manrope(fontWeight: FontWeight.w600),
+                Expanded(
+                  child: Text(
+                    'Report marked as resolved: $reason',
+                    style: GoogleFonts.manrope(fontWeight: FontWeight.w600),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
               ],
             ),
             backgroundColor: Colors.green[700],
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
         );
         setState(() {
           _currentData['status'] = 'resolved';
+          _currentData['resolutionReason'] = reason;
           _currentData['resolutionExplanation'] = explanation;
+          if (managementAction != null) {
+            _currentData['managementActionTaken'] = managementAction;
+          }
+          if (followUpDate != null) {
+            _currentData['followUpMonitoringDate'] = followUpDate;
+          }
+          _currentData['resolvedAt'] = DateTime.now();
+          _currentData['resolvedByUserName'] = userName;
+          _currentData['reportCategory'] = reportCategory;
         });
       }
     } catch (e) {
@@ -2594,13 +3030,245 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
             backgroundColor: Colors.red[700],
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
         );
       }
     } finally {
       if (mounted) setState(() => _isResolving = false);
     }
+  }
+
+  Widget _buildResolutionSummaryCard(Map<String, dynamic> data) {
+    final reason = (data['resolutionReason'] ?? '').toString();
+    final explanation = (data['resolutionExplanation'] ?? '').toString();
+    final managementAction =
+        (data['managementActionTaken'] ?? '').toString();
+    final resolvedByUserName =
+        (data['resolvedByUserName'] ?? 'Farmer').toString();
+    final category =
+        (data['reportCategory'] ?? _getReportCategoryName()).toString();
+    final resolvedAt = data['resolvedAt'];
+    final followUpDate = data['followUpMonitoringDate'];
+
+    String formattedResolvedDate = _fmtDate(resolvedAt);
+    String formattedFollowUpDate = '';
+    if (followUpDate != null) {
+      formattedFollowUpDate = _fmtDate(followUpDate);
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0FDF4),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFBBF7D0), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.green.withValues(alpha: 0.05),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: const BoxDecoration(
+                  color: Color(0xFFDCFCE7),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.task_alt_rounded,
+                    color: Color(0xFF16A34A), size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Report Resolution Record',
+                      style: GoogleFonts.epilogue(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFF14532D),
+                      ),
+                    ),
+                    Text(
+                      'Resolved by $resolvedByUserName · $formattedResolvedDate',
+                      style: GoogleFonts.manrope(
+                        fontSize: 11.5,
+                        color: const Color(0xFF15803D),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          const Divider(height: 1, color: Color(0xFFDCFCE7)),
+          const SizedBox(height: 12),
+
+          // Report Classification badge
+          Row(
+            children: [
+              Text(
+                'Report Classification:',
+                style: GoogleFonts.manrope(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey[700],
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFDCFCE7),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  category,
+                  style: GoogleFonts.manrope(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF14532D),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+
+          // Resolution Reason
+          if (reason.isNotEmpty) ...[
+            Text(
+              'Selected Resolution Reason:',
+              style: GoogleFonts.manrope(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[700],
+              ),
+            ),
+            const SizedBox(height: 4),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFBBF7D0)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.check_circle,
+                      size: 16, color: Color(0xFF16A34A)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      reason,
+                      style: GoogleFonts.manrope(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF14532D),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+
+          // Resolution Explanation
+          if (explanation.isNotEmpty) ...[
+            Text(
+              'Farmer Resolution Explanation:',
+              style: GoogleFonts.manrope(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[700],
+              ),
+            ),
+            const SizedBox(height: 4),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Text(
+                explanation,
+                style: GoogleFonts.manrope(
+                  fontSize: 13,
+                  height: 1.45,
+                  color: const Color(0xFF334155),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+
+          // Management Action Taken if present
+          if (managementAction.isNotEmpty) ...[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.healing_rounded,
+                    size: 15, color: Color(0xFF15803D)),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: RichText(
+                    text: TextSpan(
+                      style: GoogleFonts.manrope(
+                          fontSize: 12, color: const Color(0xFF334155)),
+                      children: [
+                        const TextSpan(
+                          text: 'Management Action Taken: ',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        TextSpan(text: managementAction),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+          ],
+
+          // Follow-up Monitoring Date if present
+          if (formattedFollowUpDate.isNotEmpty) ...[
+            Row(
+              children: [
+                const Icon(Icons.event_available_rounded,
+                    size: 15, color: Color(0xFF15803D)),
+                const SizedBox(width: 6),
+                Text(
+                  'Follow-up Monitoring Date: $formattedFollowUpDate',
+                  style: GoogleFonts.manrope(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF15803D),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   Future<String> _getUserName(String userId) async {
@@ -3407,6 +4075,100 @@ class _ResolveCTA extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _UnvalidatedInfoCard extends StatelessWidget {
+  final String reportType;
+  final bool isHighLevel;
+
+  const _UnvalidatedInfoCard({
+    required this.reportType,
+    this.isHighLevel = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFFDE68A), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.amber.withValues(alpha: 0.05),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: const BoxDecoration(
+                  color: Color(0xFFFEF3C7),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.pending_actions_rounded,
+                    color: Color(0xFFD97706), size: 20),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Awaiting DA-RCPC Expert Validation',
+                  style: GoogleFonts.epilogue(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF92400E),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'In accordance with FAW management protocols, reports can only be resolved after an official review and validation by DA-RCPC experts.',
+            style: GoogleFonts.manrope(
+              fontSize: 12.5,
+              height: 1.5,
+              color: const Color(0xFF78350F),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF3F4F6),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFE5E7EB)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.lock_outline_rounded,
+                    size: 16, color: Color(0xFF9CA3AF)),
+                const SizedBox(width: 8),
+                Text(
+                  'Resolution Available After Validation',
+                  style: GoogleFonts.manrope(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF6B7280),
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
