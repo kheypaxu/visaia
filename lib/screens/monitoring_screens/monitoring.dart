@@ -4601,17 +4601,17 @@ Widget _buildCompactScoringGuide(String title, List<Map<String, String>> scale) 
                 style: GoogleFonts.inter(fontSize: 13.5, color: kTextGrey)),
             const SizedBox(height: 24),
             GestureDetector(
-              onTap: () => _selectControlMethod('chemical'),
+              onTap: () => _showControlConfirmationDialog('chemical'),
               child: _modalOption(
                   Icons.science_outlined,
                   'Option A: Chemical Control',
                   'Targeted insecticide application when pest damage exceeds economic threshold. Flow: Validated → Control Applied → Follow-up → Resolved.',
-                  true,
+                  _wasThresholdTriggered,
                   const Color(0xFFC62828)),
             ),
             const SizedBox(height: 16),
             GestureDetector(
-              onTap: () => _selectControlMethod('biological'),
+              onTap: () => _showControlConfirmationDialog('biological'),
               child: _modalOption(
                   Icons.bug_report,
                   'Option B: Biological / Pheromone Trap Control',
@@ -4652,33 +4652,209 @@ Widget _buildCompactScoringGuide(String title, List<Map<String, String>> scale) 
       child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(children: [
-              CircleAvatar(
-                  backgroundColor: accentColor.withValues(alpha: 0.1),
-                  radius: 18,
-                  child: Icon(icon, color: accentColor, size: 20)),
-              const SizedBox(width: 12),
-              Text(title,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 16)),
-              const Spacer(),
-              if (rec)
-                Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                        color: accentColor,
-                        borderRadius: BorderRadius.circular(8)),
-                    child: Text('RECOMMENDED',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 8,
-                            fontWeight: FontWeight.bold)))
-            ]),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                CircleAvatar(
+                    backgroundColor: accentColor.withValues(alpha: 0.1),
+                    radius: 18,
+                    child: Icon(icon, color: accentColor, size: 20)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 15),
+                    softWrap: true,
+                  ),
+                ),
+                if (rec) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                          color: accentColor,
+                          borderRadius: BorderRadius.circular(8)),
+                      child: const Text('RECOMMENDED',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 8,
+                              fontWeight: FontWeight.bold))),
+                ],
+              ],
+            ),
             const SizedBox(height: 8),
             Text(desc,
                 style: GoogleFonts.inter(fontSize: 12, color: kTextGrey)),
           ]),
+    );
+  }
+
+  Future<void> _showControlConfirmationDialog(String method) async {
+    final isChemical = method == 'chemical';
+    final title = isChemical ? 'Select Chemical Control?' : 'Select Biological / Trap Control?';
+    final accentColor = isChemical ? const Color(0xFFC62828) : const Color(0xFF2E7D32);
+    final icon = isChemical ? Icons.science_outlined : Icons.bug_report_outlined;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        backgroundColor: const Color(0xFFFBFDFA),
+        title: Row(
+          children: [
+            CircleAvatar(
+              backgroundColor: accentColor.withValues(alpha: 0.12),
+              radius: 20,
+              child: Icon(icon, color: accentColor, size: 22),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                title,
+                style: GoogleFonts.inter(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF1B3015),
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                isChemical
+                    ? 'What happens when you select Chemical Control:'
+                    : 'What happens when you select Biological & Trap Control:',
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF1B3015),
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (isChemical) ...[
+                _confirmationBullet(
+                  'Targeted Insecticide Guidelines',
+                  'Recommended insecticide applications will be unlocked in your weekly tasks based on current crop growth stage and damage threshold.',
+                  accentColor,
+                ),
+                const SizedBox(height: 8),
+                _confirmationBullet(
+                  'Safety & PHI Compliance',
+                  'You must strictly observe Pre-Harvest Intervals (PHI) and DA-RCPC safety recommendations before any harvest operations.',
+                  accentColor,
+                ),
+                const SizedBox(height: 8),
+                _confirmationBullet(
+                  'Follow-up Field Scouting',
+                  'You will need to continue weekly 5-station field scouting to verify pest knockdown and resolution of infestation.',
+                  accentColor,
+                ),
+              ] else ...[
+                _confirmationBullet(
+                  'Pheromone Trap Setup',
+                  'You will be guided to set up and record pheromone traps across your field to monitor adult FAW moth population trends.',
+                  accentColor,
+                ),
+                const SizedBox(height: 8),
+                _confirmationBullet(
+                  'Biocontrol Surveillance',
+                  'Biological agents (e.g. Trichogramma) and non-chemical cultural practices will be encouraged to manage early pest pressure.',
+                  accentColor,
+                ),
+                const SizedBox(height: 8),
+                _confirmationBullet(
+                  'Early Warning, Not Infestation',
+                  'Pheromone trap catches provide early surveillance warnings and do not automatically indicate severe crop loss.',
+                  accentColor,
+                ),
+              ],
+            ],
+          ),
+        ),
+        actionsPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.inter(
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[700],
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: accentColor,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: Text(
+              'Confirm Selection',
+              style: GoogleFonts.inter(
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _selectControlMethod(method);
+    }
+  }
+
+  Widget _confirmationBullet(String heading, String description, Color color) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          margin: const EdgeInsets.only(top: 5),
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                heading,
+                style: GoogleFonts.inter(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF1B3015),
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                description,
+                style: GoogleFonts.inter(
+                  fontSize: 11.5,
+                  color: kTextGrey,
+                  height: 1.35,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
