@@ -152,7 +152,11 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
 
         completedCycleIds.add(doc.id);
 
-        final harvestTs = data['actualHarvestDate'] ?? data['completedAt'] ?? data['auditCompletedAt'];
+        final harvestTs = data['expectedHarvestDate'] ??
+            data['harvestDate'] ??
+            data['actualHarvestDate'] ??
+            data['completedAt'] ??
+            data['auditCompletedAt'];
         if (harvestTs is Timestamp) {
           final monthKey = DateFormat('MMM').format(harvestTs.toDate());
           monthlyIncome[monthKey] = (monthlyIncome[monthKey] ?? 0) + totalValue;

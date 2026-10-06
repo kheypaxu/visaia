@@ -54,7 +54,10 @@ class CycleModel {
       cycleName: map['cycleName'] ?? 'Untitled Cycle',
       cropVariety: map['cropVariety'] ?? '',
       plantingDate: _parseTimestamp(map['plantingDate']),
-      harvestDate: _parseTimestamp(map['harvestDate']),
+      harvestDate: _parseTimestamp(map['expectedHarvestDate'] ??
+          map['estimatedHarvestDate'] ??
+          map['harvestDate'] ??
+          map['actualHarvestDate']),
       seedDensity: (map['seedDensity'] as num?)?.toDouble() ?? 0.0,
       isCompleted: map['isCompleted'] ?? false,
       status: map['status'],
@@ -75,6 +78,8 @@ class CycleModel {
     if (value == null) return null;
     if (value is Timestamp) return value.toDate();
     if (value is DateTime) return value;
+    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+    if (value is String) return DateTime.tryParse(value);
     return null;
   }
 

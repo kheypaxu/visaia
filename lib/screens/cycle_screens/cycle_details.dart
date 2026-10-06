@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:visaia/screens/monitoring_screens/monitoring.dart';
 import 'package:visaia/screens/logging_screens/harvest_recording.dart';
+import 'package:visaia/screens/cycle_screens/completed_cycle_details.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
 class CycleDetailsScreen extends StatefulWidget {
@@ -75,52 +76,58 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
 
       // Check for unscouted weeks up to current week
       try {
-        final plantingTimestamp = cycle['plantingDate'] as Timestamp?;
-        final harvestTimestamp = cycle['harvestDate'] as Timestamp?;
-        if (plantingTimestamp != null && harvestTimestamp != null) {
-          final pDate = plantingTimestamp.toDate();
-          final hDate = harvestTimestamp.toDate();
-          final totalDays = hDate.difference(pDate).inDays;
-          final totalWeeks = (totalDays / 7).ceil().clamp(1, 20);
-          final elapsedDays = DateTime.now().difference(pDate).inDays;
-          final currentWeek = ((elapsedDays / 7).floor() + 1).clamp(1, totalWeeks);
-
-          final weeksSnap = await FirebaseFirestore.instance
-              .collection('users')
-              .doc(widget.uid)
-              .collection('cycles')
-              .doc(widget.cycleId)
-              .collection('weeks')
-              .get();
-
-          final completedWeekIndices = <int>{};
-          for (final doc in weeksSnap.docs) {
-            final data = doc.data();
-            final docId = doc.id;
-            final weekNum = int.tryParse(docId.replaceAll('week_', ''));
-            if (weekNum != null) {
-              final stations = data['stations'] as List?;
-              final completedStations = data['completedStations'] as int? ?? 0;
-              final allCompleted = (stations != null &&
-                      stations.isNotEmpty &&
-                      stations.every((s) => s['completed'] == true)) ||
-                  completedStations >= 5;
-              if (allCompleted) {
-                completedWeekIndices.add(weekNum);
-              }
-            }
-          }
-
-          final unscouted = <int>[];
-          for (int w = 1; w <= currentWeek; w++) {
-            if (!completedWeekIndices.contains(w)) {
-              unscouted.add(w);
-            }
-          }
+        if (_isCycleCompleted) {
           if (mounted) {
             setState(() {
-              _unscoutedWeeks = unscouted;
+              _unscoutedWeeks = [];
             });
+          }
+        } else {
+          final pDate = _getPlantingDateTime();
+          final hDate = _getHarvestDateTime();
+          if (pDate != null && hDate != null) {
+            final totalDays = hDate.difference(pDate).inDays;
+            final totalWeeks = (totalDays / 7).ceil().clamp(1, 20);
+            final elapsedDays = DateTime.now().difference(pDate).inDays;
+            final currentWeek = ((elapsedDays / 7).floor() + 1).clamp(1, totalWeeks);
+
+            final weeksSnap = await FirebaseFirestore.instance
+                .collection('users')
+                .doc(widget.uid)
+                .collection('cycles')
+                .doc(widget.cycleId)
+                .collection('weeks')
+                .get();
+
+            final completedWeekIndices = <int>{};
+            for (final doc in weeksSnap.docs) {
+              final data = doc.data();
+              final docId = doc.id;
+              final weekNum = int.tryParse(docId.replaceAll('week_', ''));
+              if (weekNum != null) {
+                final stations = data['stations'] as List?;
+                final completedStations = data['completedStations'] as int? ?? 0;
+                final allCompleted = (stations != null &&
+                        stations.isNotEmpty &&
+                        stations.every((s) => s['completed'] == true)) ||
+                    completedStations >= 5;
+                if (allCompleted) {
+                  completedWeekIndices.add(weekNum);
+                }
+              }
+            }
+
+            final unscouted = <int>[];
+            for (int w = 1; w <= currentWeek; w++) {
+              if (!completedWeekIndices.contains(w)) {
+                unscouted.add(w);
+              }
+            }
+            if (mounted) {
+              setState(() {
+                _unscoutedWeeks = unscouted;
+              });
+            }
           }
         }
       } catch (e) {
@@ -361,27 +368,72 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
     );
   }
 
+  DateTime? _parseDateTime(dynamic val) {
+    if (val == null) return null;
+    if (val is Timestamp) return val.toDate();
+    if (val is DateTime) return val;
+    if (val is int) return DateTime.fromMillisecondsSinceEpoch(val);
+    if (val is String) return DateTime.tryParse(val);
+    return null;
+  }
+
+  bool get _isCycleCompleted {
+    if (_cycleData == null) return false;
+    if (_cycleData!['isCompleted'] == true) return true;
+    final status = (_cycleData!['status'] ?? '').toString().toLowerCase();
+    return status == 'completed' || status == 'harvested';
+  }
+
+  DateTime? _getPlantingDateTime() {
+    return _parseDateTime(_cycleData?['plantingDate']);
+  }
+
+  DateTime? _getHarvestDateTime() {
+    if (_cycleData == null) return null;
+    // Always prioritize the user's estimated harvest date (e.g. July), not the date data seeders harvested (August)
+    final raw = _cycleData!['expectedHarvestDate'] ??
+        _cycleData!['estimatedHarvestDate'] ??
+        _cycleData!['harvestDate'] ??
+        _cycleData!['actualHarvestDate'];
+    return _parseDateTime(raw);
+  }
+
+  Timestamp? get _harvestTimestamp {
+    final dt = _getHarvestDateTime();
+    return dt != null ? Timestamp.fromDate(dt) : null;
+  }
+
+  Timestamp? get _plantingTimestamp {
+    final dt = _getPlantingDateTime();
+    return dt != null ? Timestamp.fromDate(dt) : null;
+  }
+
   int get _totalDays {
-    if (_cycleData == null) return 0;
-    final harvest = (_cycleData!['harvestDate'] as Timestamp).toDate();
-    final planting = (_cycleData!['plantingDate'] as Timestamp).toDate();
-    return harvest.difference(planting).inDays;
+    final harvest = _getHarvestDateTime();
+    final planting = _getPlantingDateTime();
+    if (harvest == null || planting == null) return 0;
+    final days = harvest.difference(planting).inDays;
+    return days > 0 ? days : 0;
   }
 
   int get _elapsedDays {
-    if (_cycleData == null) return 0;
-    final planting = (_cycleData!['plantingDate'] as Timestamp).toDate();
+    final planting = _getPlantingDateTime();
+    if (planting == null) return 0;
+    if (_isCycleCompleted && _totalDays > 0) return _totalDays;
     final days = DateTime.now().difference(planting).inDays;
     return days < 0 ? 0 : days;
   }
 
   double get _progress {
+    if (_isCycleCompleted) return 1.0;
     if (_totalDays == 0) return 0.0;
     return (_elapsedDays / _totalDays).clamp(0.0, 1.0);
   }
 
-  String _formatDate(Timestamp timestamp) {
-    return DateFormat('MMM d').format(timestamp.toDate());
+  String _formatDate(dynamic timestamp) {
+    final dt = _parseDateTime(timestamp);
+    if (dt == null) return 'N/A';
+    return DateFormat('MMM d, yyyy').format(dt);
   }
 
   List<LatLng> get _fieldBoundaries {
@@ -435,12 +487,14 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
   }
 
 Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
-  final plantingTimestamp = _cycleData?['plantingDate'] as Timestamp?;
+  final plantingTimestamp = _plantingTimestamp;
   if (plantingTimestamp == null) return [];
 
   final plantingDate = plantingTimestamp.toDate();
   final now = DateTime.now();
-  final daysSincePlanting = now.difference(plantingDate).inDays;
+  final daysSincePlanting = _isCycleCompleted && _totalDays > 0
+      ? _totalDays
+      : now.difference(plantingDate).inDays;
   if (daysSincePlanting < 0) return [];
 
   final List<Map<String, dynamic>> allActivities = [];
@@ -617,10 +671,10 @@ Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
                 color: const Color(0xFFE8F5E0),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Row(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  SizedBox(
+                  const SizedBox(
                     width: 6,
                     height: 6,
                     child: DecoratedBox(
@@ -630,10 +684,10 @@ Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
                       ),
                     ),
                   ),
-                  SizedBox(width: 5),
+                  const SizedBox(width: 5),
                   Text(
-                    'ACTIVE',
-                    style: TextStyle(
+                    _isCycleCompleted ? 'COMPLETED' : 'ACTIVE',
+                    style: const TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.w800,
                       color: Color(0xFF1B5E37),
@@ -667,9 +721,9 @@ Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
   }
 
   Widget _buildGrowthProgress() {
-    final plantingDate = _cycleData?['plantingDate'];
-    final harvestDate = _cycleData?['harvestDate'];
-    final isOverdue = _totalDays > 0 && _elapsedDays > _totalDays;
+    final plantingDate = _plantingTimestamp;
+    final harvestDate = _harvestTimestamp;
+    final isOverdue = !_isCycleCompleted && _totalDays > 0 && _elapsedDays > _totalDays;
     final remainingDays = isOverdue ? 0 : (_totalDays - _elapsedDays);
     final progressPercent = (_progress * 100).toInt();
 
@@ -721,14 +775,25 @@ Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'Day $_elapsedDays of $_totalDays',
+                _isCycleCompleted
+                    ? 'Day $_totalDays of $_totalDays'
+                    : 'Day $_elapsedDays of $_totalDays',
                 style: TextStyle(
                     color: const Color(0xFF1A1C1E)
                         .withValues(alpha: 0.8),
                     fontSize: 14,
                     fontWeight: FontWeight.w600),
               ),
-              if (isOverdue)
+              if (_isCycleCompleted)
+                const Text(
+                  'Harvested',
+                  style: TextStyle(
+                    color: Color(0xFF1B5E37),
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
+                )
+              else if (isOverdue)
                 Text(
                   'Past Harvest (${_elapsedDays - _totalDays}d)',
                   style: const TextStyle(
@@ -778,7 +843,7 @@ Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
                 Container(
                   width: 1, height: 32, color: const Color(0xFFE8EAE5)),
                 _DateInfo(
-                  label: 'EXPECTED HARVEST',
+                  label: _isCycleCompleted ? 'HARVEST DATE' : 'EXPECTED HARVEST',
                   date: harvestDate != null
                       ? _formatDate(harvestDate)
                       : 'N/A',
@@ -815,7 +880,7 @@ Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
               ),
             ),
           ],
-          if (_unscoutedWeeks.isNotEmpty) ...[
+          if (!_isCycleCompleted && _unscoutedWeeks.isNotEmpty) ...[
             const SizedBox(height: 12),
             GestureDetector(
               onTap: () {
@@ -882,9 +947,48 @@ Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
   }
 
   Widget _buildActionButtons(BuildContext context) {
+    if (_isCycleCompleted) {
+      return Column(
+        children: [
+          _buildActionButton(
+            icon: Icons.check_circle_outline,
+            title: 'Harvest Completed',
+            subtitle: 'View final yields, losses, and analytics',
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => CompletedCycleScreen(
+                    cycleId: widget.cycleId,
+                    userId: widget.uid,
+                  ),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 10),
+          _buildActionButton(
+            icon: Icons.eco_outlined,
+            title: 'Monitoring Records',
+            subtitle: 'View weekly logs and scouting history',
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => MonitoringScreen(
+                    cycleId: widget.cycleId,
+                    userId: widget.uid,
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      );
+    }
+
     final now = DateTime.now();
-    final harvestDate =
-        (_cycleData?['harvestDate'] as Timestamp?)?.toDate();
+    final harvestDate = _getHarvestDateTime();
     final isEarlyHarvest =
         harvestDate != null && now.isBefore(harvestDate);
 
@@ -1023,8 +1127,7 @@ Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
   }
 
   void _showEarlyHarvestConfirmation(BuildContext context) {
-    final harvestDate =
-        (_cycleData?['harvestDate'] as Timestamp?)?.toDate();
+    final harvestDate = _getHarvestDateTime();
     final daysEarly = harvestDate != null
         ? harvestDate.difference(DateTime.now()).inDays
         : 0;
@@ -1179,8 +1282,68 @@ Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
   }
 
   Widget _buildRiskAlert() {
+    if (_isCycleCompleted) {
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+              color: const Color(0xFF1B5E37).withValues(alpha: 0.3)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 4,
+              offset: const Offset(0, 1),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1B5E37).withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.check_circle_outline, color: Color(0xFF1B5E37), size: 18),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'COMPLETED',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF1B5E37),
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Cycle has been completed and harvested.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF5E6266),
+                        height: 1.3,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final now = DateTime.now();
-    final harvestDate = (_cycleData?['harvestDate'] as Timestamp?)?.toDate();
+    final harvestDate = _getHarvestDateTime();
     final daysUntilHarvest = harvestDate != null ? harvestDate.difference(now).inDays : 0;
     final progress = _progress;
 

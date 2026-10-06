@@ -92,9 +92,15 @@ class _CompletedCycleContent extends StatelessWidget {
   }
   
   DateTime? get harvestDate {
-    final timestamp = data['harvestDate'];
-    if (timestamp != null && timestamp is Timestamp) {
-      return timestamp.toDate();
+    final raw = data['expectedHarvestDate'] ??
+        data['estimatedHarvestDate'] ??
+        data['harvestDate'] ??
+        data['actualHarvestDate'];
+    if (raw != null) {
+      if (raw is Timestamp) return raw.toDate();
+      if (raw is DateTime) return raw;
+      if (raw is int) return DateTime.fromMillisecondsSinceEpoch(raw);
+      if (raw is String) return DateTime.tryParse(raw);
     }
     return null;
   }

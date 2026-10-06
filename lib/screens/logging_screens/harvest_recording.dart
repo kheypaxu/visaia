@@ -140,7 +140,7 @@ class _HarvestRecordingScreenState extends State<HarvestRecordingScreen> {
         'totalValue': totalValue,
         'lossRate': _lossRate,
         'harvestNotes': _notesController.text,
-        'actualHarvestDate': FieldValue.serverTimestamp(),
+        'actualHarvestDate': _cycleData?['harvestDate'] ?? FieldValue.serverTimestamp(),
         'expectedHarvestDate': _cycleData?['harvestDate'],
         'isEarlyHarvest': widget.isEarlyHarvest,
         if (widget.isEarlyHarvest && _earlyHarvestReason.isNotEmpty) 

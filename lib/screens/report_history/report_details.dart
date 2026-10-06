@@ -2500,8 +2500,6 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
     final reasons = _getResolutionReasonsForCategory(category);
 
     final explanationController = TextEditingController();
-    final managementActionController = TextEditingController();
-    DateTime? followUpDate = DateTime.now();
 
     String? selectedReason;
     String? reasonError;
@@ -2516,20 +2514,6 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
       isScrollControlled: true,
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) {
-          final bool requiresActionTaken = selectedReason != null &&
-              (selectedReason!.toLowerCase().contains('biological') ||
-                  selectedReason!.toLowerCase().contains('chemical') ||
-                  selectedReason!.toLowerCase().contains('management') ||
-                  selectedReason!.toLowerCase().contains('ipm') ||
-                  selectedReason!.toLowerCase().contains('control'));
-
-          final bool requiresFollowUpDate = selectedReason != null &&
-              (selectedReason!.toLowerCase().contains('monitoring') ||
-                  selectedReason!.toLowerCase().contains('damage observed') ||
-                  selectedReason!.toLowerCase().contains('improved') ||
-                  selectedReason!.toLowerCase().contains('occurrence') ||
-                  selectedReason!.toLowerCase().contains('intervention') ||
-                  selectedReason!.toLowerCase().contains('follow-up'));
 
           return Container(
             decoration: const BoxDecoration(
@@ -2729,7 +2713,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Select the reason that best explains why the FAW concern is considered addressed. Your explanation and follow-up information will be retained in Report History.',
+                    'Select the reason that best explains why the FAW concern is considered addressed. Your message will be retained in Report History.',
                     style: GoogleFonts.manrope(
                       fontSize: 11,
                       color: Colors.grey[600],
@@ -2738,105 +2722,9 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
                   ),
                   const SizedBox(height: 14),
 
-                  // 2. Dynamic Management Action Taken (if applicable)
-                  if (requiresActionTaken) ...[
-                    Text(
-                      'Management Action Taken (Optional)',
-                      style: GoogleFonts.manrope(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: _forestGreen,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    TextField(
-                      controller: managementActionController,
-                      decoration: InputDecoration(
-                        hintText:
-                            'e.g., Applied Trichogramma / Sprayed Prevathon 5SC',
-                        hintStyle: GoogleFonts.manrope(
-                            fontSize: 12.5, color: Colors.grey[500]),
-                        filled: true,
-                        fillColor: _cream,
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 12),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: BorderSide.none,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                  ],
-
-                  // 3. Dynamic Follow-up Monitoring Date (if applicable)
-                  if (requiresFollowUpDate) ...[
-                    Text(
-                      'Follow-up Monitoring Date',
-                      style: GoogleFonts.manrope(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: _forestGreen,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    InkWell(
-                      onTap: () async {
-                        final picked = await showDatePicker(
-                          context: context,
-                          initialDate: followUpDate ?? DateTime.now(),
-                          firstDate: DateTime.now()
-                              .subtract(const Duration(days: 90)),
-                          lastDate:
-                              DateTime.now().add(const Duration(days: 30)),
-                        );
-                        if (picked != null) {
-                          setSheetState(() => followUpDate = picked);
-                        }
-                      },
-                      borderRadius: BorderRadius.circular(14),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 12),
-                        decoration: BoxDecoration(
-                          color: _cream,
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.calendar_today_rounded,
-                                size: 16, color: _forestGreen),
-                            const SizedBox(width: 10),
-                            Text(
-                              followUpDate != null
-                                  ? DateFormat('MMMM d, yyyy')
-                                      .format(followUpDate!)
-                                  : 'Select Date',
-                              style: GoogleFonts.manrope(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: const Color(0xFF1F2937),
-                              ),
-                            ),
-                            const Spacer(),
-                            Text(
-                              'Change',
-                              style: GoogleFonts.manrope(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                                color: _forestGreen,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                  ],
-
-                  // 4. Resolution Explanation (Required)
+                  // 2. Resolution Message (Required)
                   Text(
-                    'Resolution Explanation *',
+                    'Resolution Message *',
                     style: GoogleFonts.manrope(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
@@ -2852,7 +2740,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
                     textCapitalization: TextCapitalization.sentences,
                     decoration: InputDecoration(
                       hintText:
-                          'Describe field condition, actions taken, and the results observed upon follow-up...',
+                          'Describe field condition, actions taken, and current crop observations...',
                       hintStyle: GoogleFonts.manrope(
                           fontSize: 12.5, color: Colors.grey[500]),
                       errorText: explanationError,
@@ -2910,7 +2798,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
                             final text = explanationController.text.trim();
                             if (text.isEmpty) {
                               setSheetState(() => explanationError =
-                                  'Resolution explanation is required');
+                                  'Resolution message is required');
                               hasError = true;
                             } else if (text.length < 5) {
                               setSheetState(() => explanationError =
@@ -2922,9 +2810,6 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
                             Navigator.pop(sheetContext, {
                               'reason': selectedReason!,
                               'explanation': text,
-                              'managementAction':
-                                  managementActionController.text.trim(),
-                              'followUpDate': followUpDate,
                               'category': category,
                             });
                           },
@@ -2956,17 +2841,11 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
     );
 
     explanationController.dispose();
-    managementActionController.dispose();
 
     if (result != null && mounted) {
       await _markAsResolved(
         reason: result['reason'] as String,
         explanation: result['explanation'] as String,
-        managementAction:
-            (result['managementAction'] as String?)?.isNotEmpty == true
-                ? result['managementAction'] as String
-                : null,
-        followUpDate: result['followUpDate'] as DateTime?,
         reportCategory: result['category'] as String,
       );
     }
@@ -2975,8 +2854,6 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
   Future<void> _markAsResolved({
     required String reason,
     required String explanation,
-    String? managementAction,
-    DateTime? followUpDate,
     required String reportCategory,
   }) async {
     setState(() => _isResolving = true);
@@ -2991,17 +2868,15 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
           _firestore.collection(collectionName).doc(widget.reportId);
 
       final userName = await _getUserName(user.uid);
+      final dapResolvedDate = _resolveResolvedDate(_currentData);
+
       final resolution = {
         'status': 'resolved',
-        'resolvedAt': FieldValue.serverTimestamp(),
+        'resolvedAt': Timestamp.fromDate(dapResolvedDate),
         'resolvedBy': user.uid,
         'resolvedByUserName': userName,
         'resolutionReason': reason,
         'resolutionExplanation': explanation,
-        if (managementAction != null && managementAction.isNotEmpty)
-          'managementActionTaken': managementAction,
-        if (followUpDate != null)
-          'followUpMonitoringDate': Timestamp.fromDate(followUpDate),
         'reportCategory': reportCategory,
       };
 
@@ -3048,13 +2923,8 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
           _currentData['status'] = 'resolved';
           _currentData['resolutionReason'] = reason;
           _currentData['resolutionExplanation'] = explanation;
-          if (managementAction != null) {
-            _currentData['managementActionTaken'] = managementAction;
-          }
-          if (followUpDate != null) {
-            _currentData['followUpMonitoringDate'] = followUpDate;
-          }
-          _currentData['resolvedAt'] = DateTime.now();
+          _currentData.remove('followUpMonitoringDate');
+          _currentData['resolvedAt'] = dapResolvedDate;
           _currentData['resolvedByUserName'] = userName;
           _currentData['reportCategory'] = reportCategory;
         });
@@ -3086,14 +2956,9 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
         (data['resolvedByUserName'] ?? 'Farmer').toString();
     final category =
         (data['reportCategory'] ?? _getReportCategoryName()).toString();
-    final resolvedAt = data['resolvedAt'];
-    final followUpDate = data['followUpMonitoringDate'];
-
-    String formattedResolvedDate = _fmtDate(resolvedAt);
-    String formattedFollowUpDate = '';
-    if (followUpDate != null) {
-      formattedFollowUpDate = _fmtDate(followUpDate);
-    }
+    final dapResolvedDate = _resolveResolvedDate(data);
+    final formattedResolvedDate =
+        DateFormat('MMM d, yyyy').format(dapResolvedDate);
 
     return Container(
       width: double.infinity,
@@ -3226,10 +3091,10 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
             const SizedBox(height: 10),
           ],
 
-          // Resolution Explanation
+          // Resolution Message
           if (explanation.isNotEmpty) ...[
             Text(
-              'Farmer Resolution Explanation:',
+              'Farmer Resolution Message:',
               style: GoogleFonts.manrope(
                 fontSize: 11.5,
                 fontWeight: FontWeight.w600,
@@ -3283,25 +3148,6 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
               ],
             ),
             const SizedBox(height: 6),
-          ],
-
-          // Follow-up Monitoring Date if present
-          if (formattedFollowUpDate.isNotEmpty) ...[
-            Row(
-              children: [
-                const Icon(Icons.event_available_rounded,
-                    size: 15, color: Color(0xFF15803D)),
-                const SizedBox(width: 6),
-                Text(
-                  'Follow-up Monitoring Date: $formattedFollowUpDate',
-                  style: GoogleFonts.manrope(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: const Color(0xFF15803D),
-                  ),
-                ),
-              ],
-            ),
           ],
         ],
       ),
@@ -3377,6 +3223,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
 
   DateTime _resolveScoutingDate(Map<String, dynamic> data) {
     final dynamic rawPlanting = data['plantingDate'] ??
+        _currentData['plantingDate'] ??
         (data['cycleInfo'] is Map ? data['cycleInfo']['plantingDate'] : null);
     final planting = _parseDateTime(rawPlanting);
 
@@ -3419,6 +3266,17 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
     }
 
     return fallback ?? DateTime.now();
+  }
+
+  DateTime _resolveResolvedDate(Map<String, dynamic> data) {
+    final dapWeekEnd = _resolveScoutingDate(data);
+    return DateTime(
+      dapWeekEnd.year,
+      dapWeekEnd.month,
+      dapWeekEnd.day + 3,
+      12,
+      0,
+    );
   }
 
   String _fmtDate(dynamic ts) {
