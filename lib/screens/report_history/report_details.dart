@@ -49,6 +49,36 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
   void initState() {
     super.initState();
     _currentData = Map<String, dynamic>.from(widget.reportData);
+    _loadPlantingDateIfMissing();
+  }
+
+  Future<void> _loadPlantingDateIfMissing() async {
+    if (_currentData['plantingDate'] != null) return;
+    final cycleId = _currentData['cycleId']?.toString();
+    final userId = (_currentData['userId'] ?? _currentData['farmerId'] ?? _auth.currentUser?.uid)?.toString();
+    if (cycleId == null || cycleId.isEmpty) return;
+
+    try {
+      if (userId != null && userId.isNotEmpty) {
+        final cycleDoc = await _firestore.collection('users').doc(userId).collection('cycles').doc(cycleId).get();
+        if (cycleDoc.exists && cycleDoc.data()?['plantingDate'] != null) {
+          if (mounted) {
+            setState(() {
+              _currentData['plantingDate'] = cycleDoc.data()!['plantingDate'];
+            });
+          }
+          return;
+        }
+      }
+      final rootCycleDoc = await _firestore.collection('cycles').doc(cycleId).get();
+      if (rootCycleDoc.exists && rootCycleDoc.data()?['plantingDate'] != null) {
+        if (mounted) {
+          setState(() {
+            _currentData['plantingDate'] = rootCycleDoc.data()!['plantingDate'];
+          });
+        }
+      }
+    } catch (_) {}
   }
 
   @override
@@ -65,6 +95,9 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
               ..._currentData,
               ...liveData,
             };
+            if (_currentData['plantingDate'] == null) {
+              _loadPlantingDateIfMissing();
+            }
           }
         }
 
@@ -3323,6 +3356,16 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
     );
   }
 
+  int? _extractInt(dynamic val) {
+    if (val == null) return null;
+    if (val is num) return val.toInt();
+    if (val is String) {
+      final match = RegExp(r'\d+').firstMatch(val);
+      if (match != null) return int.tryParse(match.group(0)!);
+    }
+    return null;
+  }
+
   DateTime? _parseDateTime(dynamic val) {
     if (val == null) return null;
     if (val is Timestamp) return val.toDate();
@@ -3337,29 +3380,8 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
         (data['cycleInfo'] is Map ? data['cycleInfo']['plantingDate'] : null);
     final planting = _parseDateTime(rawPlanting);
 
-    final rawWeek = data['weekNumber'];
-    final int? weekNumber = rawWeek is num ? rawWeek.toInt() : null;
-    final rawDap = data['dap'];
-    final int? dap = rawDap is num ? rawDap.toInt() : null;
-
-    if (planting != null) {
-      int? weekIndex;
-      if (weekNumber != null && weekNumber >= 1) {
-        weekIndex = weekNumber - 1;
-      } else if (dap != null && dap >= 0) {
-        weekIndex = dap ~/ 7;
-      }
-
-      if (weekIndex != null) {
-        // Last day of that DAP week (7-day period starting from planting date)
-        final nextWeek = DateTime(
-          planting.year,
-          planting.month,
-          planting.day + (weekIndex + 1) * 7,
-        );
-        return nextWeek.subtract(const Duration(microseconds: 1));
-      }
-    }
+    final int? weekNumber = _extractInt(data['weekNumber']);
+    final int? dap = _extractInt(data['dap']);
 
     final fallback = _parseDateTime(
       data['reportDate'] ??
@@ -3369,6 +3391,33 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
       data['dateConducted'] ??
       data['scoutingDate']
     );
+
+    DateTime? effectivePlanting = planting;
+    if (effectivePlanting == null && dap != null && dap > 0 && fallback != null) {
+      effectivePlanting = fallback.subtract(Duration(days: dap));
+    }
+
+    if (effectivePlanting != null) {
+      int? weekIndex;
+      if (weekNumber != null && weekNumber >= 1) {
+        weekIndex = weekNumber - 1;
+      } else if (dap != null && dap > 0) {
+        weekIndex = (dap - 1) ~/ 7;
+      } else if (dap == 0) {
+        weekIndex = 0;
+      }
+
+      if (weekIndex != null) {
+        // Last day of that DAP week (7-day period starting from planting date)
+        final nextWeek = DateTime(
+          effectivePlanting.year,
+          effectivePlanting.month,
+          effectivePlanting.day + (weekIndex + 1) * 7,
+        );
+        return nextWeek.subtract(const Duration(microseconds: 1));
+      }
+    }
+
     return fallback ?? DateTime.now();
   }
 

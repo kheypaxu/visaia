@@ -175,44 +175,57 @@ class UnifiedReportItem {
       planting = DateTime.tryParse(rawPlanting);
     }
 
-    final rawWeek = data['weekNumber'];
-    final int? weekNumber = rawWeek is num ? rawWeek.toInt() : null;
-    final int? dapVal = data['dap'] is num ? (data['dap'] as num).toInt() : null;
+    int? extractInt(dynamic val) {
+      if (val == null) return null;
+      if (val is num) return val.toInt();
+      if (val is String) {
+        final match = RegExp(r'\d+').firstMatch(val);
+        if (match != null) return int.tryParse(match.group(0)!);
+      }
+      return null;
+    }
 
-    DateTime ts = DateTime.now();
-    bool dateResolved = false;
-    if (planting != null) {
+    final int? weekNumber = extractInt(data['weekNumber']);
+    final int? dapVal = extractInt(data['dap']);
+
+    final rawTs = data['reportDate'] ??
+        data['timestamp'] ??
+        data['createdAt'] ??
+        data['submittedAt'] ??
+        data['dateConducted'] ??
+        data['scoutingDate'];
+    DateTime fallback = DateTime.now();
+    if (rawTs is Timestamp) {
+      fallback = rawTs.toDate();
+    } else if (rawTs is DateTime) {
+      fallback = rawTs;
+    } else if (rawTs is String) {
+      fallback = DateTime.tryParse(rawTs) ?? DateTime.now();
+    }
+
+    DateTime? effectivePlanting = planting;
+    if (effectivePlanting == null && dapVal != null && dapVal > 0) {
+      effectivePlanting = fallback.subtract(Duration(days: dapVal));
+    }
+
+    DateTime ts = fallback;
+    if (effectivePlanting != null) {
       int? weekIndex;
       if (weekNumber != null && weekNumber >= 1) {
         weekIndex = weekNumber - 1;
-      } else if (dapVal != null && dapVal >= 0) {
-        weekIndex = dapVal ~/ 7;
+      } else if (dapVal != null && dapVal > 0) {
+        weekIndex = (dapVal - 1) ~/ 7;
+      } else if (dapVal == 0) {
+        weekIndex = 0;
       }
 
       if (weekIndex != null) {
         final nextWeek = DateTime(
-          planting.year,
-          planting.month,
-          planting.day + (weekIndex + 1) * 7,
+          effectivePlanting.year,
+          effectivePlanting.month,
+          effectivePlanting.day + (weekIndex + 1) * 7,
         );
         ts = nextWeek.subtract(const Duration(microseconds: 1));
-        dateResolved = true;
-      }
-    }
-
-    if (!dateResolved) {
-      final rawTs = data['reportDate'] ??
-          data['timestamp'] ??
-          data['createdAt'] ??
-          data['submittedAt'] ??
-          data['dateConducted'] ??
-          data['scoutingDate'];
-      if (rawTs is Timestamp) {
-        ts = rawTs.toDate();
-      } else if (rawTs is DateTime) {
-        ts = rawTs;
-      } else if (rawTs is String) {
-        ts = DateTime.tryParse(rawTs) ?? DateTime.now();
       }
     }
 
