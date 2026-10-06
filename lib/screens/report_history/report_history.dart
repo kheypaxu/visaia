@@ -102,12 +102,18 @@ class UnifiedReportItem {
     final detection = data['detection'] ?? data['originalDetection'] ?? 'Unknown Pest';
     final risk = (data['risk'] ?? 'Low').toString();
     final status = (data['status'] ?? 'pending').toString();
-    final rawTs = data['timestamp'] ?? data['createdAt'];
+    final rawTs = data['dateConducted'] ??
+        data['scoutingDate'] ??
+        data['submittedAt'] ??
+        data['timestamp'] ??
+        data['createdAt'];
     DateTime ts = DateTime.now();
     if (rawTs is Timestamp) {
       ts = rawTs.toDate();
     } else if (rawTs is DateTime) {
       ts = rawTs;
+    } else if (rawTs is String) {
+      ts = DateTime.tryParse(rawTs) ?? DateTime.now();
     }
 
     final imageSrc = (data['imageBase64'] ?? data['annotatedImageUrl'] ?? data['annotated_url']) as String?;
@@ -156,12 +162,58 @@ class UnifiedReportItem {
     final risk = (data['riskLevel'] ?? data['severityLevel'] ?? (data['isHighLevel'] == true ? 'High' : 'Moderate')).toString();
     final status = (data['status'] ?? 'pending').toString();
 
-    final rawTs = data['reportDate'] ?? data['timestamp'] ?? data['createdAt'];
+    final dynamic rawPlanting = data['plantingDate'] ??
+        (data['cycleInfo'] is Map ? data['cycleInfo']['plantingDate'] : null);
+    DateTime? planting;
+    if (rawPlanting is Timestamp) {
+      planting = rawPlanting.toDate();
+    } else if (rawPlanting is DateTime) {
+      planting = rawPlanting;
+    } else if (rawPlanting is int) {
+      planting = DateTime.fromMillisecondsSinceEpoch(rawPlanting);
+    } else if (rawPlanting is String) {
+      planting = DateTime.tryParse(rawPlanting);
+    }
+
+    final rawWeek = data['weekNumber'];
+    final int? weekNumber = rawWeek is num ? rawWeek.toInt() : null;
+    final int? dapVal = data['dap'] is num ? (data['dap'] as num).toInt() : null;
+
     DateTime ts = DateTime.now();
-    if (rawTs is Timestamp) {
-      ts = rawTs.toDate();
-    } else if (rawTs is DateTime) {
-      ts = rawTs;
+    bool dateResolved = false;
+    if (planting != null) {
+      int? weekIndex;
+      if (weekNumber != null && weekNumber >= 1) {
+        weekIndex = weekNumber - 1;
+      } else if (dapVal != null && dapVal >= 0) {
+        weekIndex = dapVal ~/ 7;
+      }
+
+      if (weekIndex != null) {
+        final nextWeek = DateTime(
+          planting.year,
+          planting.month,
+          planting.day + (weekIndex + 1) * 7,
+        );
+        ts = nextWeek.subtract(const Duration(microseconds: 1));
+        dateResolved = true;
+      }
+    }
+
+    if (!dateResolved) {
+      final rawTs = data['reportDate'] ??
+          data['timestamp'] ??
+          data['createdAt'] ??
+          data['submittedAt'] ??
+          data['dateConducted'] ??
+          data['scoutingDate'];
+      if (rawTs is Timestamp) {
+        ts = rawTs.toDate();
+      } else if (rawTs is DateTime) {
+        ts = rawTs;
+      } else if (rawTs is String) {
+        ts = DateTime.tryParse(rawTs) ?? DateTime.now();
+      }
     }
 
     final totalInspected = data['totalInspected'] is num ? (data['totalInspected'] as num).toInt() : 100;

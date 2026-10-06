@@ -84,7 +84,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
     final dap = data['dap'] != null ? 'DAP ${data['dap']}' : 'DAP N/A';
     final farmName = (data['farmName'] ?? 'Farm').toString();
     final fieldName = (data['fieldName'] ?? 'Field').toString();
-    final timestamp = data['reportDate'] ?? data['timestamp'] ?? data['createdAt'];
+    final timestamp = _resolveScoutingDate(data);
 
     final totalInspected = data['correctedInspected'] is num
         ? (data['correctedInspected'] as num).toInt()
@@ -389,7 +389,11 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
     final historicalContext = (data['historicalContext'] ?? '').toString();
     final imageBase64 = data['imageBase64'] as String?;
     final annotatedImageUrl = (data['annotatedImageUrl'] ?? data['annotated_url']) as String?;
-    final timestamp = data['timestamp'] ?? data['createdAt'];
+    final timestamp = data['dateConducted'] ??
+        data['scoutingDate'] ??
+        data['submittedAt'] ??
+        data['timestamp'] ??
+        data['createdAt'];
     final farmName = (data['farmName'] ?? 'Unknown Farm').toString();
     final fieldName = (data['fieldName'] ?? data['areaName'] ?? 'Unknown Field').toString();
     final location = data['location'] as Map<String, dynamic>?;
@@ -3319,11 +3323,68 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
     );
   }
 
+  DateTime? _parseDateTime(dynamic val) {
+    if (val == null) return null;
+    if (val is Timestamp) return val.toDate();
+    if (val is DateTime) return val;
+    if (val is int) return DateTime.fromMillisecondsSinceEpoch(val);
+    if (val is String) return DateTime.tryParse(val);
+    return null;
+  }
+
+  DateTime _resolveScoutingDate(Map<String, dynamic> data) {
+    final dynamic rawPlanting = data['plantingDate'] ??
+        (data['cycleInfo'] is Map ? data['cycleInfo']['plantingDate'] : null);
+    final planting = _parseDateTime(rawPlanting);
+
+    final rawWeek = data['weekNumber'];
+    final int? weekNumber = rawWeek is num ? rawWeek.toInt() : null;
+    final rawDap = data['dap'];
+    final int? dap = rawDap is num ? rawDap.toInt() : null;
+
+    if (planting != null) {
+      int? weekIndex;
+      if (weekNumber != null && weekNumber >= 1) {
+        weekIndex = weekNumber - 1;
+      } else if (dap != null && dap >= 0) {
+        weekIndex = dap ~/ 7;
+      }
+
+      if (weekIndex != null) {
+        // Last day of that DAP week (7-day period starting from planting date)
+        final nextWeek = DateTime(
+          planting.year,
+          planting.month,
+          planting.day + (weekIndex + 1) * 7,
+        );
+        return nextWeek.subtract(const Duration(microseconds: 1));
+      }
+    }
+
+    final fallback = _parseDateTime(
+      data['reportDate'] ??
+      data['timestamp'] ??
+      data['createdAt'] ??
+      data['submittedAt'] ??
+      data['dateConducted'] ??
+      data['scoutingDate']
+    );
+    return fallback ?? DateTime.now();
+  }
+
   String _fmtDate(dynamic ts) {
     if (ts == null) return 'N/A';
     try {
-      if (ts is Timestamp) return DateFormat('MMM d, yyyy · h:mm a').format(ts.toDate());
-      if (ts is DateTime) return DateFormat('MMM d, yyyy · h:mm a').format(ts);
+      DateTime? dt;
+      if (ts is Timestamp) dt = ts.toDate();
+      if (ts is DateTime) dt = ts;
+      if (ts is String) dt = DateTime.tryParse(ts);
+      if (dt != null) {
+        if (dt.hour == 23 && dt.minute == 59) {
+          return DateFormat('MMM d, yyyy').format(dt);
+        }
+        return DateFormat('MMM d, yyyy · h:mm a').format(dt);
+      }
     } catch (_) {}
     return 'N/A';
   }
