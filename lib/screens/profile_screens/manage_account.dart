@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:convert';
+import 'package:visaia/utils/location_constants.dart';
 
 class ManageAccountScreen extends StatefulWidget {
   const ManageAccountScreen({super.key});
@@ -22,6 +23,8 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
   String _fullName = '';
   String _email = '';
   String _rsbsaId = '';
+  String _barangay = '';
+  String? _selectedBarangay;
   String _profileImageBase64 = '';
   bool _isLoading = true;
   bool _isSaving = false;
@@ -75,11 +78,16 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
 
       if (doc.exists) {
         final data = doc.data()!;
+        final loadedBarangay = (data['barangay'] as String?)?.trim() ?? '';
         setState(() {
           _fullName = data['fullName'] ?? '';
           _email = data['email'] ?? user.email ?? '';
           _rsbsaId = data['rsbsaId'] ?? '';
           _profileImageBase64 = data['profileImage'] ?? '';
+          _barangay = loadedBarangay;
+          _selectedBarangay = loadedBarangay.isNotEmpty && LocationConstants.cabatuanBarangays.contains(loadedBarangay)
+              ? loadedBarangay
+              : null;
           
           _fullNameController.text = _fullName;
           _emailController.text = _email;
@@ -95,6 +103,23 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
           _emailController.text = _email;
           _isLoading = false;
         });
+      }
+
+      // If barangay was not found in farmers collection, check users collection as fallback
+      if (_barangay.isEmpty) {
+        final userDoc = await _firestore.collection('users').doc(user.uid).get();
+        if (userDoc.exists) {
+          final uData = userDoc.data();
+          final loadedBarangay = (uData?['barangay'] as String?)?.trim() ?? '';
+          if (loadedBarangay.isNotEmpty && mounted) {
+            setState(() {
+              _barangay = loadedBarangay;
+              _selectedBarangay = LocationConstants.cabatuanBarangays.contains(loadedBarangay)
+                  ? loadedBarangay
+                  : null;
+            });
+          }
+        }
       }
     } catch (e) {
       debugPrint('Error loading user data: $e');
@@ -118,6 +143,8 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
         throw Exception('User not authenticated');
       }
 
+      final chosenBarangay = _selectedBarangay ?? _barangay;
+
       await _firestore
           .collection('farmers')
           .doc(user.uid)
@@ -125,6 +152,20 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
             'fullName': _fullNameController.text,
             'email': _emailController.text,
             'rsbsaId': _rsbsaIdController.text,
+            'municipality': LocationConstants.defaultMunicipality,
+            'barangay': chosenBarangay,
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+
+      await _firestore
+          .collection('users')
+          .doc(user.uid)
+          .set({
+            'fullName': _fullNameController.text,
+            'name': _fullNameController.text,
+            'email': _emailController.text,
+            'municipality': LocationConstants.defaultMunicipality,
+            'barangay': chosenBarangay,
             'updatedAt': FieldValue.serverTimestamp(),
           }, SetOptions(merge: true));
 
@@ -137,6 +178,7 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
         _fullName = _fullNameController.text;
         _email = _emailController.text;
         _rsbsaId = _rsbsaIdController.text;
+        _barangay = chosenBarangay;
         _isEditing = false;
         _isSaving = false;
       });
@@ -291,6 +333,9 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
         _fullNameController.text = _fullName;
         _emailController.text = _email;
         _rsbsaIdController.text = _rsbsaId;
+        _selectedBarangay = _barangay.isNotEmpty && LocationConstants.cabatuanBarangays.contains(_barangay)
+            ? _barangay
+            : null;
       }
     });
   }
@@ -428,6 +473,18 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
                   _isEditing
                       ? _buildEditableTextField('RSBSA ID NUMBER', _rsbsaIdController)
                       : _buildIdNumberRow('RSBSA ID NUMBER', _rsbsaId),
+
+                  const SizedBox(height: 20),
+
+                  _isEditing
+                      ? _buildBarangayDropdown()
+                      : _buildDisplayField(
+                          'BARANGAY (CABATUAN)',
+                          _barangay.isEmpty ? 'Not set (Tap Edit to choose)' : '$_barangay, Cabatuan',
+                          const Color(0xFF181C1A),
+                          FontWeight.w600,
+                          16,
+                        ),
                 ],
               ),
             ),
@@ -539,6 +596,64 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
   }
 
   // Helper widgets
+  Widget _buildBarangayDropdown() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildInputLabel('BARANGAY (CABATUAN)'),
+        DropdownButtonFormField<String>(
+          initialValue: _selectedBarangay,
+          isExpanded: true,
+          style: GoogleFonts.manrope(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: darkGreen,
+          ),
+          dropdownColor: Colors.white,
+          icon: const Icon(Icons.keyboard_arrow_down_rounded, color: darkGreen),
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: inputBg,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: darkGreen, width: 2),
+            ),
+          ),
+          hint: Text(
+            'Select your barangay',
+            style: GoogleFonts.manrope(
+              fontSize: 14,
+              color: Colors.grey,
+            ),
+          ),
+          items: LocationConstants.cabatuanBarangays.map((String brgy) {
+            return DropdownMenuItem<String>(
+              value: brgy,
+              child: Text(
+                brgy,
+                style: GoogleFonts.manrope(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                  color: darkGreen,
+                ),
+              ),
+            );
+          }).toList(),
+          onChanged: (String? val) {
+            setState(() {
+              _selectedBarangay = val;
+            });
+          },
+        ),
+      ],
+    );
+  }
+
   Widget _buildInputLabel(String label) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10.0, left: 4),

@@ -8,6 +8,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:visaia/screens/auth/login_screen.dart';
+import 'package:visaia/utils/location_constants.dart';
 
 class VerificationFormScreen extends StatefulWidget {
   const VerificationFormScreen({super.key});
@@ -33,6 +34,8 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
   String? _selectedSex;
   DateTime? _selectedBirthdate;
   final List<String> _sexOptions = ['Male', 'Female', 'Other'];
+
+  String? _selectedBarangay;
 
   String? _base64Image;
   String _farmerIdFileName = 'No file selected';
@@ -234,6 +237,8 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
         "farmSize": double.parse(_farmSizeController.text.trim()),
         "sex": _selectedSex,
         "birthdate": _selectedBirthdate?.toIso8601String(),
+        "municipality": LocationConstants.defaultMunicipality,
+        "barangay": _selectedBarangay,
         "status": "pending",
         "createdAt": FieldValue.serverTimestamp(),
         "hasRsbsaId": _hasRsbsaId,
@@ -265,6 +270,17 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
           .collection("farmers")
           .doc(user.uid)
           .set(farmerData);
+
+      // Also save municipality & barangay to users collection for dashboard targeting
+      await FirebaseFirestore.instance
+          .collection("users")
+          .doc(user.uid)
+          .set({
+        "municipality": LocationConstants.defaultMunicipality,
+        "barangay": _selectedBarangay,
+        "name": fullName,
+        "email": user.email ?? '',
+      }, SetOptions(merge: true));
 
       // Sign out after successful submission
       await FirebaseAuth.instance.signOut();
@@ -927,6 +943,103 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
                                           },
                                         ),
                                         const SizedBox(height: 12),
+
+                                       // Row 3.5: Municipality & Barangay
+                                       Row(
+                                         crossAxisAlignment: CrossAxisAlignment.start,
+                                         children: [
+                                           // Municipality (Cabatuan for pilot)
+                                           Expanded(
+                                             child: Column(
+                                               crossAxisAlignment: CrossAxisAlignment.start,
+                                               children: [
+                                                 _buildFieldLabel('MUNICIPALITY'),
+                                                 Container(
+                                                   height: 48,
+                                                   padding: const EdgeInsets.symmetric(horizontal: 14),
+                                                   decoration: BoxDecoration(
+                                                     color: Colors.black.withValues(alpha: 0.22),
+                                                     borderRadius: BorderRadius.circular(14),
+                                                     border: Border.all(
+                                                       color: Colors.white.withValues(alpha: 0.22),
+                                                       width: 1.0,
+                                                     ),
+                                                   ),
+                                                   child: Row(
+                                                     children: [
+                                                       const Icon(
+                                                         Icons.location_city_outlined,
+                                                         color: Color(0xFF2EAA4D),
+                                                         size: 16,
+                                                       ),
+                                                       const SizedBox(width: 8),
+                                                       Expanded(
+                                                         child: Text(
+                                                           LocationConstants.defaultMunicipality,
+                                                           style: GoogleFonts.epilogue(
+                                                             color: Colors.white,
+                                                             fontSize: 13,
+                                                             fontWeight: FontWeight.w600,
+                                                           ),
+                                                         ),
+                                                       ),
+                                                     ],
+                                                   ),
+                                                 ),
+                                               ],
+                                             ),
+                                           ),
+                                           const SizedBox(width: 10),
+                                           // Barangay Dropdown
+                                           Expanded(
+                                             child: Column(
+                                               crossAxisAlignment: CrossAxisAlignment.start,
+                                               children: [
+                                                 _buildFieldLabel('BARANGAY'),
+                                                 DropdownButtonFormField<String>(
+                                                   initialValue: _selectedBarangay,
+                                                   isExpanded: true,
+                                                   style: GoogleFonts.epilogue(
+                                                     color: Colors.white,
+                                                     fontSize: 13,
+                                                     fontWeight: FontWeight.w500,
+                                                   ),
+                                                   dropdownColor: const Color(0xFF1B2E15),
+                                                   icon: const Icon(
+                                                     Icons.keyboard_arrow_down_rounded,
+                                                     color: Colors.white70,
+                                                     size: 18,
+                                                   ),
+                                                   decoration: _inputDecoration(hintText: 'Select Barangay'),
+                                                   items: LocationConstants.cabatuanBarangays.map((String brgy) {
+                                                     return DropdownMenuItem<String>(
+                                                       value: brgy,
+                                                       child: Text(
+                                                         brgy,
+                                                         style: GoogleFonts.epilogue(color: Colors.white, fontSize: 13),
+                                                         overflow: TextOverflow.ellipsis,
+                                                       ),
+                                                     );
+                                                   }).toList(),
+                                                   onChanged: (String? val) {
+                                                     setState(() {
+                                                       _selectedBarangay = val;
+                                                     });
+                                                   },
+                                                   validator: (value) {
+                                                     if (value == null || value.isEmpty) {
+                                                       return 'Required';
+                                                     }
+                                                     return null;
+                                                   },
+                                                 ),
+                                               ],
+                                             ),
+                                           ),
+                                         ],
+                                       ),
+
+                                       const SizedBox(height: 12),
                                       ],
 
                                       // Row 6: ID Photo Upload Bar with Inline Skip Option
