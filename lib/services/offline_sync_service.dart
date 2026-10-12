@@ -16,6 +16,9 @@ class QueuedOfflineItem {
   final String imagePath;
   final String userId;
   final String? farmId;
+  final String? farmName;
+  final String? fieldId;
+  final String? fieldName;
   final String? cycleId;
   final double latitude;
   final double longitude;
@@ -31,6 +34,9 @@ class QueuedOfflineItem {
     required this.imagePath,
     required this.userId,
     this.farmId,
+    this.farmName,
+    this.fieldId,
+    this.fieldName,
     this.cycleId,
     required this.latitude,
     required this.longitude,
@@ -47,6 +53,9 @@ class QueuedOfflineItem {
         'imagePath': imagePath,
         'userId': userId,
         'farmId': farmId,
+        'farmName': farmName,
+        'fieldId': fieldId,
+        'fieldName': fieldName,
         'cycleId': cycleId,
         'latitude': latitude,
         'longitude': longitude,
@@ -64,6 +73,9 @@ class QueuedOfflineItem {
         imagePath: json['imagePath'] as String,
         userId: json['userId'] as String,
         farmId: json['farmId'] as String?,
+        farmName: json['farmName'] as String?,
+        fieldId: json['fieldId'] as String?,
+        fieldName: json['fieldName'] as String?,
         cycleId: json['cycleId'] as String?,
         latitude: (json['latitude'] as num?)?.toDouble() ?? 0.0,
         longitude: (json['longitude'] as num?)?.toDouble() ?? 0.0,
@@ -161,6 +173,9 @@ class OfflineSyncService {
     required File imageFile,
     required String userId,
     String? farmId,
+    String? farmName,
+    String? fieldId,
+    String? fieldName,
     String? cycleId,
     required double latitude,
     required double longitude,
@@ -179,6 +194,9 @@ class OfflineSyncService {
         'farmerId': userId,
         'farmerName': farmerName ?? 'Farmer',
         'farmId': farmId,
+        'farmName': farmName,
+        'fieldId': fieldId,
+        'fieldName': fieldName,
         'cycleId': cycleId,
         'pestName': 'Queued for AI Analysis',
         'scientificName': 'Pending online sync',
@@ -197,6 +215,8 @@ class OfflineSyncService {
           'lng': longitude,
           'areaName': areaName,
         },
+        'lat': latitude,
+        'lng': longitude,
       });
     } catch (e) {
       debugPrint('Note: Firestore doc write queued offline: $e');
@@ -209,6 +229,9 @@ class OfflineSyncService {
       imagePath: persistentPath,
       userId: userId,
       farmId: farmId,
+      farmName: farmName,
+      fieldId: fieldId,
+      fieldName: fieldName,
       cycleId: cycleId,
       latitude: latitude,
       longitude: longitude,
@@ -342,12 +365,22 @@ class OfflineSyncService {
       await FirebaseFirestore.instance
           .collection('reports')
           .doc(item.docId)
-          .set(reportData, SetOptions(merge: true));
+          .set({
+            ...reportData,
+            if (item.farmName != null) 'farmName': item.farmName,
+            if (item.fieldId != null) 'fieldId': item.fieldId,
+            if (item.fieldName != null) 'fieldName': item.fieldName,
+            'lat': item.latitude,
+            'lng': item.longitude,
+          }, SetOptions(merge: true));
     } else {
       await FirebaseFirestore.instance.collection('reports').add({
         ...reportData,
         'farmerId': item.userId,
         'farmId': item.farmId,
+        'farmName': item.farmName,
+        'fieldId': item.fieldId,
+        'fieldName': item.fieldName,
         'cycleId': item.cycleId,
         'timestamp': FieldValue.serverTimestamp(),
         'location': {
@@ -355,6 +388,8 @@ class OfflineSyncService {
           'lng': item.longitude,
           'areaName': item.areaName,
         },
+        'lat': item.latitude,
+        'lng': item.longitude,
       });
     }
 

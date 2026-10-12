@@ -1,12 +1,14 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:visaia/screens/logging_screens/assign_pest_detected.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:convert';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:visaia/services/auth_cache_service.dart';
 import 'package:visaia/services/firestore_safe_ext.dart';
+import 'package:visaia/utils/geo_utils.dart';
 
 class AIResultScreen extends StatefulWidget {
   final String pestName;
@@ -24,6 +26,10 @@ class AIResultScreen extends StatefulWidget {
   final double? latitude;
   final double? longitude;
   final String? areaName;
+  final String? fieldId;
+  final String? fieldName;
+  final String? farmId;
+  final String? farmName;
 
   const AIResultScreen({
     super.key,
@@ -42,6 +48,10 @@ class AIResultScreen extends StatefulWidget {
     this.latitude,
     this.longitude,
     this.areaName,
+    this.fieldId,
+    this.fieldName,
+    this.farmId,
+    this.farmName,
   });
 
   @override
@@ -50,10 +60,17 @@ class AIResultScreen extends StatefulWidget {
 
 class _AIResultScreenState extends State<AIResultScreen>
     with SingleTickerProviderStateMixin {
-  // ── State variable for assigned cycle ─────────────────────────────────────
+  // ── State variable for assigned cycle & field ──────────────────────────────
   String? _assignedCycleId;
   int? _assignedDap;
   String? _assignedGrowthStage;
+  String? _assignedFieldId;
+  String? _assignedFieldName;
+  String? _assignedFarmId;
+  String? _assignedFarmName;
+  double? _reportLatitude;
+  double? _reportLongitude;
+  String? _reportAreaName;
   
   // ── Tab Controller ──────────────────────────────────────────────────────
   late TabController _tabController;
@@ -73,6 +90,52 @@ class _AIResultScreenState extends State<AIResultScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
+    _assignedFieldId = widget.fieldId;
+    _assignedFieldName = widget.fieldName;
+    _assignedFarmId = widget.farmId;
+    _assignedFarmName = widget.farmName;
+    _reportLatitude = widget.latitude;
+    _reportLongitude = widget.longitude;
+    _reportAreaName = widget.areaName;
+  }
+
+  Future<void> _resolveFieldCoordinates(String fieldId) async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('fields')
+          .doc(fieldId)
+          .safeGet();
+      if (doc.exists) {
+        final data = doc.data();
+        if (data != null && data['boundaries'] is List) {
+          final rawList = data['boundaries'] as List;
+          final List<LatLng> points = [];
+          for (final item in rawList) {
+            if (item is Map) {
+              final lat = (item['lat'] ?? item['latitude'] as num?)?.toDouble();
+              final lng = (item['lng'] ?? item['longitude'] as num?)?.toDouble();
+              if (lat != null && lng != null) points.add(LatLng(lat, lng));
+            }
+          }
+          if (points.isNotEmpty) {
+            final center = GeoUtils.calculatePolygonCenter(points);
+            if (mounted) {
+              setState(() {
+                _reportLatitude = center.latitude;
+                _reportLongitude = center.longitude;
+                if (_assignedFieldName != null && _assignedFieldName!.isNotEmpty) {
+                  _reportAreaName = '$_assignedFieldName, ${_assignedFarmName ?? 'Farm'}';
+                }
+              });
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error resolving field coordinates: $e');
+    }
   }
 
   @override
@@ -287,16 +350,22 @@ class _AIResultScreenState extends State<AIResultScreen>
         'annotatedImageUrl': widget.annotatedImageUrl,
         'farmerId': widget.userId,
         'farmerName': await _getFarmerName(),
+        'farmId': _assignedFarmId ?? AuthCacheService().cachedActiveFarmId,
+        'farmName': _assignedFarmName ?? AuthCacheService().cachedActiveFarmName,
+        'fieldId': _assignedFieldId,
+        'fieldName': _assignedFieldName ?? _reportAreaName ?? 'Farm Field',
         'cycleId': _assignedCycleId,
         'dap': _assignedDap,
         'growthStage': _assignedGrowthStage,
         'status': 'pending',
         'timestamp': FieldValue.serverTimestamp(),
         'location': {
-          'lat': widget.latitude ?? 0.0,
-          'lng': widget.longitude ?? 0.0,
-          'areaName': widget.areaName ?? 'Unknown Area',
+          'lat': _reportLatitude ?? widget.latitude ?? 0.0,
+          'lng': _reportLongitude ?? widget.longitude ?? 0.0,
+          'areaName': _reportAreaName ?? widget.areaName ?? 'Farm Field',
         },
+        'lat': _reportLatitude ?? widget.latitude ?? 0.0,
+        'lng': _reportLongitude ?? widget.longitude ?? 0.0,
       };
 
       final docRef = await FirebaseFirestore.instance
@@ -1861,7 +1930,22 @@ class _AIResultScreenState extends State<AIResultScreen>
                         _assignedCycleId = returnedData['cycleId'];
                         _assignedDap = returnedData['dap'];
                         _assignedGrowthStage = returnedData['growthStage'];
+                        if (returnedData['fieldId'] != null && returnedData['fieldId'].toString().isNotEmpty) {
+                          _assignedFieldId = returnedData['fieldId'].toString();
+                        }
+                        if (returnedData['fieldName'] != null && returnedData['fieldName'].toString().isNotEmpty) {
+                          _assignedFieldName = returnedData['fieldName'].toString();
+                        }
+                        if (returnedData['farmId'] != null && returnedData['farmId'].toString().isNotEmpty) {
+                          _assignedFarmId = returnedData['farmId'].toString();
+                        }
+                        if (returnedData['farmName'] != null && returnedData['farmName'].toString().isNotEmpty) {
+                          _assignedFarmName = returnedData['farmName'].toString();
+                        }
                       });
+                      if (_assignedFieldId != null && _assignedFieldId!.isNotEmpty) {
+                        _resolveFieldCoordinates(_assignedFieldId!);
+                      }
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(

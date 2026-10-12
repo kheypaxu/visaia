@@ -6,9 +6,13 @@ import 'package:visaia/services/api_service.dart';
 import 'package:visaia/screens/logging_screens/ai_result.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:visaia/services/auth_cache_service.dart';
 import 'package:visaia/services/connectivity_service.dart';
+import 'package:visaia/services/firestore_safe_ext.dart';
 import 'package:visaia/services/offline_sync_service.dart';
+import 'package:visaia/utils/geo_utils.dart';
 
 /// Full-screen cinematic loading overlay shown while the AI analyzes the image.
 /// Push this as a transparent route over UploadPestScreen, then it will
@@ -18,6 +22,13 @@ class AnalyzingScreen extends StatefulWidget {
   final String userId;
   final String? sourceContext;
   final String? pestType;
+  final String? fieldId;
+  final String? fieldName;
+  final String? farmId;
+  final String? farmName;
+  final double? latitude;
+  final double? longitude;
+  final String? areaName;
 
   const AnalyzingScreen({
     super.key,
@@ -25,6 +36,13 @@ class AnalyzingScreen extends StatefulWidget {
     required this.userId,
     this.sourceContext,
     this.pestType,
+    this.fieldId,
+    this.fieldName,
+    this.farmId,
+    this.farmName,
+    this.latitude,
+    this.longitude,
+    this.areaName,
   });
 
   @override
@@ -144,8 +162,17 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
       await Future.delayed(const Duration(milliseconds: 400));
       if (!mounted) return;
 
-      // Get current location
-      final locationData = await _getCurrentLocation();
+      // Prioritize verified field location if provided
+      LocationData locationData;
+      if (widget.latitude != null && widget.longitude != null && widget.latitude != 0.0 && widget.longitude != 0.0) {
+        locationData = LocationData(
+          latitude: widget.latitude!,
+          longitude: widget.longitude!,
+          areaName: widget.areaName ?? widget.fieldName ?? 'Farm Field',
+        );
+      } else {
+        locationData = await _getCurrentLocation();
+      }
       
       // Ensure scientificName is not null
       final scientificName = result.scientificName.isNotEmpty 
@@ -175,6 +202,10 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
             latitude: locationData.latitude,
             longitude: locationData.longitude,
             areaName: locationData.areaName,
+            fieldId: widget.fieldId,
+            fieldName: widget.fieldName,
+            farmId: widget.farmId,
+            farmName: widget.farmName,
           ),
           transitionsBuilder: (_, anim, __, child) =>
               FadeTransition(opacity: anim, child: child),
@@ -189,13 +220,25 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
 
   Future<void> _handleOfflinePestReport() async {
     try {
-      final locationData = await _getCurrentLocation();
+      LocationData locationData;
+      if (widget.latitude != null && widget.longitude != null && widget.latitude != 0.0 && widget.longitude != 0.0) {
+        locationData = LocationData(
+          latitude: widget.latitude!,
+          longitude: widget.longitude!,
+          areaName: widget.areaName ?? widget.fieldName ?? 'Farm Field',
+        );
+      } else {
+        locationData = await _getCurrentLocation();
+      }
       final cacheService = AuthCacheService();
 
       await OfflineSyncService().enqueuePestReport(
         imageFile: widget.imageFile,
         userId: widget.userId,
-        farmId: cacheService.cachedActiveFarmId,
+        farmId: widget.farmId ?? cacheService.cachedActiveFarmId,
+        farmName: widget.farmName ?? cacheService.cachedActiveFarmName,
+        fieldId: widget.fieldId,
+        fieldName: widget.fieldName,
         latitude: locationData.latitude,
         longitude: locationData.longitude,
         areaName: locationData.areaName,
@@ -292,68 +335,125 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
     return pestMap[pestName] ?? 'Species unidentified';
   }
 
-  // Add this method to get current location
+  // Helper method to get current location with farm and field containment guarantee
   Future<LocationData> _getCurrentLocation() async {
-    try {
-      // Check if location services are enabled
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        debugPrint('Location services are disabled');
-        return LocationData(latitude: 0.0, longitude: 0.0, areaName: 'Unknown');
-      }
-      
-      // Check and request permissions
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          debugPrint('Location permissions denied');
-          return LocationData(latitude: 0.0, longitude: 0.0, areaName: 'Unknown');
-        }
-      }
-      
-      if (permission == LocationPermission.deniedForever) {
-        debugPrint('Location permissions permanently denied');
-        return LocationData(latitude: 0.0, longitude: 0.0, areaName: 'Unknown');
-      }
-      
-      // Get current position
-      final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
-      
-      // Get area name from coordinates (reverse geocoding)
-      String areaName = 'Unknown Area';
-      try {
-        final placemarks = await placemarkFromCoordinates(
-          position.latitude,
-          position.longitude,
-        );
-        
-        // Replace the areaName fallback in _getCurrentLocation()
-        if (placemarks.isNotEmpty) {
-          final place = placemarks.first;
-          List<String> locationParts = [];
-          
-          if (place.subLocality?.isNotEmpty == true) locationParts.add(place.subLocality!);
-          if (place.locality?.isNotEmpty == true) locationParts.add(place.locality!);
-          if (place.administrativeArea?.isNotEmpty == true) locationParts.add(place.administrativeArea!);
-          if (place.country?.isNotEmpty == true) locationParts.add(place.country!); // add country as last resort
-          
-          areaName = locationParts.isNotEmpty ? locationParts.join(', ') : 'Location ${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
-        }
-      } catch (e) {
-        debugPrint('Reverse geocoding error: $e');
-      }
-      
+    // 1. If explicit field coordinates were passed to widget, use them directly
+    if (widget.latitude != null &&
+        widget.longitude != null &&
+        widget.latitude != 0.0 &&
+        widget.longitude != 0.0) {
       return LocationData(
-        latitude: position.latitude,
-        longitude: position.longitude,
-        areaName: areaName,
+        latitude: widget.latitude!,
+        longitude: widget.longitude!,
+        areaName: widget.areaName ?? widget.fieldName ?? 'Farm Field',
       );
+    }
+
+    try {
+      // 2. Fetch the user's fields from Firestore (offline safe)
+      final fieldsSnapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('fields')
+          .safeGet();
+
+      final List<Map<String, dynamic>> userFields = [];
+      for (final doc in fieldsSnapshot.docs) {
+        final data = doc.data();
+        final rawBounds = data['boundaries'];
+        final List<LatLng> boundaries = [];
+        if (rawBounds is List) {
+          for (final p in rawBounds) {
+            if (p is Map) {
+              final lat = (p['lat'] ?? p['latitude'] as num?)?.toDouble() ?? 0.0;
+              final lng = (p['lng'] ?? p['longitude'] as num?)?.toDouble() ?? 0.0;
+              if (lat != 0.0 || lng != 0.0) boundaries.add(LatLng(lat, lng));
+            }
+          }
+        }
+        if (boundaries.isNotEmpty) {
+          userFields.add({
+            'name': data['name'] ?? 'Field',
+            'boundaries': boundaries,
+            'center': GeoUtils.calculatePolygonCenter(boundaries),
+          });
+        }
+      }
+
+      // Check device GPS
+      Position? position;
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (serviceEnabled) {
+        LocationPermission permission = await Geolocator.checkPermission();
+        if (permission == LocationPermission.denied) {
+          permission = await Geolocator.requestPermission();
+        }
+        if (permission == LocationPermission.always ||
+            permission == LocationPermission.whileInUse) {
+          try {
+            position = await Geolocator.getCurrentPosition(
+              locationSettings:
+                  const LocationSettings(accuracy: LocationAccuracy.high),
+            ).timeout(const Duration(seconds: 4));
+          } catch (_) {}
+        }
+      }
+
+      // If device GPS is available, verify if user is physically INSIDE one of their fields
+      if (position != null && userFields.isNotEmpty) {
+        final userLatLng = LatLng(position.latitude, position.longitude);
+        for (final field in userFields) {
+          final bounds = field['boundaries'] as List<LatLng>;
+          if (GeoUtils.isPointInPolygon(userLatLng, bounds)) {
+            return LocationData(
+              latitude: position.latitude,
+              longitude: position.longitude,
+              areaName: field['name'] as String,
+            );
+          }
+        }
+      }
+
+      // If user is far away or outside fields, NEVER use the faraway position!
+      // Place the coordinates strictly within the user's field space (centroid)
+      if (userFields.isNotEmpty) {
+        final targetField = userFields.first;
+        final LatLng center = targetField['center'] as LatLng;
+        return LocationData(
+          latitude: center.latitude,
+          longitude: center.longitude,
+          areaName: targetField['name'] as String,
+        );
+      }
+
+      // Fallback if no fields exist
+      if (position != null) {
+        String areaName = 'Farm Location';
+        try {
+          final placemarks = await placemarkFromCoordinates(
+            position.latitude,
+            position.longitude,
+          );
+          if (placemarks.isNotEmpty) {
+            final place = placemarks.first;
+            List<String> locationParts = [];
+            if (place.subLocality?.isNotEmpty == true) locationParts.add(place.subLocality!);
+            if (place.locality?.isNotEmpty == true) locationParts.add(place.locality!);
+            areaName = locationParts.isNotEmpty ? locationParts.join(', ') : 'Farm Location';
+          }
+        } catch (_) {}
+
+        return LocationData(
+          latitude: position.latitude,
+          longitude: position.longitude,
+          areaName: areaName,
+        );
+      }
+
+      return LocationData(latitude: 0.0, longitude: 0.0, areaName: 'Farm Field');
     } catch (e) {
       debugPrint('Error getting location: $e');
-      return LocationData(latitude: 0.0, longitude: 0.0, areaName: 'Unknown');
+      return LocationData(latitude: 0.0, longitude: 0.0, areaName: 'Farm Field');
     }
   }
 

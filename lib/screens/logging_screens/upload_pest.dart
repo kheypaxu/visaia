@@ -2,7 +2,16 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:provider/provider.dart';
+import 'package:visaia/core/providers/farm_provider.dart';
 import 'package:visaia/screens/logging_screens/analyzing.dart';
+import 'package:visaia/services/auth_cache_service.dart';
+import 'package:visaia/services/firestore_safe_ext.dart';
+import 'package:visaia/utils/geo_utils.dart';
 
 class UploadPestScreen extends StatefulWidget {
   final String? userId;
@@ -17,6 +26,10 @@ class _UploadPestScreenState extends State<UploadPestScreen>
   final ImagePicker _picker = ImagePicker();
   XFile? _image;
 
+  Map<String, dynamic>? _anchoredField;
+  LatLng? _anchoredCoordinates;
+  String? _anchoredAreaName;
+
   static const _green = Color(0xFF1A5C30);
   static const _lightGreen = Color(0xFFEAF3DE);
   static const _accentGreen = Color(0xFF4E9F3D);
@@ -24,6 +37,173 @@ class _UploadPestScreenState extends State<UploadPestScreen>
   static const _mutedText = Color(0xFF5E6266);
   static const _borderColor = Color(0xFFE8EAE5);
   static const _cardWhite = Color(0xFFFFFFFF);
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadFieldsAndDetectLocation();
+    });
+  }
+
+  Future<void> _loadFieldsAndDetectLocation() async {
+    final uid = widget.userId ??
+        FirebaseAuth.instance.currentUser?.uid ??
+        AuthCacheService().cachedUid;
+    if (uid == null || uid.isEmpty) return;
+
+    try {
+      final farmProvider = Provider.of<FarmProvider>(context, listen: false);
+      final activeFarmId =
+          farmProvider.activeFarmId ?? AuthCacheService().cachedActiveFarmId;
+      final activeFarmName = farmProvider.activeFarmName ??
+          AuthCacheService().cachedActiveFarmName ??
+          'My Farm';
+
+      // 1. Fetch user's fields from Firestore (offline safe)
+      final fieldsSnapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('fields')
+          .safeGet();
+
+      final List<Map<String, dynamic>> parsedFields = [];
+      for (final doc in fieldsSnapshot.docs) {
+        final data = doc.data();
+        final rawBounds = data['boundaries'];
+        final List<LatLng> boundaries = [];
+        if (rawBounds is List) {
+          for (final p in rawBounds) {
+            if (p is Map) {
+              final lat =
+                  (p['lat'] ?? p['latitude'] as num?)?.toDouble() ?? 0.0;
+              final lng =
+                  (p['lng'] ?? p['longitude'] as num?)?.toDouble() ?? 0.0;
+              if (lat != 0.0 || lng != 0.0) boundaries.add(LatLng(lat, lng));
+            }
+          }
+        }
+        if (boundaries.isNotEmpty) {
+          parsedFields.add({
+            'id': doc.id,
+            'name': data['name'] ?? 'Field',
+            'farmId': data['farmId'] ?? activeFarmId,
+            'farmName': activeFarmName,
+            'boundaries': boundaries,
+            'center': GeoUtils.calculatePolygonCenter(boundaries),
+            'acres': (data['acres'] as num?)?.toDouble() ?? 0.0,
+            'crop': data['crop'],
+          });
+        }
+      }
+
+      // Prioritize active farm fields
+      List<Map<String, dynamic>> targetFields = parsedFields;
+      if (activeFarmId != null && activeFarmId.isNotEmpty) {
+        final filtered =
+            parsedFields.where((f) => f['farmId'] == activeFarmId).toList();
+        if (filtered.isNotEmpty) {
+          targetFields = filtered;
+        }
+      }
+
+      // Fallback: If no fields configured, check farm boundaries
+      List<LatLng> farmBoundaries = [];
+      LatLng? farmCenter;
+      if (targetFields.isEmpty && activeFarmId != null && activeFarmId.isNotEmpty) {
+        final farmDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('farms')
+            .doc(activeFarmId)
+            .safeGet();
+        if (farmDoc.exists) {
+          final rawFarmBounds = farmDoc.data()?['boundaries'];
+          if (rawFarmBounds is List) {
+            for (final p in rawFarmBounds) {
+              if (p is Map) {
+                final lat = (p['lat'] ?? p['latitude'] as num?)?.toDouble() ?? 0.0;
+                final lng = (p['lng'] ?? p['longitude'] as num?)?.toDouble() ?? 0.0;
+                if (lat != 0.0 || lng != 0.0) farmBoundaries.add(LatLng(lat, lng));
+              }
+            }
+          }
+          if (farmBoundaries.isNotEmpty) {
+            farmCenter = GeoUtils.calculatePolygonCenter(farmBoundaries);
+          }
+        }
+      }
+
+      // 2. Check device GPS
+      Position? position;
+      try {
+        final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+        if (serviceEnabled) {
+          LocationPermission permission = await Geolocator.checkPermission();
+          if (permission == LocationPermission.denied) {
+            permission = await Geolocator.requestPermission();
+          }
+          if (permission == LocationPermission.always ||
+              permission == LocationPermission.whileInUse) {
+            position = await Geolocator.getCurrentPosition(
+              locationSettings:
+                  const LocationSettings(accuracy: LocationAccuracy.high),
+            ).timeout(const Duration(seconds: 4));
+          }
+        }
+      } catch (_) {}
+
+      LatLng? devLoc;
+      if (position != null) {
+        devLoc = LatLng(position.latitude, position.longitude);
+      }
+
+      Map<String, dynamic>? matchedField;
+      LatLng? resolvedCoords;
+
+      // Check if user is physically inside one of their fields
+      if (devLoc != null && targetFields.isNotEmpty) {
+        for (final field in targetFields) {
+          final bounds = field['boundaries'] as List<LatLng>;
+          if (GeoUtils.isPointInPolygon(devLoc, bounds)) {
+            matchedField = field;
+            resolvedCoords = devLoc;
+            break;
+          }
+        }
+      }
+
+      // Check if user is inside farm boundaries
+      if (resolvedCoords == null && devLoc != null && farmBoundaries.isNotEmpty) {
+        if (GeoUtils.isPointInPolygon(devLoc, farmBoundaries)) {
+          resolvedCoords = devLoc;
+        }
+      }
+
+      // If user is far away or outside farm/fields:
+      // AUTOMATICALLY ANCHOR DIRECTLY ONTO THE FIELD OR FARM ITSELF!
+      if (resolvedCoords == null) {
+        if (targetFields.isNotEmpty) {
+          matchedField = targetFields.first;
+          resolvedCoords = matchedField['center'] as LatLng;
+        } else if (farmCenter != null) {
+          resolvedCoords = farmCenter;
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _anchoredField = matchedField;
+          _anchoredCoordinates = resolvedCoords;
+          _anchoredAreaName = matchedField != null
+              ? '${matchedField['name']}, ${matchedField['farmName'] ?? activeFarmName}'
+              : activeFarmName;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error anchoring location to farm/field: $e');
+    }
+  }
 
   Future<void> _pickFromCamera() async {
     final XFile? image = await _picker.pickImage(
@@ -67,6 +247,9 @@ class _UploadPestScreenState extends State<UploadPestScreen>
       return;
     }
 
+    final field = _anchoredField;
+    final LatLng? coords = _anchoredCoordinates;
+
     Navigator.push(
       context,
       PageRouteBuilder(
@@ -74,6 +257,16 @@ class _UploadPestScreenState extends State<UploadPestScreen>
         pageBuilder: (_, __, ___) => AnalyzingScreen(
           imageFile: imageFile,
           userId: widget.userId!,
+          fieldId: field?['id'],
+          fieldName: field?['name'],
+          farmId: field?['farmId'],
+          farmName: field?['farmName'],
+          latitude: coords?.latitude,
+          longitude: coords?.longitude,
+          areaName: _anchoredAreaName ??
+              (field != null
+                  ? '${field['name']}, ${field['farmName'] ?? 'Farm'}'
+                  : null),
         ),
         transitionsBuilder: (_, anim, __, child) =>
             FadeTransition(opacity: anim, child: child),

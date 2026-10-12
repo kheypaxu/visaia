@@ -83,4 +83,37 @@ class GeoUtils {
     }
     return false;
   }
+
+  /// Ray-casting algorithm to test whether a given [point] is inside a [polygon].
+  static bool isPointInPolygon(LatLng point, List<LatLng> polygon) {
+    if (polygon.length < 3) return false;
+    bool inside = false;
+    final double x = point.longitude;
+    final double y = point.latitude;
+    int j = polygon.length - 1;
+    for (int i = 0; i < polygon.length; i++) {
+      final double xi = polygon[i].longitude;
+      final double yi = polygon[i].latitude;
+      final double xj = polygon[j].longitude;
+      final double yj = polygon[j].latitude;
+
+      final bool intersect = ((yi > y) != (yj > y)) &&
+          (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+      if (intersect) inside = !inside;
+      j = i;
+    }
+    return inside;
+  }
+
+  /// Calculates the centroid/center of polygon vertices.
+  static LatLng calculatePolygonCenter(List<LatLng> points) {
+    if (points.isEmpty) return const LatLng(0, 0);
+    double sumLat = 0;
+    double sumLng = 0;
+    for (final p in points) {
+      sumLat += p.latitude;
+      sumLng += p.longitude;
+    }
+    return LatLng(sumLat / points.length, sumLng / points.length);
+  }
 }

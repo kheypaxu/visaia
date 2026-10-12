@@ -268,6 +268,9 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
           'id': doc.id,
           'name': data['cycleName'] ?? 'Unnamed',
           'fieldName': data['fieldName'] ?? '',
+          'fieldId': data['fieldId'] ?? '',
+          'farmId': data['farmId'] ?? '',
+          'farmName': data['farmName'] ?? '',
           'plantingDate': (data['plantingDate'] as Timestamp?)?.toDate(),
           'harvestDate': (data['harvestDate'] as Timestamp?)?.toDate(),
         };
@@ -710,9 +713,15 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
           ),
         );
 
-        // Return the cycleId along with DAP and growth stage to AIResultScreen
+        // Return the cycleId along with DAP, growth stage, and field metadata to AIResultScreen
+        final selectedCycle = _selectedCycle;
         Navigator.pop(context, {
           'cycleId': _selectedCycleId,
+          'cycleName': selectedCycle?['name'],
+          'fieldId': selectedCycle?['fieldId'],
+          'fieldName': selectedCycle?['fieldName'],
+          'farmId': selectedCycle?['farmId'],
+          'farmName': selectedCycle?['farmName'],
           'dap': dap,
           'growthStage': growthStage,
           'growthStageDisplay': growthStageDisplay,
