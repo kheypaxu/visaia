@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:visaia/services/api_service.dart';
+import 'package:visaia/services/auth_cache_service.dart';
 import 'package:visaia/services/connectivity_service.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 
@@ -71,7 +73,7 @@ class QueuedOfflineItem {
         docId: json['docId'] as String?,
         type: json['type'] as String? ?? 'pest_report',
         imagePath: json['imagePath'] as String,
-        userId: json['userId'] as String,
+        userId: json['userId'] as String? ?? '',
         farmId: json['farmId'] as String?,
         farmName: json['farmName'] as String?,
         fieldId: json['fieldId'] as String?,
@@ -100,7 +102,63 @@ class OfflineSyncService {
   final ValueNotifier<String?> syncStatusMessage = ValueNotifier<String?>(null);
 
   final List<QueuedOfflineItem> _queue = [];
-  List<QueuedOfflineItem> get queue => List.unmodifiable(_queue);
+
+  String? _activeUserId;
+
+  /// Returns the current active user ID from explicit context, Firebase Auth,
+  /// or authenticated offline cache session.
+  String? get currentUserId {
+    if (_activeUserId != null && _activeUserId!.isNotEmpty) {
+      return _activeUserId;
+    }
+    final fbUid = FirebaseAuth.instance.currentUser?.uid;
+    if (fbUid != null && fbUid.isNotEmpty) {
+      return fbUid;
+    }
+    try {
+      final authCache = AuthCacheService();
+      if ((authCache.isOfflineSessionActive || authCache.hasCachedSession) &&
+          authCache.cachedUid != null &&
+          authCache.cachedUid!.isNotEmpty) {
+        return authCache.cachedUid;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Explicitly sets or updates the active user context (e.g. on login/logout or screen load).
+  void updateCurrentUser(String? uid) {
+    if (_activeUserId != uid) {
+      _activeUserId = uid;
+      _updatePendingCount();
+    }
+  }
+
+  /// Recomputes pending count for the current user.
+  void refresh() {
+    _updatePendingCount();
+  }
+
+  /// Returns queued offline items belonging to the currently active user.
+  List<QueuedOfflineItem> get queue {
+    final uid = currentUserId;
+    if (uid == null || uid.isEmpty) return const [];
+    return List.unmodifiable(_queue.where((i) => i.userId == uid));
+  }
+
+  /// Returns all queued offline items across all accounts (for internal device storage management).
+  List<QueuedOfflineItem> get allQueueItems => List.unmodifiable(_queue);
+
+  /// Returns the count of pending items for a specific user ID, or the current user if omitted.
+  int getPendingCount([String? forUserId]) {
+    final uid = forUserId ?? currentUserId;
+    if (uid == null || uid.isEmpty) return 0;
+    return _queue.where((i) => i.userId == uid && i.status != 'synced').length;
+  }
+
+  void _updatePendingCount() {
+    pendingSyncCount.value = getPendingCount();
+  }
 
   bool _isInitialized = false;
 
@@ -110,17 +168,30 @@ class OfflineSyncService {
 
     await _loadQueue();
 
-    // Listen to network reconnection events to trigger auto-sync
-    ConnectivityService().onConnectivityRestored.listen((isOnline) {
-      if (isOnline && _queue.isNotEmpty) {
-        debugPrint('🔄 Online restored: Auto-triggering offline sync queue (${_queue.length} items)');
-        syncAll();
+    // Listen to Firebase Auth state changes so pending count stays scoped to the logged-in user
+    FirebaseAuth.instance.authStateChanges().listen((user) {
+      _activeUserId = user?.uid;
+      _updatePendingCount();
+
+      // If user logs in while online and has pending items, attempt auto-sync for that user
+      if (user != null && ConnectivityService().isOnline && getPendingCount(user.uid) > 0) {
+        Future.delayed(const Duration(seconds: 2), () => syncAll(forUserId: user.uid));
       }
     });
 
-    // If already online on startup and has pending items, attempt sync
-    if (ConnectivityService().isOnline && _queue.isNotEmpty) {
-      Future.delayed(const Duration(seconds: 2), () => syncAll());
+    // Listen to network reconnection events to trigger auto-sync for the current user only
+    ConnectivityService().onConnectivityRestored.listen((isOnline) {
+      final uid = currentUserId;
+      if (isOnline && uid != null && uid.isNotEmpty && getPendingCount(uid) > 0) {
+        debugPrint('🔄 Online restored: Auto-triggering offline sync queue for $uid (${getPendingCount(uid)} items)');
+        syncAll(forUserId: uid);
+      }
+    });
+
+    // If already online on startup and current user has pending items, attempt sync
+    final startupUid = currentUserId;
+    if (ConnectivityService().isOnline && startupUid != null && getPendingCount(startupUid) > 0) {
+      Future.delayed(const Duration(seconds: 2), () => syncAll(forUserId: startupUid));
     }
   }
 
@@ -137,7 +208,7 @@ class OfflineSyncService {
           debugPrint('Error parsing queued item: $e');
         }
       }
-      pendingSyncCount.value = _queue.where((i) => i.status != 'synced').length;
+      _updatePendingCount();
     } catch (e) {
       debugPrint('Error loading sync queue: $e');
     }
@@ -148,7 +219,7 @@ class OfflineSyncService {
       final prefs = await SharedPreferences.getInstance();
       final stringList = _queue.map((item) => jsonEncode(item.toJson())).toList();
       await prefs.setStringList(_queuePrefsKey, stringList);
-      pendingSyncCount.value = _queue.where((i) => i.status != 'synced').length;
+      _updatePendingCount();
     } catch (e) {
       debugPrint('Error saving sync queue: $e');
     }
@@ -239,22 +310,32 @@ class OfflineSyncService {
       timestamp: DateTime.now().millisecondsSinceEpoch,
     );
 
+    _activeUserId = userId;
     _queue.add(item);
     await _saveQueue();
 
-    debugPrint('📦 Pest report queued for offline sync (ID: $itemId)');
+    debugPrint('📦 Pest report queued for offline sync (ID: $itemId, User: $userId)');
     return item;
   }
 
-  /// Synchronizes all queued offline items with the AI backend and Firestore.
-  Future<void> syncAll() async {
+  /// Synchronizes queued offline items belonging to the active user (or specified user) with the AI backend and Firestore.
+  Future<void> syncAll({String? forUserId}) async {
     if (isSyncing.value) return;
     if (!ConnectivityService().isOnline) {
       debugPrint('Cannot sync: Device is currently offline.');
       return;
     }
 
-    final pendingItems = _queue.where((i) => i.status != 'synced').toList();
+    final targetUserId = forUserId ?? currentUserId;
+    if (targetUserId == null || targetUserId.isEmpty) {
+      debugPrint('Cannot sync: No authenticated user session active.');
+      return;
+    }
+
+    // Only process items that belong to the active user
+    final pendingItems = _queue
+        .where((i) => i.userId == targetUserId && i.status != 'synced')
+        .toList();
     if (pendingItems.isEmpty) return;
 
     isSyncing.value = true;
@@ -281,7 +362,7 @@ class OfflineSyncService {
       await _saveQueue();
     }
 
-    // Clean up successfully synced items older than 1 hour or remove from list
+    // Clean up successfully synced items from queue
     _queue.removeWhere((item) => item.status == 'synced');
     await _saveQueue();
 
@@ -290,7 +371,7 @@ class OfflineSyncService {
         ? 'Successfully synced $successCount offline report(s)!'
         : null;
 
-    debugPrint('✅ Sync finished: $successCount synced successfully.');
+    debugPrint('✅ Sync finished for user $targetUserId: $successCount synced successfully.');
   }
 
   Future<void> _processPestReportItem(QueuedOfflineItem item) async {

@@ -21,6 +21,7 @@ class _OfflineBannerState extends State<OfflineBanner> {
   @override
   void initState() {
     super.initState();
+    _syncService.refresh();
     _connectivityService.onConnectivityRestored.listen((online) {
       if (online && mounted) {
         setState(() => _showBackOnline = true);

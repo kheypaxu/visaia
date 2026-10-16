@@ -13,6 +13,7 @@ class OfflineQueueSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final syncService = OfflineSyncService();
     final connectivityService = ConnectivityService();
+    syncService.refresh();
 
     return Container(
       constraints: BoxConstraints(

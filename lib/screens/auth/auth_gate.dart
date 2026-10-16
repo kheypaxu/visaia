@@ -3,9 +3,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:visaia/screens/auth/login_screen.dart';
 import 'package:visaia/screens/root_screen.dart';
 import 'package:visaia/services/auth_cache_service.dart';
+import 'package:visaia/services/offline_sync_service.dart';
 
 class AuthGate extends StatelessWidget {
-  const AuthGate({Key? key}) : super(key: key);
+  const AuthGate({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -13,6 +14,9 @@ class AuthGate extends StatelessWidget {
 
     // If offline session is explicitly active and has cached session
     if (cacheService.isOfflineSessionActive && cacheService.hasCachedSession) {
+      if (cacheService.cachedUid != null) {
+        OfflineSyncService().updateCurrentUser(cacheService.cachedUid);
+      }
       return const VisaiaAppRoot();
     }
 
@@ -30,12 +34,14 @@ class AuthGate extends StatelessWidget {
           // If the stream receives a valid user, transition to App Home
           if (snapshot.hasData && snapshot.data != null) {
             cacheService.isOfflineSessionActive = true;
+            OfflineSyncService().updateCurrentUser(snapshot.data!.uid);
             return const VisaiaAppRoot();
           }
 
           // If offline and previously cached session exists, let user in directly
           if (cacheService.hasCachedSession && cacheService.cachedUid != null) {
             cacheService.isOfflineSessionActive = true;
+            OfflineSyncService().updateCurrentUser(cacheService.cachedUid);
             return const VisaiaAppRoot();
           }
 

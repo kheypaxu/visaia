@@ -349,6 +349,7 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<FarmProvider>().init();
       _loadProfileImage();
+      _syncService.updateCurrentUser(userId);
     });
   }
 
@@ -636,7 +637,9 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
               ValueListenableBuilder<int>(
                 valueListenable: _syncService.pendingSyncCount,
                 builder: (context, pendingCount, _) {
-                  if (pendingCount == 0) return const SizedBox.shrink();
+                  // Only display sync button if the currently logged-in account has pending uploads
+                  final userPendingCount = _syncService.getPendingCount(userId);
+                  if (userPendingCount == 0 || userId.isEmpty) return const SizedBox.shrink();
                   return GestureDetector(
                     onTap: () {
                       showModalBottomSheet(
@@ -661,7 +664,7 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
                               size: 14, color: Color(0xFFB45309)),
                           const SizedBox(width: 4),
                           Text(
-                            '$pendingCount',
+                            '$userPendingCount',
                             style: GoogleFonts.inter(
                               color: const Color(0xFFB45309),
                               fontSize: 11,

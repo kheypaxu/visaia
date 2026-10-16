@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:visaia/services/auth_cache_service.dart';
 import 'package:visaia/services/connectivity_service.dart';
+import 'package:visaia/services/offline_sync_service.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -74,6 +75,7 @@ class AuthService {
       debugPrint('Firebase signout error: $e');
     }
     await _cacheService.clearActiveSession();
+    OfflineSyncService().updateCurrentUser(null);
   }
 
   // Get verification status from Firestore (farmers collection) with offline fallback
@@ -121,6 +123,10 @@ class AuthService {
       }
 
       _cacheService.isOfflineSessionActive = true;
+      final cachedUid = _cacheService.cachedUid;
+      if (cachedUid != null && cachedUid.isNotEmpty) {
+        OfflineSyncService().updateCurrentUser(cachedUid);
+      }
       return;
     }
 
@@ -195,6 +201,7 @@ class AuthService {
       activeFarmId: activeFarmId,
       activeFarmName: activeFarmName,
     );
+    OfflineSyncService().updateCurrentUser(uid);
   }
 
   // Error handling
