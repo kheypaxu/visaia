@@ -1,3 +1,4 @@
+import 'package:visaia/core/models/cycle_metrics.dart';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -38,6 +39,8 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
   double _totalYield = 0;
   double _totalLosses = 0;
   double _avgMarketPrice = 0;
+  double _netIncome = 0;
+  Map<String, double> _financialBreakdown = {};
   List<_CropItemInfo> _pendingAuditCrops = [];
   List<_CropItemInfo> _completedCrops = [];
   List<_MonthlyRevenue> _monthlyRevenues = [];
@@ -54,7 +57,8 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
   @override
   void didUpdateWidget(covariant IncomeEstimationScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.activeFarmId != widget.activeFarmId) {
+    if (oldWidget.userId != widget.userId ||
+        oldWidget.activeFarmId != widget.activeFarmId) {
       _loadData();
     }
   }
@@ -104,8 +108,14 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
       double grossIncome = 0;
       double totalYield = 0;
       double totalLosses = 0;
-      double totalPriceSum = 0;
-      int priceCount = 0;
+      double pricedYield = 0;
+      double pricedValue = 0;
+      double netTotal = 0;
+      final breakdown = <String, double>{};
+      void addAmount(String label, double amount) {
+        breakdown[label] = (breakdown[label] ?? 0) + amount;
+      }
+
       final Map<String, double> monthlyIncome = {};
       final List<String> completedCycleIds = [];
       final List<_CropItemInfo> pendingAuditCrops = [];
@@ -113,7 +123,8 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
 
       for (final doc in querySnap.docs) {
         final data = doc.data();
-        final isCompleted = data['isCompleted'] == true ||
+        final isCompleted =
+            data['isCompleted'] == true ||
             data['status'] == 'completed' ||
             data['status'] == 'harvested';
 
@@ -121,44 +132,42 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
         if (!isCompleted) continue;
 
         final isAuditCompleted = data['isAuditCompleted'] == true;
-        final cropVariety = data['cropVariety'] ?? data['cropType'] ?? 'Unknown Crop';
+        final cropVariety =
+            data['cropVariety'] ?? data['cropType'] ?? 'Unknown Crop';
         final fieldName = data['fieldName'] ?? 'Unknown Field';
 
-        final totalValue = (data['grossIncome'] as num?)?.toDouble() ??
-            (data['totalValue'] as num?)?.toDouble() ??
-            (data['income'] as num?)?.toDouble() ??
-            0;
-        final yield_ = (data['totalYield'] as num?)?.toDouble() ??
-            (data['goodYield'] as num?)?.toDouble() ??
-            (data['actualYield'] as num?)?.toDouble() ??
-            0;
-        final damagedYield = (data['damagedYield'] as num?)?.toDouble() ?? 0;
-        final marketPrice = (data['marketPrice'] as num?)?.toDouble() ?? 0;
-        final pestLoss = (data['damageCost'] as num?)?.toDouble() ??
-            (data['pestLoss'] as num?)?.toDouble() ??
-            0;
-        final otherLoss = (data['totalCycleCost'] as num?)?.toDouble() ??
-            (data['otherLoss'] as num?)?.toDouble() ??
-            0;
-        final netIncome = (data['netIncome'] as num?)?.toDouble() ?? (totalValue - pestLoss - otherLoss);
+        final finance = CycleFinance(data);
+        final totalValue = finance.gross;
+        final yieldKg = recordedYield(data) ?? 0;
+        final marketPrice = cycleNumber(data['marketPrice']) ?? 0;
+        final netIncome = finance.net;
 
         grossIncome += totalValue;
-        totalYield += yield_;
-        totalLosses += pestLoss + otherLoss + (damagedYield > 0 && marketPrice > 0 ? damagedYield * marketPrice : damagedYield);
-        if (marketPrice > 0) {
-          totalPriceSum += marketPrice;
-          priceCount++;
+        totalYield += yieldKg;
+        totalLosses += finance.damage + finance.costs;
+        netTotal += netIncome;
+        addAmount('Damage costs', -finance.damage);
+        addAmount('Control methods', -finance.control);
+        addAmount('Fertilizer', -finance.fertilizer);
+        addAmount('Seeds', -finance.seeds);
+        addAmount('Other expenses', -finance.other);
+        addAmount('Saved cycle cost adjustment', -finance.costAdjustment);
+        addAmount('Saved net income adjustment', finance.netAdjustment);
+        if (marketPrice > 0 && yieldKg > 0) {
+          pricedValue += marketPrice * yieldKg;
+          pricedYield += yieldKg;
         }
 
         completedCycleIds.add(doc.id);
 
-        final harvestTs = data['expectedHarvestDate'] ??
+        final harvestTs =
+            data['expectedHarvestDate'] ??
             data['harvestDate'] ??
             data['actualHarvestDate'] ??
             data['completedAt'] ??
             data['auditCompletedAt'];
         if (harvestTs is Timestamp) {
-          final monthKey = DateFormat('MMM').format(harvestTs.toDate());
+          final monthKey = DateFormat('yyyy-MM').format(harvestTs.toDate());
           monthlyIncome[monthKey] = (monthlyIncome[monthKey] ?? 0) + totalValue;
         }
 
@@ -178,11 +187,14 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
         }
       }
 
+      if (!mounted) return;
       setState(() {
         _grossIncome = grossIncome;
         _totalYield = totalYield;
         _totalLosses = totalLosses;
-        _avgMarketPrice = priceCount > 0 ? totalPriceSum / priceCount : 0;
+        _avgMarketPrice = pricedYield > 0 ? pricedValue / pricedYield : 0;
+        _netIncome = netTotal;
+        _financialBreakdown = breakdown;
         _pendingAuditCrops = pendingAuditCrops;
         _completedCrops = completedCrops;
         _completedCycleIds = completedCycleIds;
@@ -193,6 +205,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
       _updateMonthlyRevenues();
     } catch (e) {
       debugPrint('Error loading income data: $e');
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
         _errorMessage = _getUserFriendlyError(e);
@@ -208,9 +221,8 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
 
     for (int i = monthCount - 1; i >= 0; i--) {
       final month = DateTime(now.year, now.month - i, 1);
-      final key = DateFormat('MMM').format(month);
-      months.add(key);
-      months.length;
+      final key = DateFormat('yyyy-MM').format(month);
+      months.add(DateFormat('MMM').format(month));
       monthValues.add(_rawMonthlyIncome[key] ?? 0);
     }
 
@@ -228,7 +240,10 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
 
   String _formatCurrency(double value) {
     if (value == 0) return '\u20B10';
-    return '\u20B1${value.toStringAsFixed(0)}';
+    return NumberFormat.currency(
+      symbol: '\u20B1',
+      decimalDigits: 2,
+    ).format(value);
   }
 
   @override
@@ -254,246 +269,258 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _errorMessage != null
-              ? _buildErrorView()
-              : SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 20.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+          ? _buildErrorView()
+          : SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 20.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 10),
+                  Text(
+                    'Income Estimate',
+                    style: GoogleFonts.epilogue(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      color: darkGreen,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Financial summary and projections based on current yield estimates and market conditions.',
+                    style: GoogleFonts.manrope(
+                      fontSize: 14,
+                      color: textGray,
+                      height: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  ElevatedButton.icon(
+                    onPressed: _isExportingPdf ? null : _exportPdf,
+                    icon: _isExportingPdf
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.file_download_outlined, size: 20),
+                    label: Text(
+                      _isExportingPdf ? 'Generating...' : 'Export PDF',
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color.fromARGB(255, 240, 240, 240),
+                      foregroundColor: Colors.black,
+                      elevation: 5,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 30),
+
+                  _buildGrossIncomeCard(),
+
+                  const SizedBox(height: 30),
+
+                  _buildLossesCard(),
+
+                  const SizedBox(height: 30),
+
+                  Text(
+                    'Monthly Income Projection',
+                    style: GoogleFonts.epilogue(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.black,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Based on harvest schedules and forward contracts',
+                    style: GoogleFonts.manrope(color: textGray, fontSize: 14),
+                  ),
+                  const SizedBox(height: 15),
+
+                  Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE1E3E1).withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(25),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildToggleItem("6 Months", !_showOneYear, () {
+                          if (_showOneYear) {
+                            setState(() => _showOneYear = false);
+                            _updateMonthlyRevenues();
+                          }
+                        }),
+                        _buildToggleItem("1 Year", _showOneYear, () {
+                          if (!_showOneYear) {
+                            setState(() => _showOneYear = true);
+                            _updateMonthlyRevenues();
+                          }
+                        }),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+                  _buildRevenueChart(),
+
+                  const SizedBox(height: 32),
+
+                  // ─── 1. PENDING AUDIT SECTION ─────────────────────────
+                  Row(
                     children: [
-                      const SizedBox(height: 10),
                       Text(
-                        'Income Estimate',
-                        style: GoogleFonts.epilogue(
-                          fontSize: 22,
-                          fontWeight: FontWeight.w800,
-                          color: darkGreen,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Financial summary and projections based on current yield estimates and market conditions.',
-                        style: GoogleFonts.manrope(
-                          fontSize: 14,
-                          color: textGray,
-                          height: 1.5,
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-
-                      ElevatedButton.icon(
-                        onPressed: _isExportingPdf ? null : _exportPdf,
-                        icon: _isExportingPdf
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.file_download_outlined, size: 20),
-                        label: Text(_isExportingPdf ? 'Generating...' : 'Export PDF'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color.fromARGB(255, 240, 240, 240),
-                          foregroundColor: Colors.black,
-                          elevation: 5,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(20)),
-                        ),
-                      ),
-
-                      const SizedBox(height: 30),
-
-                      _buildGrossIncomeCard(),
-
-                      const SizedBox(height: 30),
-
-                      _buildLossesCard(),
-
-                      const SizedBox(height: 30),
-
-                      Text(
-                        'Monthly Income Projection',
+                        'Pending Audit',
                         style: GoogleFonts.epilogue(
                           fontSize: 18,
                           fontWeight: FontWeight.w700,
                           color: Colors.black,
                         ),
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Based on harvest schedules and forward contracts',
-                        style: GoogleFonts.manrope(color: textGray, fontSize: 14),
-                      ),
-                      const SizedBox(height: 15),
-
-                      Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFE1E3E1).withValues(alpha: 0.5),
-                          borderRadius: BorderRadius.circular(25),
+                      if (_pendingAuditCrops.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFEF3C7),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFF59E0B)),
+                          ),
+                          child: Text(
+                            '${_pendingAuditCrops.length} Pending',
+                            style: GoogleFonts.manrope(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: const Color(0xFFB45309),
+                            ),
+                          ),
                         ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Harvested crops awaiting financial verification. Complete the audit to finalize records.',
+                    style: GoogleFonts.manrope(color: textGray, fontSize: 13),
+                  ),
+                  const SizedBox(height: 16),
+
+                  if (_pendingAuditCrops.isEmpty)
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 22,
+                        horizontal: 20,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: const Color(0xFFE8EAE6)),
+                      ),
+                      child: Center(
                         child: Row(
-                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            _buildToggleItem("6 Months", !_showOneYear, () {
-                              if (_showOneYear) {
-                                setState(() => _showOneYear = false);
-                                _updateMonthlyRevenues();
-                              }
-                            }),
-                            _buildToggleItem("1 Year", _showOneYear, () {
-                              if (!_showOneYear) {
-                                setState(() => _showOneYear = true);
-                                _updateMonthlyRevenues();
-                              }
-                            }),
-                          ],
-                        ),
-                      ),
-
-                      const SizedBox(height: 20),
-                      _buildRevenueChart(),
-
-                      const SizedBox(height: 32),
-
-                      // ─── 1. PENDING AUDIT SECTION ─────────────────────────
-                      Row(
-                        children: [
-                          Text(
-                            'Pending Audit',
-                            style: GoogleFonts.epilogue(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.black,
+                            const Icon(
+                              Icons.check_circle_outline_rounded,
+                              color: Color(0xFF2E7D32),
+                              size: 18,
                             ),
-                          ),
-                          if (_pendingAuditCrops.isNotEmpty) ...[
                             const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFFEF3C7),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: const Color(0xFFF59E0B)),
-                              ),
-                              child: Text(
-                                '${_pendingAuditCrops.length} Pending',
-                                style: GoogleFonts.manrope(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                  color: const Color(0xFFB45309),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Harvested crops awaiting financial verification. Complete the audit to finalize records.',
-                        style: GoogleFonts.manrope(color: textGray, fontSize: 13),
-                      ),
-                      const SizedBox(height: 16),
-
-                      if (_pendingAuditCrops.isEmpty)
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(vertical: 22, horizontal: 20),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: const Color(0xFFE8EAE6)),
-                          ),
-                          child: Center(
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(Icons.check_circle_outline_rounded, color: Color(0xFF2E7D32), size: 18),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'All harvested crops have been audited',
-                                  style: GoogleFonts.manrope(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: textGray,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        )
-                      else
-                        ..._pendingAuditCrops.map(
-                          (crop) => _buildCropCard(crop),
-                        ),
-
-                      const SizedBox(height: 32),
-
-                      // ─── 2. COMPLETED CROPS SECTION ───────────────────────
-                      Row(
-                        children: [
-                          Text(
-                            'Completed Crops',
-                            style: GoogleFonts.epilogue(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.black,
-                            ),
-                          ),
-                          if (_completedCrops.isNotEmpty) ...[
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFE8F5E9),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: const Color(0xFFA5D6A7)),
-                              ),
-                              child: Text(
-                                '${_completedCrops.length} Audited',
-                                style: GoogleFonts.manrope(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                  color: const Color(0xFF1B5E37),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Crops with audited and finalized financial figures (locked & read-only).',
-                        style: GoogleFonts.manrope(color: textGray, fontSize: 13),
-                      ),
-                      const SizedBox(height: 16),
-
-                      if (_completedCrops.isEmpty)
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(32),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: const Color(0xFFE8EAE6)),
-                          ),
-                          child: Center(
-                            child: Text(
-                              'No audited crops yet in this farm',
+                            Text(
+                              'All harvested crops have been audited',
                               style: GoogleFonts.manrope(
-                                fontSize: 13.5,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
                                 color: textGray,
                               ),
                             ),
-                          ),
-                        )
-                      else
-                        ..._completedCrops.map(
-                          (crop) => _buildCropCard(crop),
+                          ],
                         ),
+                      ),
+                    )
+                  else
+                    ..._pendingAuditCrops.map((crop) => _buildCropCard(crop)),
 
-                      const SizedBox(height: 40),
+                  const SizedBox(height: 32),
+
+                  // ─── 2. COMPLETED CROPS SECTION ───────────────────────
+                  Row(
+                    children: [
+                      Text(
+                        'Completed Crops',
+                        style: GoogleFonts.epilogue(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.black,
+                        ),
+                      ),
+                      if (_completedCrops.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE8F5E9),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFA5D6A7)),
+                          ),
+                          child: Text(
+                            '${_completedCrops.length} Audited',
+                            style: GoogleFonts.manrope(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: const Color(0xFF1B5E37),
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
-                ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Crops with audited and finalized financial figures (locked & read-only).',
+                    style: GoogleFonts.manrope(color: textGray, fontSize: 13),
+                  ),
+                  const SizedBox(height: 16),
+
+                  if (_completedCrops.isEmpty)
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(32),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: const Color(0xFFE8EAE6)),
+                      ),
+                      child: Center(
+                        child: Text(
+                          'No audited crops yet in this farm',
+                          style: GoogleFonts.manrope(
+                            fontSize: 13.5,
+                            color: textGray,
+                          ),
+                        ),
+                      ),
+                    )
+                  else
+                    ..._completedCrops.map((crop) => _buildCropCard(crop)),
+
+                  const SizedBox(height: 40),
+                ],
+              ),
+            ),
     );
   }
 
@@ -504,7 +531,11 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.error_outline, size: 64, color: deepRed.withValues(alpha: 0.7)),
+            Icon(
+              Icons.error_outline,
+              size: 64,
+              color: deepRed.withValues(alpha: 0.7),
+            ),
             const SizedBox(height: 20),
             Text(
               'Oops! Something went wrong',
@@ -532,8 +563,13 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: darkGreen,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 32,
+                  vertical: 14,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                ),
               ),
             ),
           ],
@@ -555,44 +591,71 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('GROSS INCOME ESTIMATE',
-                  style: GoogleFonts.inter(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                      color: textGray,
-                      letterSpacing: 1)),
+              Text(
+                'GROSS INCOME ESTIMATE',
+                style: GoogleFonts.inter(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                  color: textGray,
+                  letterSpacing: 1,
+                ),
+              ),
               Container(
                 padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
-                    color: accentGreen.withValues(alpha: 0.2),
-                    shape: BoxShape.circle),
-                child: const Icon(Icons.trending_up,
-                    color: Color.fromARGB(255, 76, 122, 29), size: 25),
-              )
+                  color: accentGreen.withValues(alpha: 0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.trending_up,
+                  color: Color.fromARGB(255, 76, 122, 29),
+                  size: 25,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 10),
-          Text(_formatCurrency(_grossIncome),
-              style: GoogleFonts.manrope(
-                  fontSize: 32,
-                  fontWeight: FontWeight.w800,
-                  color: darkGreen)),
+          Text(
+            _formatCurrency(_grossIncome),
+            style: GoogleFonts.manrope(
+              fontSize: 32,
+              fontWeight: FontWeight.w800,
+              color: darkGreen,
+            ),
+          ),
           if (_completedCycleIds.isNotEmpty)
-            Text('Based on ${_completedCycleIds.length} completed cycle(s)',
-                style: GoogleFonts.manrope(
-                    fontSize: 14,
-                    color: Colors.green[700],
-                    fontWeight: FontWeight.w700)),
+            Text(
+              'Based on ${_completedCycleIds.length} completed cycle(s)',
+              style: GoogleFonts.manrope(
+                fontSize: 14,
+                color: Colors.green[700],
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           const Divider(height: 40, color: Color(0xFFF1F1F1)),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               _buildMiniMetric(
-                  "Total Yield", "${_totalYield.toStringAsFixed(1)} Tons"),
-              _buildMiniMetric("Avg Market Price",
-                  _avgMarketPrice > 0 ? "\u20B1${_avgMarketPrice.toStringAsFixed(0)}/Ton" : "N/A"),
+                "Total Yield",
+                "${_totalYield.toStringAsFixed(1)} kg",
+              ),
+              _buildMiniMetric(
+                "Weighted price",
+                _avgMarketPrice > 0
+                    ? "\u20B1${_avgMarketPrice.toStringAsFixed(2)}/kg"
+                    : "N/A",
+              ),
             ],
-          )
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Gross income is the sum of financial-report harvest income. '
+            'Yield is recorded in kg; the price is weighted by harvest weight '
+            'for cycles with a recorded price. Their product is not the income formula. '
+            'Pending audits are included and may change.',
+            style: GoogleFonts.manrope(fontSize: 12, color: textGray),
+          ),
         ],
       ),
     );
@@ -611,35 +674,78 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('ESTIMATED LOSSES',
-                  style: GoogleFonts.manrope(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
-                      color: deepRed,
-                      letterSpacing: 0.7)),
-              const Icon(Icons.bug_report_outlined,
-                  color: deepRed, size: 20),
+              Text(
+                'COSTS & DEDUCTIONS',
+                style: GoogleFonts.manrope(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                  color: deepRed,
+                  letterSpacing: 0.7,
+                ),
+              ),
+              const Icon(Icons.bug_report_outlined, color: deepRed, size: 20),
             ],
           ),
-          Text('Primarily overall damage impact',
-              style: GoogleFonts.manrope(
-                  fontSize: 14, color: deepRed.withValues(alpha: 0.7))),
+          Text(
+            'Damage costs + cycle expenses',
+            style: GoogleFonts.manrope(
+              fontSize: 14,
+              color: deepRed.withValues(alpha: 0.7),
+            ),
+          ),
           const SizedBox(height: 22),
           Container(
             width: double.infinity,
-            padding:
-                const EdgeInsets.symmetric(vertical: 16, horizontal: 15),
+            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 15),
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.5),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: deepRed.withValues(alpha: 0.1)),
             ),
-            child: Text(_formatCurrency(-_totalLosses),
-                style: GoogleFonts.manrope(
-                    fontSize: 26,
-                    fontWeight: FontWeight.w800,
-                    color: deepRed)),
-          )
+            child: Text(
+              _formatCurrency(-_totalLosses),
+              style: GoogleFonts.manrope(
+                fontSize: 26,
+                fontWeight: FontWeight.w800,
+                color: deepRed,
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          _buildFinancialRow('Gross harvest income', _grossIncome),
+          for (final entry in _financialBreakdown.entries)
+            if (!entry.key.contains('adjustment') || entry.value.abs() >= 0.005)
+              _buildFinancialRow(entry.key, entry.value),
+          const Divider(),
+          _buildFinancialRow('Net income', _netIncome),
+          const SizedBox(height: 8),
+          Text(
+            'Net income = gross income - damage costs - cycle expenses '
+            '+ saved net adjustment (if any). Damaged harvest value is not deducted again. '
+            'Saved adjustments reconcile stored totals with itemized amounts.',
+            style: GoogleFonts.manrope(fontSize: 12, color: textGray),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFinancialRow(String label, double amount) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(label, style: GoogleFonts.manrope(fontSize: 13)),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            _formatCurrency(amount),
+            style: GoogleFonts.manrope(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
         ],
       ),
     );
@@ -655,7 +761,9 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(24),
         border: Border.all(
-          color: isPending ? const Color(0xFFF59E0B).withValues(alpha: 0.35) : const Color(0xFFE8EAE6),
+          color: isPending
+              ? const Color(0xFFF59E0B).withValues(alpha: 0.35)
+              : const Color(0xFFE8EAE6),
           width: isPending ? 1.2 : 1.0,
         ),
         boxShadow: isPending
@@ -709,21 +817,32 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
-                  color: isPending ? const Color(0xFFFEF3C7) : const Color(0xFFE8F5E9),
+                  color: isPending
+                      ? const Color(0xFFFEF3C7)
+                      : const Color(0xFFE8F5E9),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
-                    color: isPending ? const Color(0xFFF59E0B) : const Color(0xFFA5D6A7),
+                    color: isPending
+                        ? const Color(0xFFF59E0B)
+                        : const Color(0xFFA5D6A7),
                   ),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      isPending ? Icons.edit_note_rounded : Icons.verified_rounded,
+                      isPending
+                          ? Icons.edit_note_rounded
+                          : Icons.verified_rounded,
                       size: 14,
-                      color: isPending ? const Color(0xFFB45309) : const Color(0xFF1B5E37),
+                      color: isPending
+                          ? const Color(0xFFB45309)
+                          : const Color(0xFF1B5E37),
                     ),
                     const SizedBox(width: 4),
                     Text(
@@ -731,7 +850,9 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                       style: GoogleFonts.manrope(
                         fontSize: 11.5,
                         fontWeight: FontWeight.w700,
-                        color: isPending ? const Color(0xFFB45309) : const Color(0xFF1B5E37),
+                        color: isPending
+                            ? const Color(0xFFB45309)
+                            : const Color(0xFF1B5E37),
                       ),
                     ),
                   ],
@@ -742,7 +863,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
           const SizedBox(height: 20),
           InkWell(
             onTap: () async {
-              final result = await Navigator.push(
+              await Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (context) => CropFinanceScreen(
@@ -752,7 +873,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                   ),
                 ),
               );
-              if (result == true || mounted) {
+              if (mounted) {
                 _loadData();
               }
             },
@@ -761,20 +882,26 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
               width: double.infinity,
               height: 46,
               decoration: BoxDecoration(
-                color: isPending ? const Color(0xFF0D4D33) : const Color(0xFFF3F5EE),
+                color: isPending
+                    ? const Color(0xFF0D4D33)
+                    : const Color(0xFFF3F5EE),
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(
-                    isPending ? Icons.edit_document : Icons.arrow_forward_rounded,
+                    isPending
+                        ? Icons.edit_document
+                        : Icons.arrow_forward_rounded,
                     size: 16,
                     color: isPending ? Colors.white : darkGreen,
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    isPending ? 'Complete Financial Audit' : 'View Financial Report',
+                    isPending
+                        ? 'Complete Financial Audit'
+                        : 'View Financial Report',
                     style: GoogleFonts.manrope(
                       fontWeight: FontWeight.w800,
                       fontSize: 13.5,
@@ -796,23 +923,32 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-          color: Colors.white, borderRadius: BorderRadius.circular(24)),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+      ),
       child: Column(
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(_showOneYear ? 'Last 12 Months Revenue Flow' : 'Last 6 Months Revenue Flow',
-                  style:
-                      GoogleFonts.manrope(fontSize: 12, color: textGray)),
+              Text(
+                _showOneYear
+                    ? 'Last 12 Months Revenue Flow'
+                    : 'Last 6 Months Revenue Flow',
+                style: GoogleFonts.manrope(fontSize: 12, color: textGray),
+              ),
               Row(
                 children: [
-                  Text('Export',
-                      style: GoogleFonts.manrope(
-                          fontSize: 13, fontWeight: FontWeight.bold)),
+                  Text(
+                    'Export',
+                    style: GoogleFonts.manrope(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                   const Icon(Icons.download, size: 15),
                 ],
-              )
+              ),
             ],
           ),
           const SizedBox(height: 25),
@@ -822,7 +958,9 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
               child: Text(
                 'No completed cycles yet',
                 style: GoogleFonts.manrope(
-                    fontSize: 14, color: textGray.withValues(alpha: 0.6)),
+                  fontSize: 14,
+                  color: textGray.withValues(alpha: 0.6),
+                ),
               ),
             )
           else
@@ -832,7 +970,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
               children: _monthlyRevenues
                   .map((r) => _buildBar(r.month, r.level))
                   .toList(),
-            )
+            ),
         ],
       ),
     );
@@ -849,22 +987,28 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
               height: 100,
               width: _showOneYear ? 18 : 25,
               decoration: BoxDecoration(
-                  color: const Color(0xFFE1E3E1),
-                  borderRadius: BorderRadius.circular(_showOneYear ? 9 : 12.5)),
+                color: const Color(0xFFE1E3E1),
+                borderRadius: BorderRadius.circular(_showOneYear ? 9 : 12.5),
+              ),
             ),
             Container(
               height: height,
               width: _showOneYear ? 18 : 25,
               decoration: BoxDecoration(
-                  color: darkGreen,
-                  borderRadius: BorderRadius.circular(_showOneYear ? 9 : 12.5)),
+                color: darkGreen,
+                borderRadius: BorderRadius.circular(_showOneYear ? 9 : 12.5),
+              ),
             ),
           ],
         ),
         const SizedBox(height: 8),
-        Text(month,
-            style: GoogleFonts.manrope(
-                fontSize: _showOneYear ? 8 : 10, fontWeight: FontWeight.bold)),
+        Text(
+          month,
+          style: GoogleFonts.manrope(
+            fontSize: _showOneYear ? 8 : 10,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
       ],
     );
   }
@@ -873,14 +1017,15 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label,
-            style:
-                GoogleFonts.manrope(fontSize: 13, color: textGray)),
-        Text(value,
-            style: GoogleFonts.manrope(
-                fontSize: 16,
-                fontWeight: FontWeight.w800,
-                color: Colors.black)),
+        Text(label, style: GoogleFonts.manrope(fontSize: 13, color: textGray)),
+        Text(
+          value,
+          style: GoogleFonts.manrope(
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+            color: Colors.black,
+          ),
+        ),
       ],
     );
   }
@@ -894,14 +1039,22 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
           color: active ? Colors.white : Colors.transparent,
           borderRadius: BorderRadius.circular(20),
           boxShadow: active
-              ? [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 4)]
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 4,
+                  ),
+                ]
               : null,
         ),
-        child: Text(label,
-            style: GoogleFonts.manrope(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                color: active ? Colors.black : textGray)),
+        child: Text(
+          label,
+          style: GoogleFonts.manrope(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: active ? Colors.black : textGray,
+          ),
+        ),
       ),
     );
   }
@@ -921,13 +1074,19 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
           build: (pw.Context context) => [
             pw.Header(
               level: 0,
-              child: pw.Text('Income Estimation Report',
-                  style: pw.TextStyle(
-                      fontSize: 24, fontWeight: pw.FontWeight.bold)),
+              child: pw.Text(
+                'Income Estimation Report',
+                style: pw.TextStyle(
+                  fontSize: 24,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
             ),
             pw.SizedBox(height: 8),
-            pw.Text('Generated on: $dateStr',
-                style: const pw.TextStyle(fontSize: 12, color: PdfColors.grey700)),
+            pw.Text(
+              'Generated on: $dateStr',
+              style: const pw.TextStyle(fontSize: 12, color: PdfColors.grey700),
+            ),
             pw.SizedBox(height: 24),
 
             pw.Container(
@@ -939,20 +1098,30 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
               child: pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
-                  pw.Text('GROSS INCOME ESTIMATE',
-                      style: pw.TextStyle(
-                          fontSize: 14,
-                          fontWeight: pw.FontWeight.bold,
-                          color: PdfColors.grey700)),
+                  pw.Text(
+                    'GROSS INCOME ESTIMATE',
+                    style: pw.TextStyle(
+                      fontSize: 14,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.grey700,
+                    ),
+                  ),
                   pw.SizedBox(height: 8),
-                  pw.Text(_formatCurrency(_grossIncome),
-                      style: pw.TextStyle(
-                          fontSize: 32, fontWeight: pw.FontWeight.bold)),
+                  pw.Text(
+                    _formatCurrency(_grossIncome),
+                    style: pw.TextStyle(
+                      fontSize: 32,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
+                  ),
                   pw.SizedBox(height: 4),
                   pw.Text(
-                      'Based on ${_completedCycleIds.length} completed cycle(s)',
-                      style: const pw.TextStyle(
-                          fontSize: 12, color: PdfColors.green800)),
+                    'Based on ${_completedCycleIds.length} completed cycle(s)',
+                    style: const pw.TextStyle(
+                      fontSize: 12,
+                      color: PdfColors.green800,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -967,17 +1136,23 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
               child: pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
-                  pw.Text('ESTIMATED LOSSES',
-                      style: pw.TextStyle(
-                          fontSize: 14,
-                          fontWeight: pw.FontWeight.bold,
-                          color: PdfColors.red800)),
+                  pw.Text(
+                    'COSTS & DEDUCTIONS',
+                    style: pw.TextStyle(
+                      fontSize: 14,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.red800,
+                    ),
+                  ),
                   pw.SizedBox(height: 8),
-                  pw.Text(_formatCurrency(-_totalLosses),
-                      style: pw.TextStyle(
-                          fontSize: 26,
-                          fontWeight: pw.FontWeight.bold,
-                          color: PdfColors.red900)),
+                  pw.Text(
+                    _formatCurrency(-_totalLosses),
+                    style: pw.TextStyle(
+                      fontSize: 26,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.red900,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -985,37 +1160,48 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
 
             pw.TableHelper.fromTextArray(
               headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-              headerDecoration:
-                  const pw.BoxDecoration(color: PdfColors.grey200),
+              headerDecoration: const pw.BoxDecoration(
+                color: PdfColors.grey200,
+              ),
               cellPadding: const pw.EdgeInsets.all(8),
               headers: ['Metric', 'Value'],
               data: [
-                ['Total Yield', '${_totalYield.toStringAsFixed(1)} Tons'],
+                ['Gross harvest income', _formatCurrency(_grossIncome)],
+                for (final entry in _financialBreakdown.entries)
+                  if (!entry.key.contains('adjustment') ||
+                      entry.value.abs() >= 0.005)
+                    [entry.key, _formatCurrency(entry.value)],
+                ['Total Yield', '${_totalYield.toStringAsFixed(1)} kg'],
                 [
-                  'Avg Market Price',
+                  'Weighted price',
                   _avgMarketPrice > 0
-                      ? '\u20B1${_avgMarketPrice.toStringAsFixed(0)}/Ton'
-                      : 'N/A'
+                      ? '\u20B1${_avgMarketPrice.toStringAsFixed(2)}/kg'
+                      : 'N/A',
                 ],
-                [
-                  'Net Income',
-                  _formatCurrency(_grossIncome - _totalLosses)
-                ],
+                ['Net Income', _formatCurrency(_netIncome)],
                 ['Completed Cycles', '${_completedCycleIds.length}'],
                 ['Completed Crops', '${_completedCrops.length}'],
               ],
             ),
             pw.SizedBox(height: 24),
 
+            pw.Text(
+              'Net = gross harvest income - damage costs - cycle expenses + saved net adjustment. Pending audits are included. Yield is in kg; weighted price is informational, not the income formula.',
+            ),
             if (_completedCrops.isNotEmpty) ...[
-              pw.Text('Completed Crops',
-                  style: pw.TextStyle(
-                      fontSize: 16, fontWeight: pw.FontWeight.bold)),
+              pw.Text(
+                'Completed Crops',
+                style: pw.TextStyle(
+                  fontSize: 16,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
               pw.SizedBox(height: 12),
               pw.TableHelper.fromTextArray(
                 headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                headerDecoration:
-                    const pw.BoxDecoration(color: PdfColors.grey200),
+                headerDecoration: const pw.BoxDecoration(
+                  color: PdfColors.grey200,
+                ),
                 cellPadding: const pw.EdgeInsets.all(8),
                 headers: ['Crop', 'Field', 'Status'],
                 data: _completedCrops
@@ -1028,9 +1214,9 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
             pw.Divider(),
             pw.SizedBox(height: 8),
             pw.Text(
-                'This report was generated automatically. Values are estimates based on completed cycles.',
-                style: const pw.TextStyle(
-                    fontSize: 10, color: PdfColors.grey500)),
+              'This report was generated automatically. Values are estimates based on completed cycles.',
+              style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey500),
+            ),
           ],
         ),
       );
@@ -1053,7 +1239,9 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
             content: Text(_getUserFriendlyError(e)),
             backgroundColor: deepRed,
             behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
           ),
         );
       }

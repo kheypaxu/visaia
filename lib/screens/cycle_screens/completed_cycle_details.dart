@@ -1,3 +1,4 @@
+import 'package:visaia/core/models/cycle_metrics.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
@@ -27,13 +28,13 @@ class CompletedCycleScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: kBackground,
       body: SafeArea(
-        child: FutureBuilder<DocumentSnapshot>(
-          future: FirebaseFirestore.instance
+        child: StreamBuilder<DocumentSnapshot>(
+          stream: FirebaseFirestore.instance
               .collection('users')
               .doc(userId)
               .collection('cycles')
               .doc(cycleId)
-              .get(),
+              .snapshots(),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(
@@ -41,7 +42,9 @@ class CompletedCycleScreen extends StatelessWidget {
               );
             }
 
-            if (snapshot.hasError || !snapshot.hasData || !snapshot.data!.exists) {
+            if (snapshot.hasError ||
+                !snapshot.hasData ||
+                !snapshot.data!.exists) {
               return Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -66,7 +69,26 @@ class CompletedCycleScreen extends StatelessWidget {
             }
 
             final data = snapshot.data!.data() as Map<String, dynamic>;
-            return _CompletedCycleContent(data: data);
+            if (cycleNumber(data['area']) != null || data['fieldId'] == null) {
+              return _CompletedCycleContent(data: data);
+            }
+            return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+              stream: FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(userId)
+                  .collection('fields')
+                  .doc(data['fieldId'] as String)
+                  .snapshots(),
+              builder: (context, fieldSnapshot) {
+                final acres = cycleNumber(fieldSnapshot.data?.data()?['acres']);
+                return _CompletedCycleContent(
+                  data: {
+                    ...data,
+                    if (acres != null) 'area': acres * 0.40468564224,
+                  },
+                );
+              },
+            );
           },
         ),
       ),
@@ -82,7 +104,7 @@ class _CompletedCycleContent extends StatelessWidget {
   String get cycleName => data['cycleName'] ?? 'Unknown Cycle';
   String get fieldName => data['fieldName'] ?? 'Unknown Field';
   String get cropVariety => data['cropVariety'] ?? 'Unknown Variety';
-  
+
   DateTime? get plantingDate {
     final timestamp = data['plantingDate'];
     if (timestamp != null && timestamp is Timestamp) {
@@ -90,9 +112,10 @@ class _CompletedCycleContent extends StatelessWidget {
     }
     return null;
   }
-  
+
   DateTime? get harvestDate {
-    final raw = data['expectedHarvestDate'] ??
+    final raw =
+        data['expectedHarvestDate'] ??
         data['estimatedHarvestDate'] ??
         data['harvestDate'] ??
         data['actualHarvestDate'];
@@ -104,7 +127,7 @@ class _CompletedCycleContent extends StatelessWidget {
     }
     return null;
   }
-  
+
   DateTime? get archivedDate {
     final timestamp = data['createdAt'];
     if (timestamp != null && timestamp is Timestamp) {
@@ -112,12 +135,13 @@ class _CompletedCycleContent extends StatelessWidget {
     }
     return null;
   }
-  
-  double get totalYield => (data['totalYield'] ?? 0.0).toDouble();
-  double get area => (data['area'] ?? 0.0).toDouble();
+
+  double get totalYield => recordedYield(data) ?? 0;
+  double get area => cycleNumber(data['area']) ?? 0;
   double get pestLoss => (data['pestLoss'] ?? 0.0).toDouble();
   double get otherLoss => (data['otherLoss'] ?? 0.0).toDouble();
-  double get grossIncome => (data['grossIncome'] ?? data['totalValue'] ?? 0.0).toDouble();
+  double get grossIncome =>
+      (data['grossIncome'] ?? data['totalValue'] ?? 0.0).toDouble();
   double get damagedYield => (data['damagedYield'] ?? 0.0).toDouble();
   double get marketPrice => (data['marketPrice'] ?? 0.0).toDouble();
   double get lossRate => (data['lossRate'] ?? 0.0).toDouble();
@@ -128,12 +152,7 @@ class _CompletedCycleContent extends StatelessWidget {
     return grossIncome - pestLoss - otherLoss;
   }
 
-  double get efficiencyScore {
-    final expectedYield = area * 8.0;
-    if (expectedYield <= 0) return 0.0;
-    final efficiency = (totalYield / expectedYield) * 100;
-    return efficiency.clamp(0.0, 100.0);
-  }
+  double? get efficiencyScore => cycleEfficiency(data);
 
   double get pestControlSuccess {
     if (pestLoss <= 0 && damagedYield <= 0) return 100.0;
@@ -149,17 +168,17 @@ class _CompletedCycleContent extends StatelessWidget {
 
   bool get isHarvestRecording => data['totalValue'] != null;
   bool get isPreviousCycle => data['isPreviousCycle'] == true;
-  
+
   String get formattedArchivedDate {
     if (archivedDate == null) return 'Not archived';
     return DateFormat('MMM d, yyyy').format(archivedDate!);
   }
-  
+
   String get formattedPlantingDate {
     if (plantingDate == null) return 'Not set';
     return DateFormat('MMM d, yyyy').format(plantingDate!);
   }
-  
+
   String get formattedHarvestDate {
     if (harvestDate == null) return 'Not set';
     return DateFormat('MMM d, yyyy').format(harvestDate!);
@@ -174,7 +193,7 @@ class _CompletedCycleContent extends StatelessWidget {
           children: [
             // --- APP BAR ---
             _buildAppBar(context),
-            
+
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -256,29 +275,61 @@ class _CompletedCycleContent extends StatelessWidget {
           ),
           child: const Text(
             'COMPLETED',
-            style: TextStyle(color: kPrimaryGreen, fontSize: 10, fontWeight: FontWeight.w900),
+            style: TextStyle(
+              color: kPrimaryGreen,
+              fontSize: 10,
+              fontWeight: FontWeight.w900,
+            ),
           ),
         ),
         const SizedBox(height: 8),
         Text(
           cycleName,
-          style: const TextStyle(color: kPrimaryGreen, fontSize: 32, fontWeight: FontWeight.w800),
+          style: const TextStyle(
+            color: kPrimaryGreen,
+            fontSize: 32,
+            fontWeight: FontWeight.w800,
+          ),
         ),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Row(
               children: [
-                const Icon(Icons.location_on_outlined, size: 16, color: kTextGrey),
+                const Icon(
+                  Icons.location_on_outlined,
+                  size: 16,
+                  color: kTextGrey,
+                ),
                 const SizedBox(width: 4),
-                Text(fieldName, style: const TextStyle(color: kTextGrey, fontWeight: FontWeight.w600)),
+                Text(
+                  fieldName,
+                  style: const TextStyle(
+                    color: kTextGrey,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ],
             ),
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                const Text('ARCHIVED DATE', style: TextStyle(color: kTextGrey, fontSize: 10, fontWeight: FontWeight.w800)),
-                Text(formattedArchivedDate, style: const TextStyle(color: kPrimaryGreen, fontSize: 16, fontWeight: FontWeight.w700)),
+                const Text(
+                  'ARCHIVED DATE',
+                  style: TextStyle(
+                    color: kTextGrey,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                Text(
+                  formattedArchivedDate,
+                  style: const TextStyle(
+                    color: kPrimaryGreen,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ],
             ),
           ],
@@ -293,7 +344,11 @@ class _CompletedCycleContent extends StatelessWidget {
           ),
           child: Text(
             'Variety: $cropVariety',
-            style: const TextStyle(color: kTextGrey, fontSize: 12, fontWeight: FontWeight.w500),
+            style: const TextStyle(
+              color: kTextGrey,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ),
       ],
@@ -301,20 +356,32 @@ class _CompletedCycleContent extends StatelessWidget {
   }
 
   Widget _buildHarvestSummary() {
-    final actualYield = (data['actualYield'] as num?)?.toDouble();
+    final actualYield = cycleNumber(data['actualYield']);
     final goodYield = (data['goodYield'] as num?)?.toDouble();
     final displayYield = actualYield ?? totalYield;
-    final yieldUnit = isHarvestRecording ? 'kg' : 'Tons';
-    
+    const yieldUnit = 'kg';
+
     return _buildCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('HARVEST SUMMARY', style: TextStyle(color: kTextGrey, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
+          const Text(
+            'HARVEST SUMMARY',
+            style: TextStyle(
+              color: kTextGrey,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.5,
+            ),
+          ),
           const SizedBox(height: 16),
           Row(
             children: [
-              _buildStat(displayYield.toStringAsFixed(1), yieldUnit, 'Final Yield'),
+              _buildStat(
+                displayYield.toStringAsFixed(1),
+                yieldUnit,
+                'Final Yield',
+              ),
               const SizedBox(width: 40),
               _buildStat(area.toStringAsFixed(2), 'Ha', 'Harvested Area'),
             ],
@@ -325,7 +392,11 @@ class _CompletedCycleContent extends StatelessWidget {
               children: [
                 _buildStat(damagedYield.toStringAsFixed(1), 'kg', 'Damaged'),
                 const SizedBox(width: 40),
-                _buildStat(marketPrice.toStringAsFixed(0), '₱/kg', 'Market Price'),
+                _buildStat(
+                  marketPrice.toStringAsFixed(0),
+                  '₱/kg',
+                  'Market Price',
+                ),
               ],
             ),
           ],
@@ -340,8 +411,17 @@ class _CompletedCycleContent extends StatelessWidget {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Good Yield:', style: TextStyle(color: kTextGrey, fontSize: 12)),
-                  Text('${goodYield.toStringAsFixed(1)} kg', style: const TextStyle(color: kPrimaryGreen, fontWeight: FontWeight.w700)),
+                  const Text(
+                    'Good Yield:',
+                    style: TextStyle(color: kTextGrey, fontSize: 12),
+                  ),
+                  Text(
+                    '${goodYield.toStringAsFixed(1)} kg',
+                    style: const TextStyle(
+                      color: kPrimaryGreen,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -356,8 +436,17 @@ class _CompletedCycleContent extends StatelessWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Planting Date:', style: TextStyle(color: kTextGrey, fontSize: 12)),
-                Text(formattedPlantingDate, style: const TextStyle(color: kPrimaryGreen, fontWeight: FontWeight.w600)),
+                const Text(
+                  'Planting Date:',
+                  style: TextStyle(color: kTextGrey, fontSize: 12),
+                ),
+                Text(
+                  formattedPlantingDate,
+                  style: const TextStyle(
+                    color: kPrimaryGreen,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ],
             ),
           ),
@@ -371,8 +460,17 @@ class _CompletedCycleContent extends StatelessWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Harvest Date:', style: TextStyle(color: kTextGrey, fontSize: 12)),
-                Text(formattedHarvestDate, style: const TextStyle(color: kPrimaryGreen, fontWeight: FontWeight.w600)),
+                const Text(
+                  'Harvest Date:',
+                  style: TextStyle(color: kTextGrey, fontSize: 12),
+                ),
+                Text(
+                  formattedHarvestDate,
+                  style: const TextStyle(
+                    color: kPrimaryGreen,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ],
             ),
           ),
@@ -387,8 +485,17 @@ class _CompletedCycleContent extends StatelessWidget {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Loss Rate:', style: TextStyle(color: kTextGrey, fontSize: 12)),
-                  Text('${lossRate.toStringAsFixed(1)}%', style: const TextStyle(color: Color(0xFFE65100), fontWeight: FontWeight.w700)),
+                  const Text(
+                    'Loss Rate:',
+                    style: TextStyle(color: kTextGrey, fontSize: 12),
+                  ),
+                  Text(
+                    '${lossRate.toStringAsFixed(1)}%',
+                    style: const TextStyle(
+                      color: Color(0xFFE65100),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -406,45 +513,88 @@ class _CompletedCycleContent extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.baseline,
           textBaseline: TextBaseline.alphabetic,
           children: [
-            Text(value, style: const TextStyle(color: kPrimaryGreen, fontSize: 32, fontWeight: FontWeight.w900)),
+            Text(
+              value,
+              style: const TextStyle(
+                color: kPrimaryGreen,
+                fontSize: 32,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
             const SizedBox(width: 4),
-            Text(unit, style: const TextStyle(color: kPrimaryGreen, fontSize: 16, fontWeight: FontWeight.w700)),
+            Text(
+              unit,
+              style: const TextStyle(
+                color: kPrimaryGreen,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ],
         ),
-        Text(label, style: const TextStyle(color: kTextGrey, fontSize: 12, fontWeight: FontWeight.w500)),
+        Text(
+          label,
+          style: const TextStyle(
+            color: kTextGrey,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
       ],
     );
   }
 
   Widget _buildEfficiencyScore() {
+    final score = efficiencyScore;
+    final color = score == null
+        ? kTextGrey
+        : score >= 70
+        ? kAccentGreen
+        : Colors.orange;
     return _buildCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('EFFICIENCY SCORE', style: TextStyle(color: kTextGrey, fontSize: 11, fontWeight: FontWeight.w800)),
+          const Text(
+            'EFFICIENCY SCORE',
+            style: TextStyle(
+              color: kTextGrey,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
           const SizedBox(height: 12),
           Row(
             children: [
-              Text('${efficiencyScore.toStringAsFixed(1)}%', style: const TextStyle(color: kPrimaryGreen, fontSize: 36, fontWeight: FontWeight.w900)),
+              Text(
+                score == null ? 'N/A' : '${score.toStringAsFixed(1)}%',
+                style: const TextStyle(
+                  color: kPrimaryGreen,
+                  fontSize: 36,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
               const SizedBox(width: 8),
               Icon(
-                efficiencyScore >= 70 ? Icons.trending_up : Icons.trending_down,
-                color: efficiencyScore >= 70 ? kAccentGreen : Colors.orange,
+                score == null ? Icons.info_outline : Icons.speed,
+                color: color,
                 size: 20,
               ),
             ],
           ),
           const SizedBox(height: 12),
           LinearProgressIndicator(
-            value: efficiencyScore / 100,
+            value: ((score ?? 0) / 100).clamp(0.0, 1.0),
             backgroundColor: kBorder,
-            color: efficiencyScore >= 70 ? kAccentGreen : Colors.orange,
+            color: color,
             minHeight: 8,
             borderRadius: BorderRadius.circular(4),
           ),
           const SizedBox(height: 8),
           Text(
-            'Based on expected yield of 8 tons/Ha',
+            score == null
+                ? 'Not enough data: recorded yield and a positive area in hectares are required.'
+                : '${totalYield.toStringAsFixed(1)} kg / (${area.toStringAsFixed(2)} ha x 8,000 kg/ha) x 100. Fixed yield benchmark.',
             style: TextStyle(color: kTextGrey, fontSize: 10),
           ),
         ],
@@ -456,8 +606,9 @@ class _CompletedCycleContent extends StatelessWidget {
     final pestLossAmount = pestLoss;
     final otherLossAmount = otherLoss;
     final damagedYieldValue = damagedYield * marketPrice;
-    final totalDeductions = pestLossAmount + otherLossAmount + damagedYieldValue;
-    
+    final totalDeductions =
+        pestLossAmount + otherLossAmount + damagedYieldValue;
+
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -467,22 +618,54 @@ class _CompletedCycleContent extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('FINANCIAL RESULTS', style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w800)),
+          const Text(
+            'FINANCIAL RESULTS',
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
           const SizedBox(height: 24),
-          _buildFinanceRow('Gross Income', '₱${grossIncome.toStringAsFixed(2)}'),
+          _buildFinanceRow(
+            'Gross Income',
+            '₱${grossIncome.toStringAsFixed(2)}',
+          ),
           if (pestLoss > 0)
-            _buildFinanceRow('Pest Loss', '- ₱${pestLossAmount.toStringAsFixed(2)}'),
+            _buildFinanceRow(
+              'Pest Loss',
+              '- ₱${pestLossAmount.toStringAsFixed(2)}',
+            ),
           if (otherLoss > 0)
-            _buildFinanceRow('Other Losses', '- ₱${otherLossAmount.toStringAsFixed(2)}'),
+            _buildFinanceRow(
+              'Other Losses',
+              '- ₱${otherLossAmount.toStringAsFixed(2)}',
+            ),
           if (damagedYield > 0)
-            _buildFinanceRow('Damaged Yield (${damagedYield.toStringAsFixed(1)} kg)', '- ₱${damagedYieldValue.toStringAsFixed(2)}'),
+            _buildFinanceRow(
+              'Damaged Yield (${damagedYield.toStringAsFixed(1)} kg)',
+              '- ₱${damagedYieldValue.toStringAsFixed(2)}',
+            ),
           const Divider(color: Colors.white24, height: 32),
-          const Center(child: Text('NET INCOME', style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.w800))),
+          const Center(
+            child: Text(
+              'NET INCOME',
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
           const SizedBox(height: 8),
           Center(
             child: Text(
               '₱${netIncome.toStringAsFixed(2)}',
-              style: const TextStyle(color: kWhite, fontSize: 40, fontWeight: FontWeight.w900),
+              style: const TextStyle(
+                color: kWhite,
+                fontSize: 40,
+                fontWeight: FontWeight.w900,
+              ),
             ),
           ),
           if (totalDeductions > 0)
@@ -505,8 +688,22 @@ class _CompletedCycleContent extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500)),
-          Text(value, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
         ],
       ),
     );
@@ -537,14 +734,24 @@ class _CompletedCycleContent extends StatelessWidget {
     );
   }
 
-  Widget _buildTimelineItem(String title, String date, String sub, bool showLine) {
+  Widget _buildTimelineItem(
+    String title,
+    String date,
+    String sub,
+    bool showLine,
+  ) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Column(
           children: [
             const Icon(Icons.check_circle, color: kPrimaryGreen, size: 24),
-            if (showLine) Container(width: 2, height: 50, color: kPrimaryGreen.withValues(alpha:0.2)),
+            if (showLine)
+              Container(
+                width: 2,
+                height: 50,
+                color: kPrimaryGreen.withValues(alpha: 0.2),
+              ),
           ],
         ),
         const SizedBox(width: 16),
@@ -555,8 +762,18 @@ class _CompletedCycleContent extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(title, style: const TextStyle(color: kPrimaryGreen, fontWeight: FontWeight.w800, fontSize: 15)),
-                  Text(date, style: const TextStyle(color: kTextGrey, fontSize: 12)),
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: kPrimaryGreen,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 15,
+                    ),
+                  ),
+                  Text(
+                    date,
+                    style: const TextStyle(color: kTextGrey, fontSize: 12),
+                  ),
                 ],
               ),
               const SizedBox(height: 4),
@@ -573,15 +790,17 @@ class _CompletedCycleContent extends StatelessWidget {
     final lat = data['latitude'];
     final lng = data['longitude'];
     final location = data['location'] ?? fieldName;
-    
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(28),
       child: Container(
         height: 240,
         decoration: BoxDecoration(
-          color: kPrimaryGreen.withValues(alpha:0.1),
+          color: kPrimaryGreen.withValues(alpha: 0.1),
           image: const DecorationImage(
-            image: NetworkImage('https://images.unsplash.com/photo-1500382017468-9049fed747ef?q=80&w=1000'),
+            image: NetworkImage(
+              'https://images.unsplash.com/photo-1500382017468-9049fed747ef?q=80&w=1000',
+            ),
             fit: BoxFit.cover,
           ),
         ),
@@ -590,7 +809,10 @@ class _CompletedCycleContent extends StatelessWidget {
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: [Colors.transparent, kPrimaryGreen.withValues(alpha:0.8)],
+              colors: [
+                Colors.transparent,
+                kPrimaryGreen.withValues(alpha: 0.8),
+              ],
             ),
           ),
           padding: const EdgeInsets.all(24),
@@ -599,11 +821,23 @@ class _CompletedCycleContent extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('GEOGRAPHICAL ARCHIVE', style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.0)),
+              const Text(
+                'GEOGRAPHICAL ARCHIVE',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.0,
+                ),
+              ),
               const SizedBox(height: 4),
               Text(
                 location,
-                style: const TextStyle(color: kWhite, fontSize: 18, fontWeight: FontWeight.w700),
+                style: const TextStyle(
+                  color: kWhite,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               if (lat != null && lng != null)
                 Text(
@@ -624,7 +858,7 @@ class _CompletedCycleContent extends StatelessWidget {
       decoration: BoxDecoration(
         color: kWhite,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: kBorder.withValues(alpha:0.5)),
+        border: Border.all(color: kBorder.withValues(alpha: 0.5)),
       ),
       child: child,
     );

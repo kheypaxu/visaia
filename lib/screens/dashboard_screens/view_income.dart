@@ -1,3 +1,4 @@
+import 'package:visaia/core/models/cycle_metrics.dart';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -39,14 +40,17 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
   String _cropName = '';
 
   // Controllers for income inputs
-  final TextEditingController _harvestIncomeController = TextEditingController();
+  final TextEditingController _harvestIncomeController =
+      TextEditingController();
   final TextEditingController _damageCostController = TextEditingController();
 
   // Controllers for cycle costs
-  final TextEditingController _controlMethodController = TextEditingController();
+  final TextEditingController _controlMethodController =
+      TextEditingController();
   final TextEditingController _fertilizerController = TextEditingController();
   final TextEditingController _seedsController = TextEditingController();
-  final TextEditingController _otherExpensesController = TextEditingController();
+  final TextEditingController _otherExpensesController =
+      TextEditingController();
 
   double _grossIncome = 0;
   double _totalCycleCost = 0;
@@ -82,7 +86,9 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
 
     final totalCost = control + fertilizer + seeds + other;
     final net = harvestIncome - totalCost - damage;
-    final profitPercent = harvestIncome > 0 ? ((net / harvestIncome) * 100) : 0.0;
+    final profitPercent = harvestIncome > 0
+        ? ((net / harvestIncome) * 100)
+        : 0.0;
 
     setState(() {
       _grossIncome = harvestIncome;
@@ -141,36 +147,43 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
       _isAuditCompleted = data['isAuditCompleted'] == true;
       _cropName = data['cropVariety'] ?? data['cropType'] ?? 'Unknown Crop';
 
-      final totalGross = (data['grossIncome'] as num?)?.toDouble() ??
-          (data['totalValue'] as num?)?.toDouble() ??
-          (data['income'] as num?)?.toDouble() ??
-          0;
-      final controlCost = (data['controlMethodCost'] as num?)?.toDouble() ?? 0;
-      final fertilizerCost = (data['fertilizerCost'] as num?)?.toDouble() ?? 0;
-      final seedsCost = (data['seedsCost'] as num?)?.toDouble() ?? 0;
-      final otherExpenses = (data['otherExpenses'] as num?)?.toDouble() ??
-          (data['otherLoss'] as num?)?.toDouble() ??
-          0;
-      final damageCost = (data['damageCost'] as num?)?.toDouble() ??
-          (data['pestLoss'] as num?)?.toDouble() ??
-          0;
+      final finance = CycleFinance(data);
+      final totalGross = finance.gross;
+      final controlCost = finance.control;
+      final fertilizerCost = finance.fertilizer;
+      final seedsCost = finance.seeds;
+      final otherExpenses = finance.other;
+      final damageCost = finance.damage;
+      final totalCycleCost = finance.costs;
+      final storedNet = finance.net;
 
-      final totalCycleCost = (data['totalCycleCost'] as num?)?.toDouble() ?? (controlCost + fertilizerCost + seedsCost + otherExpenses);
-      final storedNet = (data['netIncome'] as num?)?.toDouble() ?? (totalGross - totalCycleCost - damageCost);
-
-      _harvestIncomeController.text = totalGross > 0 ? totalGross.toStringAsFixed(2) : (totalGross == 0 ? '0.00' : totalGross.toString());
-      _controlMethodController.text = controlCost > 0 ? controlCost.toStringAsFixed(2) : '0.00';
-      _fertilizerController.text = fertilizerCost > 0 ? fertilizerCost.toStringAsFixed(2) : '0.00';
-      _seedsController.text = seedsCost > 0 ? seedsCost.toStringAsFixed(2) : '0.00';
-      _otherExpensesController.text = otherExpenses > 0 ? otherExpenses.toStringAsFixed(2) : '0.00';
-      _damageCostController.text = damageCost > 0 ? damageCost.toStringAsFixed(2) : '0.00';
+      _harvestIncomeController.text = totalGross > 0
+          ? totalGross.toStringAsFixed(2)
+          : (totalGross == 0 ? '0.00' : totalGross.toString());
+      _controlMethodController.text = controlCost > 0
+          ? controlCost.toStringAsFixed(2)
+          : '0.00';
+      _fertilizerController.text = fertilizerCost > 0
+          ? fertilizerCost.toStringAsFixed(2)
+          : '0.00';
+      _seedsController.text = seedsCost > 0
+          ? seedsCost.toStringAsFixed(2)
+          : '0.00';
+      _otherExpensesController.text = otherExpenses > 0
+          ? otherExpenses.toStringAsFixed(2)
+          : '0.00';
+      _damageCostController.text = damageCost > 0
+          ? damageCost.toStringAsFixed(2)
+          : '0.00';
 
       setState(() {
         _grossIncome = totalGross;
         _totalCycleCost = totalCycleCost;
         _damageCost = damageCost;
         _netIncome = storedNet;
-        _profitPercentage = totalGross > 0 ? ((_netIncome / totalGross) * 100) : 0;
+        _profitPercentage = totalGross > 0
+            ? ((_netIncome / totalGross) * 100)
+            : 0;
         _cycleCount = 1;
         _isLoading = false;
       });
@@ -190,25 +203,47 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
         title: Text(
           'Finalize Financial Audit?',
-          style: GoogleFonts.epilogue(fontWeight: FontWeight.w800, fontSize: 18, color: darkGreen),
+          style: GoogleFonts.epilogue(
+            fontWeight: FontWeight.w800,
+            fontSize: 18,
+            color: darkGreen,
+          ),
         ),
         content: Text(
           'Are you sure you want to finalize the financial audit for $_cropName?\n\nOnce completed, all financial records and expense numbers for this crop will be locked and cannot be edited anymore.',
-          style: GoogleFonts.manrope(fontSize: 13.5, color: textGray, height: 1.45),
+          style: GoogleFonts.manrope(
+            fontSize: 13.5,
+            color: textGray,
+            height: 1.45,
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: Text('Cancel', style: GoogleFonts.manrope(color: Colors.grey[600], fontWeight: FontWeight.w600)),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.manrope(
+                color: Colors.grey[600],
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(
               backgroundColor: darkGreen,
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
-            child: Text('Complete Audit', style: GoogleFonts.manrope(color: Colors.white, fontWeight: FontWeight.w700)),
+            child: Text(
+              'Complete Audit',
+              style: GoogleFonts.manrope(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ),
         ],
       ),
@@ -230,7 +265,8 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
       final otherExpenses = double.tryParse(_otherExpensesController.text) ?? 0;
       final damageCost = double.tryParse(_damageCostController.text) ?? 0;
 
-      final totalCycleCost = controlCost + fertilizerCost + seedsCost + otherExpenses;
+      final totalCycleCost =
+          controlCost + fertilizerCost + seedsCost + otherExpenses;
       final netIncome = harvestIncome - totalCycleCost - damageCost;
 
       await FirebaseFirestore.instance
@@ -239,22 +275,22 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
           .collection('cycles')
           .doc(widget.cycleId)
           .update({
-        'grossIncome': harvestIncome,
-        'totalValue': harvestIncome,
-        'income': netIncome,
-        'netIncome': netIncome,
-        'controlMethodCost': controlCost,
-        'fertilizerCost': fertilizerCost,
-        'seedsCost': seedsCost,
-        'otherExpenses': otherExpenses,
-        'totalCycleCost': totalCycleCost,
-        'damageCost': damageCost,
-        'pestLoss': damageCost,
-        'isAuditCompleted': true,
-        'isCompleted': true,
-        'status': 'completed',
-        'auditCompletedAt': FieldValue.serverTimestamp(),
-      });
+            'grossIncome': harvestIncome,
+            'totalValue': harvestIncome,
+            'income': netIncome,
+            'netIncome': netIncome,
+            'controlMethodCost': controlCost,
+            'fertilizerCost': fertilizerCost,
+            'seedsCost': seedsCost,
+            'otherExpenses': otherExpenses,
+            'totalCycleCost': totalCycleCost,
+            'damageCost': damageCost,
+            'pestLoss': damageCost,
+            'isAuditCompleted': true,
+            'isCompleted': true,
+            'status': 'completed',
+            'auditCompletedAt': FieldValue.serverTimestamp(),
+          });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -273,7 +309,9 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
             ),
             backgroundColor: const Color(0xFF1B5E37),
             behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
           ),
         );
         Navigator.pop(context, true);
@@ -287,7 +325,9 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
             content: Text('Failed to save audit: $e'),
             backgroundColor: errorRed,
             behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
           ),
         );
       }
@@ -328,7 +368,11 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
           IconButton(
             onPressed: _isExportingPdf ? null : _exportPdf,
             icon: _isExportingPdf
-                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
                 : const Icon(Icons.file_download_outlined, color: darkGreen),
           ),
         ],
@@ -336,220 +380,240 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator(color: darkGreen))
           : _errorMessage != null
-              ? _buildErrorView()
-              : SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 20.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const SizedBox(height: 10),
-                      Text(
-                        'FINANCIAL ANALYTICS',
-                        style: GoogleFonts.manrope(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                          color: const Color(0xFF4C7A1D),
-                          letterSpacing: 1.2,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '$_cropName Income Calculation',
-                        style: GoogleFonts.epilogue(
-                          fontSize: 22,
-                          fontWeight: FontWeight.w800,
-                          color: darkGreen,
-                          height: 1.1,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _isAuditCompleted
-                            ? 'Read-only finalized financial audit from this completed cycle.'
-                            : 'Review and input all cycle revenue, expenses, and damages to finalize this crop.',
-                        style: GoogleFonts.manrope(
-                          fontSize: 13,
-                          color: textGray,
-                          height: 1.5,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
+          ? _buildErrorView()
+          : SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 20.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 10),
+                  Text(
+                    'FINANCIAL ANALYTICS',
+                    style: GoogleFonts.manrope(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: const Color(0xFF4C7A1D),
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '$_cropName Income Calculation',
+                    style: GoogleFonts.epilogue(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      color: darkGreen,
+                      height: 1.1,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _isAuditCompleted
+                        ? 'Read-only finalized financial audit from this completed cycle.'
+                        : 'Review and input all cycle revenue, expenses, and damages to finalize this crop.',
+                    style: GoogleFonts.manrope(
+                      fontSize: 13,
+                      color: textGray,
+                      height: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
 
-                      // ─── STATUS AUDIT BANNER ──────────────────────────────
-                      Container(
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: _isAuditCompleted ? const Color(0xFFE8F5E9) : const Color(0xFFFFFBEB),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: _isAuditCompleted ? const Color(0xFFA5D6A7) : const Color(0xFFF59E0B),
-                          ),
+                  // ─── STATUS AUDIT BANNER ──────────────────────────────
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: _isAuditCompleted
+                          ? const Color(0xFFE8F5E9)
+                          : const Color(0xFFFFFBEB),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: _isAuditCompleted
+                            ? const Color(0xFFA5D6A7)
+                            : const Color(0xFFF59E0B),
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          _isAuditCompleted
+                              ? Icons.verified_rounded
+                              : Icons.pending_actions_rounded,
+                          color: _isAuditCompleted
+                              ? const Color(0xFF1B5E37)
+                              : const Color(0xFFB45309),
+                          size: 22,
                         ),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Icon(
-                              _isAuditCompleted ? Icons.verified_rounded : Icons.pending_actions_rounded,
-                              color: _isAuditCompleted ? const Color(0xFF1B5E37) : const Color(0xFFB45309),
-                              size: 22,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    _isAuditCompleted
-                                        ? 'Financial Audit Completed & Locked'
-                                        : 'Pending Financial Audit',
-                                    style: GoogleFonts.manrope(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w800,
-                                      color: _isAuditCompleted
-                                          ? const Color(0xFF1B5E37)
-                                          : const Color(0xFFB45309),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    _isAuditCompleted
-                                        ? 'All expense and income figures have been audited and finalized. Values cannot be modified.'
-                                        : 'Please fill in or verify your harvest income, cycle expenses, and damage costs below. Once submitted, records will be permanently locked.',
-                                    style: GoogleFonts.manrope(
-                                      fontSize: 12,
-                                      color: _isAuditCompleted
-                                          ? const Color(0xFF2E7D32)
-                                          : const Color(0xFF78350F),
-                                      height: 1.35,
-                                    ),
-                                  ),
-                                ],
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _isAuditCompleted
+                                    ? 'Financial Audit Completed & Locked'
+                                    : 'Pending Financial Audit',
+                                style: GoogleFonts.manrope(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w800,
+                                  color: _isAuditCompleted
+                                      ? const Color(0xFF1B5E37)
+                                      : const Color(0xFFB45309),
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      const SizedBox(height: 24),
-
-                      // TOTAL HARVEST INCOME
-                      _buildSectionCard(
-                        title: 'TOTAL HARVEST INCOME',
-                        subtitle: _isAuditCompleted
-                            ? 'Recorded harvest yield revenue'
-                            : 'Enter total revenue from harvested crops',
-                        children: [
-                          _buildInputFieldWithIcon(
-                            'Harvest Income (₱)',
-                            _harvestIncomeController,
-                            Icons.agriculture_outlined,
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 20),
-
-                      // TOTAL CYCLE COST
-                      _buildSectionCard(
-                        title: 'TOTAL CYCLE COST',
-                        subtitle: _isAuditCompleted
-                            ? 'Recorded total expenses from planting to harvest'
-                            : 'Enter total amount spent from planting to harvest',
-                        children: [
-                          _buildInputFieldWithIcon(
-                            'Total Control Method Cost (₱)',
-                            _controlMethodController,
-                            Icons.pest_control_outlined,
-                          ),
-                          const SizedBox(height: 12),
-                          _buildInputFieldWithIcon(
-                            'Total Fertilizer Cost (₱)',
-                            _fertilizerController,
-                            Icons.grass_outlined,
-                          ),
-                          const SizedBox(height: 12),
-                          _buildInputFieldWithIcon(
-                            'Total Seeds Cost (₱)',
-                            _seedsController,
-                            Icons.eco_outlined,
-                          ),
-                          const SizedBox(height: 12),
-                          _buildInputFieldWithIcon(
-                            'Other Expenses (₱)',
-                            _otherExpensesController,
-                            Icons.receipt_long_outlined,
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 20),
-
-                      // TOTAL DAMAGE COST
-                      _buildSectionCard(
-                        title: 'TOTAL DAMAGE COST',
-                        subtitle: _isAuditCompleted
-                            ? 'Recorded value of crops lost or damaged'
-                            : 'Estimated monetary loss from pests or weather damage',
-                        children: [
-                          _buildInputFieldWithIcon(
-                            'Damage Cost (₱)',
-                            _damageCostController,
-                            Icons.warning_amber_outlined,
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 24),
-
-                      // ESTIMATED NET INCOME RESULT
-                      _buildResultCard(),
-
-                      const SizedBox(height: 28),
-
-                      // ─── SUBMIT AUDIT BUTTON (IF PENDING) ─────────────────
-                      if (!_isAuditCompleted) ...[
-                        SizedBox(
-                          width: double.infinity,
-                          height: 52,
-                          child: ElevatedButton.icon(
-                            onPressed: _isSaving ? null : _confirmAndSubmitAudit,
-                            icon: _isSaving
-                                ? const SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                                  )
-                                : const Icon(Icons.check_circle_outline_rounded, size: 20, color: Colors.white),
-                            label: Text(
-                              _isSaving ? 'Saving & Finalizing...' : 'Submit & Complete Audit',
-                              style: GoogleFonts.manrope(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white,
+                              const SizedBox(height: 2),
+                              Text(
+                                _isAuditCompleted
+                                    ? 'All expense and income figures have been audited and finalized. Values cannot be modified.'
+                                    : 'Please fill in or verify your harvest income, cycle expenses, and damage costs below. Once submitted, records will be permanently locked.',
+                                style: GoogleFonts.manrope(
+                                  fontSize: 12,
+                                  color: _isAuditCompleted
+                                      ? const Color(0xFF2E7D32)
+                                      : const Color(0xFF78350F),
+                                  height: 1.35,
+                                ),
                               ),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: darkGreen,
-                              elevation: 0,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                        Center(
-                          child: Text(
-                            'Completing audit marks this crop cycle finalized.',
-                            style: GoogleFonts.manrope(fontSize: 12, color: textGray.withValues(alpha: 0.7)),
+                            ],
                           ),
                         ),
                       ],
+                    ),
+                  ),
 
-                      const SizedBox(height: 40),
+                  const SizedBox(height: 24),
+
+                  // TOTAL HARVEST INCOME
+                  _buildSectionCard(
+                    title: 'TOTAL HARVEST INCOME',
+                    subtitle: _isAuditCompleted
+                        ? 'Recorded harvest yield revenue'
+                        : 'Enter total revenue from harvested crops',
+                    children: [
+                      _buildInputFieldWithIcon(
+                        'Harvest Income (₱)',
+                        _harvestIncomeController,
+                        Icons.agriculture_outlined,
+                      ),
                     ],
                   ),
-                ),
+
+                  const SizedBox(height: 20),
+
+                  // TOTAL CYCLE COST
+                  _buildSectionCard(
+                    title: 'TOTAL CYCLE COST',
+                    subtitle: _isAuditCompleted
+                        ? 'Recorded total expenses from planting to harvest'
+                        : 'Enter total amount spent from planting to harvest',
+                    children: [
+                      _buildInputFieldWithIcon(
+                        'Total Control Method Cost (₱)',
+                        _controlMethodController,
+                        Icons.pest_control_outlined,
+                      ),
+                      const SizedBox(height: 12),
+                      _buildInputFieldWithIcon(
+                        'Total Fertilizer Cost (₱)',
+                        _fertilizerController,
+                        Icons.grass_outlined,
+                      ),
+                      const SizedBox(height: 12),
+                      _buildInputFieldWithIcon(
+                        'Total Seeds Cost (₱)',
+                        _seedsController,
+                        Icons.eco_outlined,
+                      ),
+                      const SizedBox(height: 12),
+                      _buildInputFieldWithIcon(
+                        'Other Expenses (₱)',
+                        _otherExpensesController,
+                        Icons.receipt_long_outlined,
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // TOTAL DAMAGE COST
+                  _buildSectionCard(
+                    title: 'TOTAL DAMAGE COST',
+                    subtitle: _isAuditCompleted
+                        ? 'Recorded value of crops lost or damaged'
+                        : 'Estimated monetary loss from pests or weather damage',
+                    children: [
+                      _buildInputFieldWithIcon(
+                        'Damage Cost (₱)',
+                        _damageCostController,
+                        Icons.warning_amber_outlined,
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  // ESTIMATED NET INCOME RESULT
+                  _buildResultCard(),
+
+                  const SizedBox(height: 28),
+
+                  // ─── SUBMIT AUDIT BUTTON (IF PENDING) ─────────────────
+                  if (!_isAuditCompleted) ...[
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton.icon(
+                        onPressed: _isSaving ? null : _confirmAndSubmitAudit,
+                        icon: _isSaving
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(
+                                Icons.check_circle_outline_rounded,
+                                size: 20,
+                                color: Colors.white,
+                              ),
+                        label: Text(
+                          _isSaving
+                              ? 'Saving & Finalizing...'
+                              : 'Submit & Complete Audit',
+                          style: GoogleFonts.manrope(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: darkGreen,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Center(
+                      child: Text(
+                        'Completing audit marks this crop cycle finalized.',
+                        style: GoogleFonts.manrope(
+                          fontSize: 12,
+                          color: textGray.withValues(alpha: 0.7),
+                        ),
+                      ),
+                    ),
+                  ],
+
+                  const SizedBox(height: 40),
+                ],
+              ),
+            ),
     );
   }
 
@@ -616,11 +680,19 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
             if (isReadOnly)
               Row(
                 children: [
-                  const Icon(Icons.lock_outline_rounded, size: 12, color: textGray),
+                  const Icon(
+                    Icons.lock_outline_rounded,
+                    size: 12,
+                    color: textGray,
+                  ),
                   const SizedBox(width: 3),
                   Text(
                     'Locked',
-                    style: GoogleFonts.manrope(fontSize: 10.5, color: textGray, fontWeight: FontWeight.w600),
+                    style: GoogleFonts.manrope(
+                      fontSize: 10.5,
+                      color: textGray,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ],
               ),
@@ -632,7 +704,9 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
             color: isReadOnly ? bgSoftGreen : const Color(0xFFFAFCF9),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: isReadOnly ? const Color(0xFFE8EAE6) : const Color(0xFFB0D5B7),
+              color: isReadOnly
+                  ? const Color(0xFFE8EAE6)
+                  : const Color(0xFFB0D5B7),
               width: isReadOnly ? 1.0 : 1.2,
             ),
           ),
@@ -650,10 +724,21 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
               prefixIcon: Icon(icon, color: darkGreen, size: 20),
               prefixIconConstraints: const BoxConstraints(minWidth: 44),
               suffixIcon: isReadOnly
-                  ? const Icon(Icons.lock_rounded, color: Color(0xFF9E9E9E), size: 16)
-                  : const Icon(Icons.edit_rounded, color: Color(0xFF4C7A1D), size: 16),
+                  ? const Icon(
+                      Icons.lock_rounded,
+                      color: Color(0xFF9E9E9E),
+                      size: 16,
+                    )
+                  : const Icon(
+                      Icons.edit_rounded,
+                      color: Color(0xFF4C7A1D),
+                      size: 16,
+                    ),
               border: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 4),
+              contentPadding: const EdgeInsets.symmetric(
+                vertical: 14,
+                horizontal: 4,
+              ),
             ),
           ),
         ),
@@ -668,7 +753,11 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.error_outline, size: 64, color: errorRed.withValues(alpha: 0.7)),
+            Icon(
+              Icons.error_outline,
+              size: 64,
+              color: errorRed.withValues(alpha: 0.7),
+            ),
             const SizedBox(height: 20),
             Text(
               'Oops! Something went wrong',
@@ -682,7 +771,11 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
             Text(
               _errorMessage ?? 'An unexpected error occurred.',
               textAlign: TextAlign.center,
-              style: GoogleFonts.manrope(fontSize: 14, color: textGray, height: 1.5),
+              style: GoogleFonts.manrope(
+                fontSize: 14,
+                color: textGray,
+                height: 1.5,
+              ),
             ),
             const SizedBox(height: 30),
             ElevatedButton.icon(
@@ -692,8 +785,13 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: darkGreen,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 32,
+                  vertical: 14,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                ),
               ),
             ),
           ],
@@ -754,12 +852,24 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
           const SizedBox(height: 20),
           const Divider(color: Color(0xFFF1F1F1)),
           const SizedBox(height: 16),
-          _buildResultRow('Harvest Income', '+${_formatCurrency(_grossIncome)}', darkGreen),
+          _buildResultRow(
+            'Harvest Income',
+            '+${_formatCurrency(_grossIncome)}',
+            darkGreen,
+          ),
           const SizedBox(height: 12),
-          _buildResultRow('Total Damage Cost', '-${_formatCurrency(_damageCost)}', errorRed),
+          _buildResultRow(
+            'Total Damage Cost',
+            '-${_formatCurrency(_damageCost)}',
+            errorRed,
+          ),
           if (_totalCycleCost > 0) ...[
             const SizedBox(height: 12),
-            _buildResultRow('Total Cycle Cost', '-${_formatCurrency(_totalCycleCost)}', errorRed),
+            _buildResultRow(
+              'Total Cycle Cost',
+              '-${_formatCurrency(_totalCycleCost)}',
+              errorRed,
+            ),
           ],
           const SizedBox(height: 16),
           Container(
@@ -780,9 +890,14 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
                   ),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
-                    color: isPositive ? const Color(0xFFD9E7CB) : const Color(0xFFFFDADA),
+                    color: isPositive
+                        ? const Color(0xFFD9E7CB)
+                        : const Color(0xFFFFDADA),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
@@ -843,12 +958,19 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
           build: (pw.Context context) => [
             pw.Header(
               level: 0,
-              child: pw.Text('Crop Finance Report',
-                  style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold)),
+              child: pw.Text(
+                'Crop Finance Report',
+                style: pw.TextStyle(
+                  fontSize: 24,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
             ),
             pw.SizedBox(height: 8),
-            pw.Text('Generated on: $dateStr',
-                style: const pw.TextStyle(fontSize: 12, color: PdfColors.grey700)),
+            pw.Text(
+              'Generated on: $dateStr',
+              style: const pw.TextStyle(fontSize: 12, color: PdfColors.grey700),
+            ),
             pw.SizedBox(height: 24),
 
             pw.Container(
@@ -860,14 +982,30 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
               child: pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
-                  pw.Text('NET INCOME',
-                      style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold, color: PdfColors.grey700)),
+                  pw.Text(
+                    'NET INCOME',
+                    style: pw.TextStyle(
+                      fontSize: 14,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.grey700,
+                    ),
+                  ),
                   pw.SizedBox(height: 8),
-                  pw.Text(_formatCurrency(_netIncome),
-                      style: pw.TextStyle(fontSize: 32, fontWeight: pw.FontWeight.bold)),
+                  pw.Text(
+                    _formatCurrency(_netIncome),
+                    style: pw.TextStyle(
+                      fontSize: 32,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
+                  ),
                   pw.SizedBox(height: 4),
-                  pw.Text('Based on $_cycleCount completed cycle(s)',
-                      style: const pw.TextStyle(fontSize: 12, color: PdfColors.green800)),
+                  pw.Text(
+                    'Based on $_cycleCount completed cycle(s)',
+                    style: const pw.TextStyle(
+                      fontSize: 12,
+                      color: PdfColors.green800,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -875,7 +1013,9 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
 
             pw.TableHelper.fromTextArray(
               headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-              headerDecoration: const pw.BoxDecoration(color: PdfColors.grey200),
+              headerDecoration: const pw.BoxDecoration(
+                color: PdfColors.grey200,
+              ),
               cellPadding: const pw.EdgeInsets.all(8),
               headers: ['Item', 'Amount'],
               data: [
@@ -890,8 +1030,10 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
             pw.SizedBox(height: 30),
             pw.Divider(),
             pw.SizedBox(height: 8),
-            pw.Text('This report was generated automatically from completed cycle data.',
-                style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey500)),
+            pw.Text(
+              'This report was generated automatically from completed cycle data.',
+              style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey500),
+            ),
           ],
         ),
       );
@@ -914,7 +1056,9 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
             content: Text(_getUserFriendlyError(e)),
             backgroundColor: errorRed,
             behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
           ),
         );
       }
