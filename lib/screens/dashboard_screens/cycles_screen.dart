@@ -1187,7 +1187,7 @@ class Screen2CompletedCard extends StatelessWidget {
             const SizedBox(height: 10),
             _infoRow(
               Icons.payments_outlined,
-              'Income: $income',
+              'Est. Income: $income',
               isBold: hasIncome,
               textColor: hasIncome
                   ? const Color(0xFF173408)
