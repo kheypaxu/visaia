@@ -140,17 +140,13 @@ class _CompletedCycleContent extends StatelessWidget {
   double get area => cycleNumber(data['area']) ?? 0;
   double get pestLoss => (data['pestLoss'] ?? 0.0).toDouble();
   double get otherLoss => (data['otherLoss'] ?? 0.0).toDouble();
-  double get grossIncome =>
-      (data['grossIncome'] ?? data['totalValue'] ?? 0.0).toDouble();
+  CycleFinance get finance => CycleFinance(data);
+  double get grossIncome => finance.gross;
   double get damagedYield => (data['damagedYield'] ?? 0.0).toDouble();
   double get marketPrice => (data['marketPrice'] ?? 0.0).toDouble();
   double get lossRate => (data['lossRate'] ?? 0.0).toDouble();
 
-  double get netIncome {
-    final stored = (data['netIncome'] as num?)?.toDouble();
-    if (stored != null && stored != 0) return stored;
-    return grossIncome - pestLoss - otherLoss;
-  }
+  double get netIncome => finance.net;
 
   double? get efficiencyScore => cycleEfficiency(data);
 
@@ -219,8 +215,6 @@ class _CompletedCycleContent extends StatelessWidget {
                     ),
                     const SizedBox(height: 16),
                     _buildTimeline(),
-                    const SizedBox(height: 24),
-                    _buildGeographicalArchive(),
                     const SizedBox(height: 40),
                   ],
                 ),
@@ -603,11 +597,18 @@ class _CompletedCycleContent extends StatelessWidget {
   }
 
   Widget _buildFinancialResults() {
-    final pestLossAmount = pestLoss;
-    final otherLossAmount = otherLoss;
-    final damagedYieldValue = damagedYield * marketPrice;
-    final totalDeductions =
-        pestLossAmount + otherLossAmount + damagedYieldValue;
+    final values = finance;
+    final currency = NumberFormat.currency(symbol: '\u20B1', decimalDigits: 2);
+    final deductions = <String, double>{
+      'Damage costs': -values.damage,
+      'Control methods': -values.control,
+      'Fertilizer': -values.fertilizer,
+      'Seeds': -values.seeds,
+      'Other expenses': -values.other,
+      if (values.costAdjustment.abs() >= 0.005)
+        'Saved cycle cost adjustment': -values.costAdjustment,
+    };
+    final totalDeductions = values.damage + values.costs;
 
     return Container(
       padding: const EdgeInsets.all(24),
@@ -627,24 +628,18 @@ class _CompletedCycleContent extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 24),
+          _buildFinanceRow('Gross Income', currency.format(values.gross)),
+          for (final entry in deductions.entries)
+            _buildFinanceRow(entry.key, currency.format(entry.value)),
+          const SizedBox(height: 8),
           _buildFinanceRow(
-            'Gross Income',
-            '₱${grossIncome.toStringAsFixed(2)}',
+            'Total deductions',
+            currency.format(totalDeductions),
           ),
-          if (pestLoss > 0)
+          if (values.netAdjustment.abs() >= 0.005)
             _buildFinanceRow(
-              'Pest Loss',
-              '- ₱${pestLossAmount.toStringAsFixed(2)}',
-            ),
-          if (otherLoss > 0)
-            _buildFinanceRow(
-              'Other Losses',
-              '- ₱${otherLossAmount.toStringAsFixed(2)}',
-            ),
-          if (damagedYield > 0)
-            _buildFinanceRow(
-              'Damaged Yield (${damagedYield.toStringAsFixed(1)} kg)',
-              '- ₱${damagedYieldValue.toStringAsFixed(2)}',
+              'Saved net income adjustment',
+              currency.format(values.netAdjustment),
             ),
           const Divider(color: Colors.white24, height: 32),
           const Center(
@@ -668,15 +663,15 @@ class _CompletedCycleContent extends StatelessWidget {
               ),
             ),
           ),
-          if (totalDeductions > 0)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Text(
-                'Total deductions: ₱${totalDeductions.toStringAsFixed(2)}',
-                style: const TextStyle(color: Colors.white54, fontSize: 11),
-                textAlign: TextAlign.center,
-              ),
+          const Padding(
+            padding: EdgeInsets.only(top: 12),
+            child: Text(
+              'Net income = gross income - damage costs - cycle expenses '
+              '+ saved net adjustment (if any). Damaged harvest value is not deducted again. '
+              'Saved adjustments reconcile stored totals with itemized amounts.',
+              style: TextStyle(color: Colors.white70, fontSize: 11),
             ),
+          ),
         ],
       ),
     );
@@ -686,22 +681,28 @@ class _CompletedCycleContent extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ],
@@ -783,71 +784,6 @@ class _CompletedCycleContent extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-
-  Widget _buildGeographicalArchive() {
-    final lat = data['latitude'];
-    final lng = data['longitude'];
-    final location = data['location'] ?? fieldName;
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(28),
-      child: Container(
-        height: 240,
-        decoration: BoxDecoration(
-          color: kPrimaryGreen.withValues(alpha: 0.1),
-          image: const DecorationImage(
-            image: NetworkImage(
-              'https://images.unsplash.com/photo-1500382017468-9049fed747ef?q=80&w=1000',
-            ),
-            fit: BoxFit.cover,
-          ),
-        ),
-        child: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Colors.transparent,
-                kPrimaryGreen.withValues(alpha: 0.8),
-              ],
-            ),
-          ),
-          padding: const EdgeInsets.all(24),
-          alignment: Alignment.bottomLeft,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'GEOGRAPHICAL ARCHIVE',
-                style: TextStyle(
-                  color: Colors.white70,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 1.0,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                location,
-                style: const TextStyle(
-                  color: kWhite,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              if (lat != null && lng != null)
-                Text(
-                  'Lat: ${lat.toStringAsFixed(6)}, Lng: ${lng.toStringAsFixed(6)}',
-                  style: const TextStyle(color: Colors.white70, fontSize: 11),
-                ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 
