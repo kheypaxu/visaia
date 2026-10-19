@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'dart:ui';
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:visaia/services/auth_cache_service.dart';
+import 'package:visaia/services/faw_risk_service.dart';
 
 enum PestLifeStage {
   all,
@@ -14,13 +16,6 @@ enum PestLifeStage {
   larva,
   pupa,
   moth,
-}
-
-enum RiskLevel {
-  low,
-  medium,
-  high,
-  critical,
 }
 
 class RiskMapScreen extends StatefulWidget {
@@ -44,6 +39,11 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
   List<RiskPoint> _riskPoints = [];
   List<RiskZone> _riskZones = [];
   List<ReportData> _reports = [];
+
+  // Nearby moth threats from other farmers (and own scouting records)
+  final List<FawThreat> _threats = [];
+  final FawRiskService _riskService = FawRiskService();
+  bool _isLoadingThreats = false;
 
   // ========== CACHED MAP LAYERS ==========
   // Cache map objects to prevent recreation on every build
@@ -136,37 +136,14 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
 
         if (lat == 0 || lng == 0) continue;
 
-        // ----- Extract risk level (handle both 'risk' and 'riskLevel') -----
-        String? riskStr = data['risk']?.toString().toLowerCase();
-        riskStr ??= data['riskLevel']?.toString().toLowerCase();
-        RiskLevel riskLevel = RiskLevel.low;
-        switch (riskStr) {
-          case 'medium':
-            riskLevel = RiskLevel.medium;
-            break;
-          case 'high':
-            riskLevel = RiskLevel.high;
-            break;
-          case 'critical':
-            riskLevel = RiskLevel.critical;
-            break;
-        }
+        // ----- Extract risk level (5 level gradient) -----
+        RiskLevel riskLevel = RiskLevel.normalize(
+            data['risk'] ?? data['riskLevel'] ?? data['severity']);
 
         // ----- Extract life stage -----
-        String? stageStr = data['lifeStage']?.toString().toLowerCase();
-        stageStr ??= data['stage']?.toString().toLowerCase(); // fallback
-        PestLifeStage stage = PestLifeStage.egg;
-        switch (stageStr) {
-          case 'larva':
-            stage = PestLifeStage.larva;
-            break;
-          case 'pupa':
-            stage = PestLifeStage.pupa;
-            break;
-          case 'moth':
-            stage = PestLifeStage.moth;
-            break;
-        }
+        final stageKey = FawStageKey.fromText(
+            data['lifeStage'] ?? data['stage'] ?? data['pestStage']);
+        final stage = _toPestLifeStage(stageKey);
 
         loadedReports.add(ReportData(
           id: doc.id,
@@ -329,8 +306,9 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
           _isLoading = false;
           _needsCacheRebuild = true; // Mark cache as dirty
         });
-        
+
         _calculateInitialMapView();
+        await _loadThreats();
       }
       
     } catch (e, stackTrace) {
@@ -350,6 +328,48 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
           ),
         );
       }
+    }
+  }
+
+  /// Loads the nearby FAW threats that can reach this farm.
+  ///
+  /// Adult moths are winged dispersers, so any moth bearing report or
+  /// weekly scouting record inside the 5 km flight radius of one of the
+  /// user's fields is a live threat for this farm.
+  Future<void> _loadThreats() async {
+    final userId = FirebaseAuth.instance.currentUser?.uid ??
+        AuthCacheService().cachedUid;
+    if (userId == null) return;
+
+    setState(() => _isLoadingThreats = true);
+
+    try {
+      final anchors = <LatLng>[];
+      for (final field in _fields) {
+        if (field.boundaries.length >= 3) {
+          anchors.add(polygonCenter(field.boundaries));
+        }
+      }
+      if (_farm != null && _farm!.boundaries.length >= 3) {
+        anchors.add(polygonCenter(_farm!.boundaries));
+      }
+
+      final threats = await _riskService.loadMothThreats(
+        currentUserId: userId,
+        anchors: anchors,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _threats
+          ..clear()
+          ..addAll(threats);
+        _isLoadingThreats = false;
+        _needsCacheRebuild = true;
+      });
+    } catch (e) {
+      debugPrint('Error loading nearby threats: $e');
+      if (mounted) setState(() => _isLoadingThreats = false);
     }
   }
 
@@ -458,36 +478,11 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
         final data = doc.data();
         try {
           final stageString = data['stage']?.toString() ?? 'egg';
-          PestLifeStage stage = PestLifeStage.egg;
-          switch (stageString.toLowerCase()) {
-            case 'larva':
-              stage = PestLifeStage.larva;
-              break;
-            case 'pupa':
-              stage = PestLifeStage.pupa;
-              break;
-            case 'moth':
-              stage = PestLifeStage.moth;
-              break;
-            default:
-              stage = PestLifeStage.egg;
-          }
+          final stage = _toPestLifeStage(
+              FawStageKey.fromText(stageString == 'egg' ? 'egg' : stageString));
 
-          final riskString = data['riskLevel']?.toString() ?? 'low';
-          RiskLevel riskLevel = RiskLevel.low;
-          switch (riskString.toLowerCase()) {
-            case 'medium':
-              riskLevel = RiskLevel.medium;
-              break;
-            case 'high':
-              riskLevel = RiskLevel.high;
-              break;
-            case 'critical':
-              riskLevel = RiskLevel.critical;
-              break;
-            default:
-              riskLevel = RiskLevel.low;
-          }
+          final riskLevel = RiskLevel.normalize(
+              data['riskLevel'] ?? data['risk'] ?? 'low');
 
           loadedPoints.add(RiskPoint(
             id: doc.id,
@@ -735,8 +730,114 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       ),
     );
   }
+
+  // Nearby moth threats from other farmers (and own scouting records).
+  for (final threat in _threats) {
+    if (_selectedStage != PestLifeStage.all &&
+        _selectedStage != PestLifeStage.moth) {
+      continue;
+    }
+
+    // Adult moth flight / monitoring zone (wind scaled).
+    _cachedCircles.add(
+      CircleMarker(
+        point: threat.location,
+        radius: threat.radiusM,
+        useRadiusInMeter: true,
+        color: _getMothZoneColor(threat.riskLevel).withValues(alpha: 0.10),
+        borderColor: _getMothZoneColor(threat.riskLevel),
+        borderStrokeWidth: 1.5,
+      ),
+    );
+
+    _cachedMarkers.add(
+      Marker(
+        point: threat.location,
+        width: 48,
+        height: 48,
+        alignment: Alignment.bottomCenter,
+        child: _buildThreatMarker(threat),
+      ),
+    );
+  }
   }
 
+  /// Marker for a nearby threat. Uses the same life stage location pins as
+  /// the web dashboard risk map.
+  Widget _buildThreatMarker(FawThreat threat) {
+    final size = (threat.riskLevel == RiskLevel.veryHigh ||
+            threat.riskLevel == RiskLevel.high)
+        ? 48.0
+        : 42.0;
+    final accent = threat.riskLevel.color;
+
+    return GestureDetector(
+      onTap: () => _showThreatDetails(threat),
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            // Soft risk coloured glow behind the pin.
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: accent.withValues(alpha: 0.55),
+                      blurRadius: 14,
+                      spreadRadius: 3,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // The pin itself, tip anchored on the location.
+            Positioned.fill(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  top: size * 0.08,
+                  left: size * 0.12,
+                  right: size * 0.12,
+                ),
+                child: Image.asset(
+                  threat.pinAsset,
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stack) => Icon(
+                    Icons.bug_report,
+                    color: accent,
+                    size: size * 0.5,
+                  ),
+                ),
+              ),
+            ),
+            // Risk dot so the level is readable at a glance.
+            Positioned(
+              top: 0,
+              right: 0,
+              child: Container(
+                width: 14,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: accent,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Proximity monitoring zones in metres.
+  ///
+  /// Mirrors the dashboard risk map: larvae are ground bound (2-10 m
+  /// depending on risk), adult moths are winged dispersers (5 km flight
+  /// radius) and eggs / pupae do not move so they get no zone.
   double _getSpreadRadiusMeters(PestLifeStage stage, RiskLevel risk) {
     switch (stage) {
       case PestLifeStage.all:
@@ -744,20 +845,20 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       case PestLifeStage.egg:
         return 0; // no proximity
       case PestLifeStage.larva:
-        return 500; // 0.5 km (change to 1000 if you want 1 km)
+        switch (risk) {
+          case RiskLevel.veryHigh:
+          case RiskLevel.high:
+            return 10;
+          case RiskLevel.moderate:
+            return 5;
+          case RiskLevel.low:
+          case RiskLevel.veryLow:
+            return 2;
+        }
       case PestLifeStage.pupa:
         return 0; // pupae don't move much
       case PestLifeStage.moth:
-        switch (risk) {
-          case RiskLevel.low:
-            return 1000;
-          case RiskLevel.medium:
-            return 3000;
-          case RiskLevel.high:
-            return 5000;
-          case RiskLevel.critical:
-            return 8000;
-        }
+        return (FawRiskService.mothRadiusKm * 1000).roundToDouble();
     }
   }
 
@@ -850,22 +951,591 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
 
         content: Text(
           "Report: ${report.pestType} • "
-          "${report.riskLevel.name.toUpperCase()}",
+          "${report.riskLevel.label} risk",
         ),
       ),
     );
   }
 
-  Color _getRiskColor(RiskLevel level) {
+  /// Floating snack bar for a nearby moth threat. Shows what happened,
+  /// how far away it is and offers the mitigation strategy.
+  void _showThreatDetails(FawThreat threat) {
+    final accent = threat.riskLevel.color;
+    final steps = threat.mitigationSteps;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          duration: const Duration(seconds: 10),
+          margin: const EdgeInsets.all(16),
+          content: Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              gradient: LinearGradient(
+                colors: [
+                  Colors.black.withValues(alpha: 0.94),
+                  const Color(0xFF14532D),
+                ],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.3),
+                  blurRadius: 20,
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ---------- HEADER ----------
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: accent,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.flutter_dash,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "MOTH ACTIVITY NEAR YOUR FARM",
+                            style: GoogleFonts.inter(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 15,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Row(
+                            children: [
+                              _riskBadge(threat.riskLevel),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  threat.isClustered
+                                      ? "Weekly scouting"
+                                      : "Pest report",
+                                  style: GoogleFonts.inter(
+                                    color: Colors.white70,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                // ---------- DETAILS ----------
+                _infoRow(
+                  Icons.radar,
+                  "Distance from your farm",
+                  formatKm(threat.distanceKm),
+                ),
+                _infoRow(
+                  Icons.my_location,
+                  "Monitoring zone",
+                  '${(threat.radiusM / 1000).toStringAsFixed(1)} km'
+                      '${threat.windSpeedKmh != null ? ' (wind ${threat.windSpeedKmh!.toStringAsFixed(0)} km/h)' : ''}',
+                ),
+                _infoRow(
+                  Icons.location_on,
+                  "Reported at",
+                  threat.areaName.isNotEmpty
+                      ? threat.areaName
+                      : (threat.barangay.isNotEmpty
+                          ? threat.barangay
+                          : 'Unknown area'),
+                ),
+                _infoRow(
+                  Icons.agriculture,
+                  "Crop stage at detection",
+                  "${threat.growthStage.label} (DAP ${threat.dap})",
+                ),
+                _infoRow(
+                  Icons.bug_report,
+                  "Observed",
+                  _threatCountsLabel(threat),
+                ),
+
+                const SizedBox(height: 6),
+
+                // ---------- MITIGATION CTA ----------
+                GestureDetector(
+                  onTap: () => _showThreatMitigation(threat),
+                  child: Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(top: 10),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.25),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(
+                          Icons.health_and_safety_outlined,
+                          color: Colors.white,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          steps.isEmpty
+                              ? "VIEW DETAILS"
+                              : "VIEW MITIGATION STRATEGY",
+                          style: GoogleFonts.inter(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.4,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+  }
+
+  String _threatCountsLabel(FawThreat threat) {
+    final parts = <String>[];
+    if (threat.moths > 0) parts.add('${threat.moths} moth${threat.moths == 1 ? '' : 's'}');
+    if (threat.larvae > 0) parts.add('${threat.larvae} larvae');
+    if (threat.eggs > 0) parts.add('${threat.eggs} egg masses');
+    if (threat.pupae > 0) parts.add('${threat.pupae} pupae');
+    if (parts.isEmpty) parts.add('Adult moth recorded');
+    return parts.join(' • ');
+  }
+
+  Widget _riskBadge(RiskLevel level) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: level.color,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        "${level.label.toUpperCase()} RISK",
+        style: GoogleFonts.inter(
+          color: Colors.white,
+          fontSize: 9,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.3,
+        ),
+      ),
+    );
+  }
+
+  /// Bottom sheet with the full information and the mitigation strategies
+  /// recorded for a nearby threat.
+  void _showThreatMitigation(FawThreat threat) {
+    final steps = threat.mitigationSteps;
+    final accent = threat.riskLevel.color;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.72,
+          minChildSize: 0.4,
+          maxChildSize: 0.94,
+          expand: false,
+          builder: (context, scrollController) {
+            return Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    margin: const EdgeInsets.only(top: 12),
+                    width: 44,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.black12,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
+                      children: [
+                        // ---------- HEADER ----------
+                        Row(
+                          children: [
+                            _riskBadge(threat.riskLevel),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                threat.isClustered
+                                    ? 'Weekly scouting report'
+                                    : 'Pest report',
+                                style: GoogleFonts.inter(
+                                  color: Colors.grey.shade600,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          threat.detection,
+                          style: GoogleFonts.inter(
+                            color: const Color(0xFF1A1C1E),
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${formatKm(threat.distanceKm)} from your farm'
+                          '${threat.areaName.isNotEmpty ? ' • ${threat.areaName}' : ''}',
+                          style: GoogleFonts.inter(
+                            color: Colors.grey.shade700,
+                            fontSize: 13,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // ---------- WHY IT MATTERS ----------
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: accent.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: accent.withValues(alpha: 0.3),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(Icons.info_outline,
+                                      size: 16, color: accent),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'WHY THIS AFFECTS YOUR FARM',
+                                    style: GoogleFonts.inter(
+                                      color: accent,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Adult moths are the dispersal stage of the fall armyworm. '
+                                'They live 7-13 days and each female can lay about 950 eggs, '
+                                'so a single detection inside the 5-10 km flight zone '
+                                '(scaled by the wind recorded at the detection point) '
+                                'can seed a new infestation in your field.',
+                                style: GoogleFonts.inter(
+                                  color: Colors.grey.shade800,
+                                  fontSize: 13,
+                                  height: 1.45,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+
+                        // ---------- FACTS ----------
+                        _factRow(Icons.agriculture, 'Crop growth stage',
+                            '${threat.growthStage.label} (DAP ${threat.dap})'),
+                        _factRow(Icons.bug_report, 'Observed',
+                            _threatCountsLabel(threat)),
+                        _factRow(Icons.radar, 'Monitoring zone',
+                            '${(threat.radiusM / 1000).toStringAsFixed(1)} km'
+                            '${threat.windSpeedKmh != null ? ' (wind ${threat.windSpeedKmh!.toStringAsFixed(0)} km/h)' : ''}'),
+                        _factRow(Icons.grass, 'Barangay',
+                            threat.barangay.isNotEmpty ? threat.barangay : '—'),
+                        _factRow(Icons.person_outline, 'Reported by',
+                            threat.farmerName.isNotEmpty ? threat.farmerName : '—'),
+                        if (threat.fieldName.isNotEmpty)
+                          _factRow(Icons.landscape, 'Field',
+                              threat.fieldName),
+                        if (threat.damagePercentage > 0)
+                          _factRow(Icons.trending_down, 'Plant damage',
+                              '${threat.damagePercentage.toStringAsFixed(1)}%'
+                              '${threat.thresholdReached ? ' • threshold exceeded' : ''}'),
+
+                        const SizedBox(height: 18),
+
+                        // ---------- MITIGATION ----------
+                        Text(
+                          'MITIGATION STRATEGIES',
+                          style: GoogleFonts.inter(
+                            color: const Color(0xFF1A1C1E),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.6,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        if (steps.isEmpty)
+                          Text(
+                            'No mitigation strategy has been recorded for this detection yet. '
+                            'Scout your nearest fields for egg masses and larvae, and set up '
+                            'pheromone traps to monitor adult activity.',
+                            style: GoogleFonts.inter(
+                              color: Colors.grey.shade700,
+                              fontSize: 13,
+                              height: 1.45,
+                            ),
+                          )
+                        else
+                          ...steps.asMap().entries.map(
+                                (entry) => _buildMitigationStep(
+                                  entry.key + 1,
+                                  entry.value.title,
+                                  entry.value.body,
+                                  accent,
+                                ),
+                              ),
+
+                        const SizedBox(height: 18),
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF1F8F4),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: const Color(0xFF81C784).withValues(alpha: 0.6),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(Icons.shield_moon_outlined,
+                                      color: Color(0xFF1B5E37), size: 16),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'LOCAL ACTION CHECKLIST',
+                                    style: GoogleFonts.inter(
+                                      color: const Color(0xFF1B5E37),
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              ...const [
+                                'Scout the nearest 5 km for egg masses and feeding damage.',
+                                'Install or refresh pheromone traps to track adult moth activity.',
+                                'Increase inspection frequency to weekly during the vulnerable stage.',
+                                'Report any egg mass or larva you find immediately.',
+                              ].map(
+                                (line) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 5),
+                                  child: Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Text('• ',
+                                          style: TextStyle(
+                                              color: Color(0xFF1B5E37),
+                                              fontSize: 13)),
+                                      Expanded(
+                                        child: Text(
+                                          line,
+                                          style: GoogleFonts.inter(
+                                            color: const Color(0xFF2E6347),
+                                            fontSize: 12.5,
+                                            height: 1.4,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _factRow(IconData icon, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: Colors.grey.shade600),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              label,
+              style: GoogleFonts.inter(
+                color: Colors.grey.shade700,
+                fontSize: 12.5,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: GoogleFonts.inter(
+                color: const Color(0xFF1A1C1E),
+                fontWeight: FontWeight.w700,
+                fontSize: 12.5,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMitigationStep(int index, String title, String body, Color accent) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF9FAF8),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: accent.withValues(alpha: 0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+                alignment: Alignment.center,
+                child: Text(
+                  '$index',
+                  style: GoogleFonts.inter(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title.toUpperCase(),
+                  style: GoogleFonts.inter(
+                    color: const Color(0xFF1A1C1E),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.4,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          MarkdownBody(
+            data: body,
+            styleSheet: MarkdownStyleSheet(
+              p: GoogleFonts.inter(
+                fontSize: 13,
+                height: 1.45,
+                color: Colors.grey.shade800,
+              ),
+              listBullet: GoogleFonts.inter(
+                fontSize: 13,
+                height: 1.4,
+                color: Colors.grey.shade800,
+              ),
+              strong: const TextStyle(
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF1A1C1E),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _getRiskColor(RiskLevel level) => level.color;
+
+  /// The dashboard's moth monitoring zone colours (violet family).
+  Color _getMothZoneColor(RiskLevel level) {
     switch (level) {
-      case RiskLevel.low:
-        return const Color(0xFFFFEB3B);
-      case RiskLevel.medium:
-        return const Color(0xFFFF9800);
+      case RiskLevel.veryHigh:
       case RiskLevel.high:
-        return const Color(0xFFF44336);
-      case RiskLevel.critical:
-        return const Color(0xFF9C27B0);
+        return const Color(0xFF8B5CF6);
+      case RiskLevel.moderate:
+        return const Color(0xFFA855F7);
+      case RiskLevel.low:
+      case RiskLevel.veryLow:
+        return const Color(0xFF7C3AED);
+    }
+  }
+
+  PestLifeStage _toPestLifeStage(FawStageKey stage) {
+    switch (stage) {
+      case FawStageKey.egg:
+        return PestLifeStage.egg;
+      case FawStageKey.larva:
+        return PestLifeStage.larva;
+      case FawStageKey.pupa:
+        return PestLifeStage.pupa;
+      case FawStageKey.moth:
+        return PestLifeStage.moth;
+      case FawStageKey.none:
+        return PestLifeStage.egg;
     }
   }
 
@@ -1005,6 +1675,104 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
               ),
             ),
           ),
+
+          /// NEARBY THREAT BADGE
+          if (_isLoadingThreats)
+            Positioned(
+              top: 86,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.7),
+                    borderRadius: BorderRadius.circular(30),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(
+                        width: 11,
+                        height: 11,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 1.8,
+                          color: Color(0xFFA855F7),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Scanning nearby farms for moth activity...',
+                        style: GoogleFonts.inter(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            )
+          else if (_threats.isNotEmpty)
+            Positioned(
+              top: 86,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: GestureDetector(
+                  onTap: () {
+                    final worst = _threats.first;
+                    _showThreatDetails(worst);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.7),
+                      borderRadius: BorderRadius.circular(30),
+                      border: Border.all(
+                        color: const Color(0xFF8B5CF6).withValues(alpha: 0.7),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.flutter_dash,
+                            size: 14, color: Color(0xFFA855F7)),
+                        const SizedBox(width: 6),
+                        Text(
+                          '${_threats.length} nearby moth threat${_threats.length == 1 ? '' : 's'}',
+                          style: GoogleFonts.inter(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: _threats.first.riskLevel.color,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            _threats.first.riskLevel.label.toUpperCase(),
+                            style: GoogleFonts.inter(
+                              color: Colors.white,
+                              fontSize: 8.5,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
 
           /// LIFE STAGE TOGGLE BUTTONS (Horizontal Scroll)
           Positioned(
@@ -1148,10 +1916,17 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                 ),
               ),
               const SizedBox(height: 6),
-              _legendItem(const Color(0xFFFFEB3B), "Low Risk"),
-              _legendItem(const Color(0xFFFF9800), "Medium Risk"),
-              _legendItem(const Color(0xFFF44336), "High Risk"),
-              _legendItem(const Color(0xFF9C27B0), "Critical"),
+              _legendItem(RiskLevel.veryLow.color, "Very Low"),
+              _legendItem(RiskLevel.low.color, "Low"),
+              _legendItem(RiskLevel.moderate.color, "Moderate"),
+              _legendItem(RiskLevel.high.color, "High"),
+              _legendItem(RiskLevel.veryHigh.color, "Very High"),
+              if (_threats.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                const Divider(color: Colors.white24, height: 12),
+                _legendItem(const Color(0xFF8B5CF6),
+                    "Moth zone (5-10 km)"),
+              ],
             ],
           ),
         ),
@@ -1218,7 +1993,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
 
   void _showRiskDetails(RiskPoint point) {
     final stage = point.stage.toString().split('.').last.toUpperCase();
-    final risk = point.riskLevel.toString().split('.').last.toUpperCase();
+    final risk = point.riskLevel.label.toUpperCase();
 
     final radius = _getSpreadRadiusMeters(point.stage, point.riskLevel);
 

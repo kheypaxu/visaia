@@ -12,8 +12,6 @@ const Color kBackgroundWhite = Color(0xFFF9FBFB);
 const Color kCardWhite = Color(0xFFFFFFFF);
 const Color kTextDark = Color(0xFF1A1C1E);
 const Color kTextGrey = Color(0xFF5E6266);
-const Color kArchiveRed = Color(0xFFC0392B);
-const Color kArchiveBg = Color(0xFFFFE5E5);
 const Color kBorderColor = Color(0xFFE8ECEF);
 
 class EditCropCycleScreen extends StatefulWidget {
@@ -30,7 +28,6 @@ class _EditCropCycleScreenState extends State<EditCropCycleScreen> {
   bool _isLoading = true;
   bool _isSaving = false;
   bool _showSaveModal = false;
-  bool _showArchiveModal = false;
   String? _error;
 
   // Form controllers
@@ -465,38 +462,6 @@ class _EditCropCycleScreenState extends State<EditCropCycleScreen> {
     }
   }
 
-  Future<void> _archiveCycle() async {
-    final uid = _effectiveUid;
-    if (uid == null) return;
-
-    setState(() => _isSaving = true);
-
-    try {
-      await _firestore
-          .collection('users')
-          .doc(uid)
-          .collection('cycles')
-          .doc(widget.cycleId)
-          .update({
-        'isArchived': true,
-        'isCompleted': true,
-        'archivedAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      setState(() {
-        _showArchiveModal = false;
-        _isSaving = false;
-      });
-
-      _showSnackBar('Cycle archived successfully');
-      Navigator.pop(context, true);
-    } catch (e) {
-      setState(() => _isSaving = false);
-      _showSnackBar('Failed to archive cycle: $e');
-    }
-  }
-
   void _showSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -551,13 +516,6 @@ class _EditCropCycleScreenState extends State<EditCropCycleScreen> {
             _buildOverlayWrapper(
               child: _buildSaveModal(),
               onDismiss: () => setState(() => _showSaveModal = false),
-            ),
-
-          // --- SCREEN 3: ARCHIVE MODAL ---
-          if (_showArchiveModal)
-            _buildOverlayWrapper(
-              child: _buildArchiveModal(),
-              onDismiss: () => setState(() => _showArchiveModal = false),
             ),
 
           // Loading overlay
@@ -682,20 +640,7 @@ class _EditCropCycleScreenState extends State<EditCropCycleScreen> {
                     keyboardType: TextInputType.numberWithOptions(decimal: true),
                   ),
                   const SizedBox(height: 40),
-                  _buildArchiveButton(),
-                  const SizedBox(height: 20),
-                  const Center(
-                    child: Text(
-                      "ARCHIVED CYCLES REMAIN VISIBLE IN\nHISTORICAL REPORTS",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: kTextGrey,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                  ),
+                  _buildSaveButton(),
                   const SizedBox(height: 40),
                 ],
               ),
@@ -722,18 +667,6 @@ class _EditCropCycleScreenState extends State<EditCropCycleScreen> {
               color: kPrimaryGreen,
               fontSize: 18,
               fontWeight: FontWeight.w700,
-            ),
-          ),
-          const Spacer(),
-          TextButton(
-            onPressed: _isLoading ? null : () => setState(() => _showSaveModal = true),
-            child: Text(
-              "Save",
-              style: TextStyle(
-                color: _isLoading ? kTextGrey : kPrimaryGreen,
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-              ),
             ),
           ),
         ],
@@ -1183,25 +1116,36 @@ class _EditCropCycleScreenState extends State<EditCropCycleScreen> {
     );
   }
 
-  Widget _buildArchiveButton() {
+  Widget _buildSaveButton() {
     return GestureDetector(
-      onTap: _isLoading ? null : () => setState(() => _showArchiveModal = true),
+      onTap: _isLoading ? null : () => setState(() => _showSaveModal = true),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 20),
         decoration: BoxDecoration(
-          color: const Color(0xFFFFE5E5),
+          color: kPrimaryGreen,
           borderRadius: BorderRadius.circular(32),
+          boxShadow: [
+            BoxShadow(
+              color: kPrimaryGreen.withOpacity(0.25),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.archive_outlined, color: kArchiveRed, size: 22),
+            Icon(
+              Icons.check_circle_outline,
+              color: _isLoading ? kTextGrey : Colors.white,
+              size: 22,
+            ),
             const SizedBox(width: 10),
             Text(
-              "Archive This Crop Cycle",
+              "Save Changes",
               style: TextStyle(
-                color: _isLoading ? kTextGrey : kArchiveRed,
+                color: _isLoading ? kTextGrey : Colors.white,
                 fontSize: 16,
                 fontWeight: FontWeight.w800,
               ),
@@ -1317,93 +1261,6 @@ class _EditCropCycleScreenState extends State<EditCropCycleScreen> {
             kTextGrey,
             () => setState(() => _showSaveModal = false),
             hasBorder: true,
-          ),
-        ],
-      ),
-    );
-  }
-
-  // --- SCREEN 3: ARCHIVE MODAL ---
-  Widget _buildArchiveModal() {
-    return Container(
-      width: 320,
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: kCardWhite,
-        borderRadius: BorderRadius.circular(32),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: const BoxDecoration(
-              color: Color(0xFFFFEBD2),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.archive_outlined,
-              color: Color(0xFF7E5700),
-              size: 32,
-            ),
-          ),
-          const SizedBox(height: 24),
-          const Text(
-            "Archive This Crop Cycle?",
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w900,
-              color: kTextDark,
-            ),
-          ),
-          const SizedBox(height: 12),
-          RichText(
-            textAlign: TextAlign.center,
-            text: TextSpan(
-              style: const TextStyle(
-                color: kTextGrey,
-                fontSize: 14,
-                height: 1.5,
-              ),
-              children: [
-                const TextSpan(text: "This will move "),
-                TextSpan(
-                  text: _cycleNameController.text.isEmpty
-                      ? "'this cycle'"
-                      : "'${_cycleNameController.text}'",
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    color: kTextDark,
-                  ),
-                ),
-                const TextSpan(
-                  text:
-                      " to your historical records. You will no longer be able to record active monitoring data for this field.",
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 32),
-          _modalButton(
-            "Archive Cycle",
-            const Color(0xFF5C3D00),
-            Colors.white,
-            _archiveCycle,
-          ),
-          const SizedBox(height: 12),
-          _modalButton(
-            "Keep Active",
-            const Color(0xFFE8ECEF),
-            kTextDark,
-            () => setState(() => _showArchiveModal = false),
           ),
         ],
       ),

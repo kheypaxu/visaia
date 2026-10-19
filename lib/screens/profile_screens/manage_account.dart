@@ -3,7 +3,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:convert';
+import 'package:image_picker/image_picker.dart';
 import 'package:visaia/utils/location_constants.dart';
+import 'package:visaia/utils/image_compression.dart';
 
 class ManageAccountScreen extends StatefulWidget {
   const ManageAccountScreen({super.key});
@@ -28,6 +30,14 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
   String _profileImageBase64 = '';
   bool _isLoading = true;
   bool _isSaving = false;
+
+  // Identity documents (front / back of the ID)
+  String _idFrontBase64 = '';
+  String _idBackBase64 = '';
+  String _idFrontFileName = '';
+  String _idBackFileName = '';
+  bool _isUploadingImage = false;
+  IdSide? _uploadingSide;
   
   // Password fields
   final TextEditingController _currentPasswordController = TextEditingController();
@@ -84,6 +94,10 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
           _email = data['email'] ?? user.email ?? '';
           _rsbsaId = data['rsbsaId'] ?? '';
           _profileImageBase64 = data['profileImage'] ?? '';
+          _idFrontBase64 = data['farmerIdImage'] ?? '';
+          _idBackBase64 = data['farmerIdImageBack'] ?? '';
+          _idFrontFileName = data['farmerIdFileName'] ?? '';
+          _idBackFileName = data['farmerIdBackFileName'] ?? '';
           _barangay = loadedBarangay;
           _selectedBarangay = loadedBarangay.isNotEmpty && LocationConstants.cabatuanBarangays.contains(loadedBarangay)
               ? loadedBarangay
@@ -132,6 +146,248 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
         );
       }
     }
+  }
+
+  /* ================= ID / PROFILE IMAGE HANDLING ================= */
+
+  /// Lets the farmer choose between taking a photo or browsing the gallery.
+  Future<ImageSource?> _pickImageSource() {
+    return showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 12),
+              Container(
+                width: 44,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                'Select a source',
+                style: GoogleFonts.manrope(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: darkGreen,
+                ),
+              ),
+              const SizedBox(height: 10),
+              ListTile(
+                leading: const Icon(Icons.photo_camera_rounded,
+                    color: Color(0xFF4A633F), size: 24),
+                title: Text('Take a photo',
+                    style: GoogleFonts.manrope(
+                        color: darkGreen, fontSize: 15, fontWeight: FontWeight.w600)),
+                onTap: () => Navigator.pop(context, ImageSource.camera),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_rounded,
+                    color: Color(0xFF4A633F), size: 24),
+                title: Text('Choose from gallery',
+                    style: GoogleFonts.manrope(
+                        color: darkGreen, fontSize: 15, fontWeight: FontWeight.w600)),
+                onTap: () => Navigator.pop(context, ImageSource.gallery),
+              ),
+              const SizedBox(height: 10),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// Picks, compresses and persists the farmer's profile picture.
+  Future<void> _pickAndSaveProfileImage() async {
+    if (_isUploadingImage) return;
+
+    try {
+      final source = await _pickImageSource();
+      if (source == null) return;
+
+      setState(() => _isUploadingImage = true);
+
+      final picked = await ImagePicker().pickImage(
+        source: source,
+        imageQuality: 90,
+        maxWidth: 2000,
+        maxHeight: 2000,
+      );
+
+      if (picked == null) {
+        if (mounted) setState(() => _isUploadingImage = false);
+        return;
+      }
+
+      final compressed = await compressImageToBase64(
+        picked.path,
+        fileName: picked.name,
+        quality: 55,
+        maxDimension: 720,
+      );
+
+      if (compressed == null) {
+        if (mounted) {
+          setState(() => _isUploadingImage = false);
+          _showSnack('Could not read the selected image.', Colors.red);
+        }
+        return;
+      }
+
+      final user = _auth.currentUser;
+      if (user == null) {
+        if (mounted) setState(() => _isUploadingImage = false);
+        return;
+      }
+
+      await _firestore
+          .collection('farmers')
+          .doc(user.uid)
+          .set({'profileImage': compressed.base64}, SetOptions(merge: true));
+
+      if (!mounted) return;
+      setState(() {
+        _profileImageBase64 = compressed.base64;
+        _isUploadingImage = false;
+      });
+      _showSnack('Profile photo updated', Colors.green);
+    } catch (e) {
+      debugPrint('Error uploading profile image: $e');
+      if (mounted) {
+        setState(() => _isUploadingImage = false);
+        _showSnack('Error updating profile photo: $e', Colors.red);
+      }
+    }
+  }
+
+  /// Picks, compresses and persists one side (front / back) of the ID.
+  Future<void> _pickAndSaveIdSide(IdSide side) async {
+    if (_isUploadingImage) return;
+
+    try {
+      final source = await _pickImageSource();
+      if (source == null) return;
+
+      setState(() {
+        _isUploadingImage = true;
+        _uploadingSide = side;
+      });
+
+      final picked = await ImagePicker().pickImage(
+        source: source,
+        imageQuality: 90,
+        maxWidth: 2000,
+        maxHeight: 2000,
+      );
+
+      if (picked == null) {
+        if (mounted) {
+          setState(() {
+            _isUploadingImage = false;
+            _uploadingSide = null;
+          });
+        }
+        return;
+      }
+
+      final compressed = await compressImageToBase64(
+        picked.path,
+        fileName: picked.name,
+      );
+
+      if (compressed == null) {
+        if (mounted) {
+          setState(() {
+            _isUploadingImage = false;
+            _uploadingSide = null;
+          });
+          _showSnack('Could not read the selected image.', Colors.red);
+        }
+        return;
+      }
+
+      final user = _auth.currentUser;
+      if (user == null) {
+        if (mounted) {
+          setState(() {
+            _isUploadingImage = false;
+            _uploadingSide = null;
+          });
+        }
+        return;
+      }
+
+      final payload = side == IdSide.front
+          ? {
+              'farmerIdImage': compressed.base64,
+              'farmerIdFileName': compressed.fileName,
+            }
+          : {
+              'farmerIdImageBack': compressed.base64,
+              'farmerIdBackFileName': compressed.fileName,
+            };
+
+      await _firestore
+          .collection('farmers')
+          .doc(user.uid)
+          .set(payload, SetOptions(merge: true));
+
+      if (!mounted) return;
+      setState(() {
+        if (side == IdSide.front) {
+          _idFrontBase64 = compressed.base64;
+          _idFrontFileName = compressed.fileName;
+        } else {
+          _idBackBase64 = compressed.base64;
+          _idBackFileName = compressed.fileName;
+        }
+        _isUploadingImage = false;
+        _uploadingSide = null;
+      });
+      _showSnack('${side.label} of your ID uploaded', Colors.green);
+    } catch (e) {
+      debugPrint('Error uploading ID side: $e');
+      if (mounted) {
+        setState(() {
+          _isUploadingImage = false;
+          _uploadingSide = null;
+        });
+        _showSnack('Error uploading ID: $e', Colors.red);
+      }
+    }
+  }
+
+  void _showSnack(String message, Color color) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: color,
+      ),
+    );
+  }
+
+  /// True when at least one side of the ID is still missing.
+  bool get _hasMissingIdSide =>
+      _idFrontBase64.isEmpty || _idBackBase64.isEmpty;
+
+  /// Human readable description of what still needs to be uploaded.
+  String get _missingIdSideLabel {
+    if (_idFrontBase64.isEmpty && _idBackBase64.isEmpty) {
+      return 'both sides of your ID';
+    }
+    if (_idFrontBase64.isEmpty) return 'the front of your ID';
+    if (_idBackBase64.isEmpty) return 'the back of your ID';
+    return '';
   }
 
   Future<void> _saveUserData() async {
@@ -387,21 +643,55 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 16.0),
-            child: CircleAvatar(
-              radius: 18,
-              backgroundImage: _profileImageBase64.isNotEmpty
-                  ? MemoryImage(base64Decode(_profileImageBase64))
-                  : null,
-              child: _profileImageBase64.isEmpty
-                  ? Text(
-                      _getInitials(),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
+            child: GestureDetector(
+              onTap: _isUploadingImage ? null : _pickAndSaveProfileImage,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundImage: _profileImageBase64.isNotEmpty
+                        ? MemoryImage(base64Decode(_profileImageBase64))
+                        : null,
+                    child: _profileImageBase64.isEmpty
+                        ? Text(
+                            _getInitials(),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          )
+                        : null,
+                  ),
+                  Positioned(
+                    right: -2,
+                    bottom: -2,
+                    child: Container(
+                      padding: const EdgeInsets.all(3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2D4421),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: bgColor, width: 2),
                       ),
-                    )
-                  : null,
+                      child: _isUploadingImage
+                          ? const SizedBox(
+                              width: 10,
+                              height: 10,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 1.6,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(
+                              Icons.photo_camera_rounded,
+                              color: Colors.white,
+                              size: 10,
+                            ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],
@@ -485,6 +775,279 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
                           FontWeight.w600,
                           16,
                         ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 36),
+
+            // Profile Photo Card
+            Text(
+              'Profile Photo',
+              style: GoogleFonts.epilogue(
+                fontSize: 19,
+                fontWeight: FontWeight.w800,
+                color: darkGreen,
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(28),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.02),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10),
+                  )
+                ],
+              ),
+              child: Row(
+                children: [
+                  GestureDetector(
+                    onTap: _isUploadingImage ? null : _pickAndSaveProfileImage,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        CircleAvatar(
+                          radius: 38,
+                          backgroundColor: const Color(0xFF2D4421),
+                          backgroundImage: _profileImageBase64.isNotEmpty
+                              ? MemoryImage(base64Decode(_profileImageBase64))
+                              : null,
+                          child: _profileImageBase64.isEmpty
+                              ? Text(
+                                  _getInitials(),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 26,
+                                  ),
+                                )
+                              : null,
+                        ),
+                        Positioned(
+                          right: -2,
+                          bottom: -2,
+                          child: Container(
+                            padding: const EdgeInsets.all(5),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF2D4421),
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 2),
+                            ),
+                            child: _isUploadingImage
+                                ? const SizedBox(
+                                    width: 12,
+                                    height: 12,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 1.8,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Icon(
+                                    Icons.photo_camera_rounded,
+                                    color: Colors.white,
+                                    size: 13,
+                                  ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 20),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _profileImageBase64.isEmpty
+                              ? 'No profile photo yet'
+                              : 'Profile photo updated',
+                          style: GoogleFonts.manrope(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: _profileImageBase64.isEmpty
+                                ? Colors.grey
+                                : darkGreen,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'This photo is shown to the LGU-MAO on your farmer profile.',
+                          style: GoogleFonts.manrope(
+                            fontSize: 12.5,
+                            color: textGray.withValues(alpha: 0.65),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        SizedBox(
+                          height: 42,
+                          child: OutlinedButton.icon(
+                            onPressed:
+                                _isUploadingImage ? null : _pickAndSaveProfileImage,
+                            icon: const Icon(Icons.image_outlined, size: 18),
+                            label: Text(
+                              _profileImageBase64.isEmpty
+                                  ? 'Choose photo'
+                                  : 'Change photo',
+                              style: GoogleFonts.manrope(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w700,
+                                color: const Color(0xFF173408),
+                              ),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(
+                                color: Color(0xFF173408),
+                                width: 1.2,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(22),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 36),
+
+            // Identity Documents Card
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Identity Documents',
+                  style: GoogleFonts.epilogue(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w800,
+                    color: darkGreen,
+                  ),
+                ),
+                if (_hasMissingIdSide)
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF3E0),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      'Action required',
+                      style: GoogleFonts.manrope(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFFB45309),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // Prompt for the missing side(s)
+            if (_hasMissingIdSide)
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 16),
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF8E7),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: const Color(0xFFFDE3A7)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.info_rounded,
+                            color: Color(0xFFB45309), size: 20),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Please upload $_missingIdSideLabel. '
+                            'The municipal office needs both sides to '
+                            'complete your verification.',
+                            style: GoogleFonts.manrope(
+                              fontSize: 13,
+                              height: 1.45,
+                              color: const Color(0xFF78350F),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    if (_idFrontBase64.isEmpty)
+                      _buildUploadAction(
+                        label: 'Upload the front of your ID',
+                        side: IdSide.front,
+                      ),
+                    if (_idFrontBase64.isEmpty && _idBackBase64.isEmpty)
+                      const SizedBox(height: 10),
+                    if (_idBackBase64.isEmpty)
+                      _buildUploadAction(
+                        label: 'Upload the back of your ID',
+                        side: IdSide.back,
+                      ),
+                  ],
+                ),
+              ),
+
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(28),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.02),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10),
+                  )
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Your ID images are compressed and stored securely for '
+                    'verification purposes only.',
+                    style: GoogleFonts.manrope(
+                      fontSize: 12.5,
+                      color: textGray.withValues(alpha: 0.65),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildIdPreview(
+                          side: IdSide.front,
+                          base64: _idFrontBase64,
+                          fileName: _idFrontFileName,
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: _buildIdPreview(
+                          side: IdSide.back,
+                          base64: _idBackBase64,
+                          fileName: _idBackFileName,
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -596,6 +1159,173 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
   }
 
   // Helper widgets
+  Widget _buildUploadAction({
+    required String label,
+    required IdSide side,
+  }) {
+    final busy = _isUploadingImage && _uploadingSide == side;
+    return SizedBox(
+      width: double.infinity,
+      height: 46,
+      child: ElevatedButton.icon(
+        onPressed: _isUploadingImage ? null : () => _pickAndSaveIdSide(side),
+        icon: busy
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+            : const Icon(Icons.cloud_upload_outlined, size: 18),
+        label: Text(
+          busy ? 'Uploading…' : label,
+          style: GoogleFonts.manrope(
+            fontSize: 13.5,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+          ),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF14290B),
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(23),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Front / back container for one side of the identity document.
+  Widget _buildIdPreview({
+    required IdSide side,
+    required String base64,
+    required String fileName,
+  }) {
+    final hasImage = base64.isNotEmpty;
+    final busy = _isUploadingImage && _uploadingSide == side;
+
+    return GestureDetector(
+      onTap: _isUploadingImage ? null : () => _pickAndSaveIdSide(side),
+      child: Container(
+        decoration: BoxDecoration(
+          color: inputBg,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: hasImage
+                ? const Color(0xFF4A633F).withValues(alpha: 0.45)
+                : Colors.grey.withValues(alpha: 0.35),
+            width: 1.2,
+            style: hasImage ? BorderStyle.solid : BorderStyle.solid,
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AspectRatio(
+              aspectRatio: 1.6,
+              child: hasImage
+                  ? Image.memory(
+                      base64Decode(base64),
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _buildIdPlaceholder(side),
+                    )
+                  : _buildIdPlaceholder(side),
+            ),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              color: Colors.white,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${side.label.toUpperCase()} OF ID',
+                    style: GoogleFonts.manrope(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.8,
+                      color: textGray.withValues(alpha: 0.6),
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    busy
+                        ? 'Uploading…'
+                        : (hasImage
+                            ? (fileName.isEmpty ? 'Uploaded' : fileName)
+                            : 'Not uploaded'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.manrope(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: hasImage ? darkGreen : Colors.grey,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(
+                        hasImage
+                            ? Icons.check_circle_rounded
+                            : Icons.add_a_photo_outlined,
+                        size: 15,
+                        color: hasImage
+                            ? const Color(0xFF4A633F)
+                            : const Color(0xFF173408),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          hasImage ? 'Replace' : 'Upload',
+                          style: GoogleFonts.manrope(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: const Color(0xFF173408),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildIdPlaceholder(IdSide side) {
+    return Container(
+      color: inputBg,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.badge_outlined,
+            size: 26,
+            color: Colors.grey.withValues(alpha: 0.55),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '${side.label} not uploaded',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.manrope(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.withValues(alpha: 0.7),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBarangayDropdown() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

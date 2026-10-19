@@ -1,14 +1,14 @@
 import 'dart:ui';
-import 'dart:convert';
 import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:visaia/screens/auth/login_screen.dart';
 import 'package:visaia/utils/location_constants.dart';
+import 'package:visaia/utils/image_compression.dart';
 
 class VerificationFormScreen extends StatefulWidget {
   const VerificationFormScreen({super.key});
@@ -37,10 +37,14 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
 
   String? _selectedBarangay;
 
-  String? _base64Image;
+  // ID document images — front and back
+  String? _base64Image; // front
   String _farmerIdFileName = 'No file selected';
+  String? _base64ImageBack; // back
+  String _farmerIdBackFileName = 'No file selected';
 
   bool _isSubmitting = false;
+  bool _isPickingImage = false;
 
   // Track if user has RSBSA ID
   bool _hasRsbsaId = true; // Default to true
@@ -113,41 +117,136 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
     }
   }
 
-  Future<void> _uploadFarmerId() async {
+  /// Lets the farmer choose between taking a photo or browsing the gallery.
+  Future<ImageSource?> _pickImageSource() async {
+    return showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: const Color(0xFF1B2E15),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 12),
+              Container(
+                width: 44,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.25),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                'Select a source',
+                style: GoogleFonts.epilogue(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 14),
+              ListTile(
+                leading: const Icon(Icons.photo_camera_rounded,
+                    color: Color(0xFF2EAA4D), size: 24),
+                title: Text('Take a photo',
+                    style: GoogleFonts.epilogue(color: Colors.white, fontSize: 15)),
+                onTap: () => Navigator.pop(context, ImageSource.camera),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_rounded,
+                    color: Color(0xFF2EAA4D), size: 24),
+                title: Text('Choose from gallery',
+                    style: GoogleFonts.epilogue(color: Colors.white, fontSize: 15)),
+                onTap: () => Navigator.pop(context, ImageSource.gallery),
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// Compresses and stores the picked image for the given ID side.
+  ///
+  /// [side] is either [IdSide.front] or [IdSide.back].
+  Future<void> _uploadFarmerId(IdSide side) async {
+    if (_isPickingImage) return;
+
     try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.image,
-        withData: true,
+      final source = await _pickImageSource();
+      if (source == null) return;
+
+      setState(() => _isPickingImage = true);
+
+      final picked = await ImagePicker().pickImage(
+        source: source,
+        imageQuality: 90,
+        maxWidth: 2000,
+        maxHeight: 2000,
       );
 
-      if (result != null) {
-        Uint8List? fileBytes = result.files.first.bytes;
-
-        if (fileBytes != null) {
-          String base64String = base64Encode(fileBytes);
-
-          setState(() {
-            _base64Image = base64String;
-            _farmerIdFileName = result.files.first.name;
-          });
-
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  'Image selected: ${result.files.first.name}',
-                  style: GoogleFonts.epilogue(),
-                ),
-                backgroundColor: const Color(0xFF1A5C30),
-                behavior: SnackBarBehavior.floating,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            );
-          }
-        }
+      if (picked == null) {
+        if (mounted) setState(() => _isPickingImage = false);
+        return;
       }
+
+      final compressed = await compressImageToBase64(
+        picked.path,
+        fileName: picked.name,
+      );
+
+      if (compressed == null) {
+        if (mounted) {
+          setState(() => _isPickingImage = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Could not read the selected image. Please try another file.',
+                style: GoogleFonts.epilogue(),
+              ),
+              backgroundColor: Colors.redAccent,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          );
+        }
+        return;
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        if (side == IdSide.front) {
+          _base64Image = compressed.base64;
+          _farmerIdFileName = compressed.fileName;
+        } else {
+          _base64ImageBack = compressed.base64;
+          _farmerIdBackFileName = compressed.fileName;
+        }
+        _isPickingImage = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${side == IdSide.front ? 'Front' : 'Back'} of ID uploaded '
+            '(${compressed.bytes ~/ 1024} KB)',
+            style: GoogleFonts.epilogue(),
+          ),
+          backgroundColor: const Color(0xFF1A5C30),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
     } catch (e) {
+      developer.log('❌ ID capture error: $e');
       if (mounted) {
+        setState(() => _isPickingImage = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -262,6 +361,14 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
         farmerData["farmerIdFileName"] = _farmerIdFileName;
         farmerData["farmerIdImage"] = _base64Image;
       }
+
+      // Back of the ID is optional at registration — the farmer is prompted
+      // to upload the missing side later from Manage Account.
+      farmerData["farmerIdImageBack"] = _base64ImageBack;
+      farmerData["farmerIdBackFileName"] =
+          _base64ImageBack == null ? null : _farmerIdBackFileName;
+      farmerData["idUploadCompleted"] =
+          _base64Image != null && _base64ImageBack != null;
 
       developer.log('📤 Saving farmer data: $farmerData');
 
@@ -392,6 +499,86 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
           fontWeight: FontWeight.w700,
           letterSpacing: 0.8,
           color: Colors.white.withValues(alpha: 0.85),
+        ),
+      ),
+    );
+  }
+
+  /// Upload row for one side (front / back) of the identity document.
+  Widget _buildIdUploadTile({
+    required IdSide side,
+    required String fileName,
+    required bool disabled,
+  }) {
+    final hasImage = side == IdSide.front
+        ? _base64Image != null
+        : _base64ImageBack != null;
+    final isDone = hasImage;
+
+    return GestureDetector(
+      onTap: (disabled || _isPickingImage) ? null : () => _uploadFarmerId(side),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 10,
+        ),
+        decoration: BoxDecoration(
+          color: disabled
+              ? Colors.black.withValues(alpha: 0.1)
+              : Colors.black.withValues(alpha: 0.22),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isDone
+                ? const Color(0xFF2EAA4D).withValues(alpha: 0.7)
+                : Colors.white.withValues(alpha: 0.22),
+            width: 1.0,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isDone
+                  ? Icons.check_circle_rounded
+                  : Icons.cloud_upload_outlined,
+              color: disabled
+                  ? Colors.white30
+                  : (isDone ? const Color(0xFF2EAA4D) : const Color(0xFF2EAA4D)),
+              size: 20,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                disabled
+                    ? 'Skipped (Upload later in profile)'
+                    : (isDone
+                        ? fileName
+                        : 'Tap to upload the ${side.label.toLowerCase()} of your ID'),
+                style: GoogleFonts.epilogue(
+                  color: disabled
+                      ? Colors.white38
+                      : Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (_isPickingImage)
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Color(0xFF2EAA4D),
+                ),
+              )
+            else
+              Icon(
+                Icons.arrow_forward_ios_rounded,
+                color: disabled ? Colors.white24 : Colors.white60,
+                size: 13,
+              ),
+          ],
         ),
       ),
     );
@@ -1042,11 +1229,13 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
                                        const SizedBox(height: 12),
                                       ],
 
-                                      // Row 6: ID Photo Upload Bar with Inline Skip Option
+                                      // Row 6: ID Photo Upload — Front & Back
                                       Row(
                                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                         children: [
-                                          _buildFieldLabel(_hasRsbsaId ? 'FARMER ID PHOTO' : 'GOV ID PHOTO'),
+                                          _buildFieldLabel(_hasRsbsaId
+                                              ? 'FARMER ID PHOTO (FRONT)'
+                                              : 'GOV ID PHOTO (FRONT)'),
                                           if (_hasRsbsaId)
                                             Row(
                                               mainAxisSize: MainAxisSize.min,
@@ -1083,56 +1272,55 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
                                             ),
                                         ],
                                       ),
-                                      GestureDetector(
-                                        onTap: _skipFarmerId ? null : _uploadFarmerId,
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 14,
-                                            vertical: 10,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: _skipFarmerId
-                                                ? Colors.black.withValues(alpha: 0.1)
-                                                : Colors.black.withValues(alpha: 0.22),
-                                            borderRadius: BorderRadius.circular(14),
-                                            border: Border.all(
-                                              color: Colors.white.withValues(alpha: 0.22),
-                                              width: 1.0,
+                                      _buildIdUploadTile(
+                                        side: IdSide.front,
+                                        fileName: _farmerIdFileName,
+                                        disabled: _skipFarmerId,
+                                      ),
+
+                                      const SizedBox(height: 12),
+
+                                      // Back of the ID
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          _buildFieldLabel(_hasRsbsaId
+                                              ? 'FARMER ID PHOTO (BACK)'
+                                              : 'GOV ID PHOTO (BACK)'),
+                                          Text(
+                                            'Optional for now',
+                                            style: GoogleFonts.epilogue(
+                                              fontSize: 11,
+                                              color: Colors.white.withValues(alpha: 0.5),
                                             ),
                                           ),
-                                          child: Row(
-                                            children: [
-                                              Icon(
-                                                Icons.cloud_upload_outlined,
-                                                color: _skipFarmerId
-                                                    ? Colors.white30
-                                                    : const Color(0xFF2EAA4D),
-                                                size: 20,
+                                        ],
+                                      ),
+                                      _buildIdUploadTile(
+                                        side: IdSide.back,
+                                        fileName: _farmerIdBackFileName,
+                                        disabled: false,
+                                      ),
+
+                                      const SizedBox(height: 10),
+
+                                      Row(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          const Icon(Icons.info_outline_rounded,
+                                              color: Color(0xFF2EAA4D), size: 15),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: Text(
+                                              'You can upload the missing side later under '
+                                              'Profile → Manage Account.',
+                                              style: GoogleFonts.epilogue(
+                                                fontSize: 11,
+                                                color: Colors.white.withValues(alpha: 0.6),
                                               ),
-                                              const SizedBox(width: 10),
-                                              Expanded(
-                                                child: Text(
-                                                  _skipFarmerId
-                                                      ? 'Skipped (Upload later in profile)'
-                                                      : _farmerIdFileName,
-                                                  style: GoogleFonts.epilogue(
-                                                    color: _skipFarmerId
-                                                        ? Colors.white38
-                                                        : Colors.white,
-                                                    fontSize: 13,
-                                                    fontWeight: FontWeight.w500,
-                                                  ),
-                                                  overflow: TextOverflow.ellipsis,
-                                                ),
-                                              ),
-                                              Icon(
-                                                Icons.arrow_forward_ios_rounded,
-                                                color: _skipFarmerId ? Colors.white24 : Colors.white60,
-                                                size: 13,
-                                              ),
-                                            ],
+                                            ),
                                           ),
-                                        ),
+                                        ],
                                       ),
 
                                       const SizedBox(height: 18),

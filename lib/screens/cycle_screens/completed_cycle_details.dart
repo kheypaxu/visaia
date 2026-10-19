@@ -128,10 +128,14 @@ class _CompletedCycleContent extends StatelessWidget {
     return null;
   }
 
-  DateTime? get archivedDate {
-    final timestamp = data['createdAt'];
-    if (timestamp != null && timestamp is Timestamp) {
-      return timestamp.toDate();
+  DateTime? get completedDate {
+    final raw =
+        data['completedAt'] ?? data['harvestCompletedAt'] ?? data['createdAt'];
+    if (raw != null) {
+      if (raw is Timestamp) return raw.toDate();
+      if (raw is DateTime) return raw;
+      if (raw is int) return DateTime.fromMillisecondsSinceEpoch(raw);
+      if (raw is String) return DateTime.tryParse(raw);
     }
     return null;
   }
@@ -165,9 +169,9 @@ class _CompletedCycleContent extends StatelessWidget {
   bool get isHarvestRecording => data['totalValue'] != null;
   bool get isPreviousCycle => data['isPreviousCycle'] == true;
 
-  String get formattedArchivedDate {
-    if (archivedDate == null) return 'Not archived';
-    return DateFormat('MMM d, yyyy').format(archivedDate!);
+  String get formattedCompletedDate {
+    if (completedDate == null) return 'Not completed';
+    return DateFormat('MMM d, yyyy').format(completedDate!);
   }
 
   String get formattedPlantingDate {
@@ -309,7 +313,7 @@ class _CompletedCycleContent extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 const Text(
-                  'ARCHIVED DATE',
+                  'COMPLETED DATE',
                   style: TextStyle(
                     color: kTextGrey,
                     fontSize: 10,
@@ -317,7 +321,7 @@ class _CompletedCycleContent extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  formattedArchivedDate,
+                  formattedCompletedDate,
                   style: const TextStyle(
                     color: kPrimaryGreen,
                     fontSize: 16,
@@ -714,8 +718,8 @@ class _CompletedCycleContent extends StatelessWidget {
     return Column(
       children: [
         _buildTimelineItem(
-          'Cycle Archived',
-          formattedArchivedDate,
+          'Cycle Completed',
+          formattedCompletedDate,
           'Final records moved to long-term storage.',
           true,
         ),

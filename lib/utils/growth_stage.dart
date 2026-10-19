@@ -124,3 +124,50 @@ List<GrowthStageInfo> getGrowthStagesForCycle(DateTime plantingDate, DateTime ha
   
   return stages;
 }
+
+/// Display label of a growth stage key.
+///
+/// Accepts the enum key stored in Firestore (`earlyVegetative`), the display
+/// name (`Early Vegetative`) or an empty value. Returns an empty string when
+/// nothing usable was given.
+String growthStageDisplayName(String key) {
+  final value = key.trim();
+  if (value.isEmpty) return '';
+
+  for (final stage in GrowthStage.values) {
+    if (stage.name.toLowerCase() == value.toLowerCase()) {
+      return getGrowthStage(_stageStartDap(stage)).name;
+    }
+  }
+
+  // The scouting screens use TNAU whorl stage keys for the same stages.
+  const legacyKeys = <String, String>{
+    'seedling': 'Seedling',
+    'early_whorl': 'Early Vegetative',
+    'late_whorl': 'Late Vegetative',
+    'tasseling_silking': 'Tasseling-Silking',
+    'grain_filling': 'Grain Fill',
+    'maturity': 'Maturity',
+  };
+  final legacy = legacyKeys[value.toLowerCase()];
+  if (legacy != null) return legacy;
+
+  return value;
+}
+
+int _stageStartDap(GrowthStage stage) {
+  switch (stage) {
+    case GrowthStage.seedling:
+      return 0;
+    case GrowthStage.earlyVegetative:
+      return 15;
+    case GrowthStage.lateVegetative:
+      return 30;
+    case GrowthStage.tasselingSilking:
+      return 46;
+    case GrowthStage.grainFill:
+      return 56;
+    case GrowthStage.maturity:
+      return 75;
+  }
+}

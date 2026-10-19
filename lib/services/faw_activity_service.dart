@@ -8,17 +8,20 @@ import 'package:visaia/utils/location_constants.dart';
 // ======================= FAW LIFE STAGE MODELS =======================
 
 /// The FAW life stages that are recorded during weekly field scouting.
-/// The [stationField] is the key used inside a station map of a `weeks` doc.
+/// The [stationField] is the key used inside a station map of a `weeks` doc,
+/// the [totalsField] is the key used inside the `totals` map of a
+/// `clustered_reports` doc.
 enum FawLifeStage {
-  egg('Egg Masses', 'eggMasses'),
-  larva('Larvae', 'larvae'),
-  pupa('Pupae', 'pupae'),
-  moth('Adult Moths', 'moths');
+  egg('Egg Masses', 'eggMasses', 'eggs'),
+  larva('Larvae', 'larvae', 'larvae'),
+  pupa('Pupae', 'pupae', 'pupae'),
+  moth('Adult Moths', 'moths', 'moths');
 
-  const FawLifeStage(this.label, this.stationField);
+  const FawLifeStage(this.label, this.stationField, this.totalsField);
 
   final String label;
   final String stationField;
+  final String totalsField;
 }
 
 /// A single barangay that reported a given FAW life stage.
@@ -98,13 +101,25 @@ class ActivityFeedItem {
 // ======================= MUNICIPAL FAW SERVICE =======================
 
 /// Watches every farmer inside a municipality and rolls up the FAW life
-/// stages recorded during weekly field scouting.
+/// stages observed there.
+///
+/// Only reports that a DA-RCPC expert validated are part of the assessment:
+///
+///  * `clustered_reports` – official weekly scouting reports. The adjusted
+///    station counters of the validated report hold the confirmed numbers.
+///  * `reports` – pest detection reports, one observation per report.
+///
+/// Reports that are still pending, already resolved or rejected are left
+/// out, so the assessment only shows confirmed FAW presence.
 ///
 /// The result groups the observations by FAW life stage, then lists the
 /// barangay where the stage was found together with the number found.
 class MunicipalFawService {
   final FirebaseFirestore _db;
   final String municipality;
+
+  /// Barangay of every farmer known through the `farmers` collection.
+  final Map<String, String> _farmerBarangays = {};
 
   MunicipalFawService({
     FirebaseFirestore? db,
@@ -113,56 +128,138 @@ class MunicipalFawService {
 
   Stream<List<FawLifeStageReport>> watchFawAssessment() {
     late final StreamController<List<FawLifeStageReport>> controller;
-    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? usersSub;
-    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? fallbackSub;
-    var usedFallback = false;
+    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? municipalitySub;
+    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? barangaySub;
+    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? farmersSub;
+    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? reportsSub;
+    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? clusteredSub;
 
-    Future<void> recompute(
-        List<QueryDocumentSnapshot<Map<String, dynamic>>> userDocs) async {
-      final reports = await _buildReports(userDocs);
-      if (!controller.isClosed) controller.add(reports);
+    final Set<String> memberUids = <String>{};
+    final Map<String, QueryDocumentSnapshot<Map<String, dynamic>>> userDocs =
+        {};
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> reportDocs = const [];
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> clusteredDocs = const [];
+
+    var recomputing = false;
+    var recomputeQueued = false;
+    Timer? debounce;
+
+    Future<void> recompute() async {
+      if (recomputing) {
+        recomputeQueued = true;
+        return;
+      }
+      recomputing = true;
+      try {
+        do {
+          recomputeQueued = false;
+          final reports = await _buildReports(
+            memberUids,
+            userDocs,
+            reportDocs,
+            clusteredDocs,
+          );
+          if (!controller.isClosed) controller.add(reports);
+        } while (recomputeQueued);
+      } catch (e) {
+        debugPrint('FAW assessment error: $e');
+        if (!controller.isClosed) controller.add(const []);
+      } finally {
+        recomputing = false;
+      }
+    }
+
+    // Several collections fire at the same time, so the roll-up is debounced
+    // to avoid rebuilding it once per snapshot.
+    void scheduleRecompute() {
+      debounce?.cancel();
+      debounce = Timer(const Duration(milliseconds: 400), recompute);
     }
 
     controller = StreamController<List<FawLifeStageReport>>(
       onListen: () {
-        usersSub = _db
+        // Farmers that explicitly set their municipality.
+        municipalitySub = _db
             .collection('users')
             .where('municipality', isEqualTo: municipality)
             .snapshots()
             .listen(
           (snap) {
-            if (snap.docs.isEmpty && !usedFallback) {
-              // Accounts created before the municipality field existed are
-              // matched by their barangay instead.
-              usedFallback = true;
-              fallbackSub = _db.collection('users').snapshots().listen(
-                (fallbackSnap) {
-                  final filtered = fallbackSnap.docs.where((doc) {
-                    final barangay =
-                        (doc.data()['barangay'] ?? '').toString().trim();
-                    return LocationConstants.cabatuanBarangays
-                        .contains(barangay);
-                  }).toList();
-                  recompute(filtered);
-                },
-                onError: (e) {
-                  debugPrint('watchFawAssessment fallback error: $e');
-                  if (!controller.isClosed) controller.add(const []);
-                },
-              );
-              return;
+            for (final doc in snap.docs) {
+              memberUids.add(doc.id);
+              userDocs[doc.id] = doc;
             }
-            recompute(snap.docs);
+            scheduleRecompute();
           },
           onError: (e) {
-            debugPrint('watchFawAssessment error: $e');
-            if (!controller.isClosed) controller.add(const []);
+            debugPrint('watchFawAssessment users error: $e');
+          },
+        );
+
+        // Farmers registered before the municipality field existed are matched
+        // by their barangay instead.
+        barangaySub = _db.collection('users').snapshots().listen(
+          (snap) {
+            for (final doc in snap.docs) {
+              final barangay = (doc.data()['barangay'] ?? '').toString();
+              if (_municipalityBarangay(barangay) == null) continue;
+              memberUids.add(doc.id);
+              userDocs[doc.id] = doc;
+            }
+            scheduleRecompute();
+          },
+          onError: (e) {
+            debugPrint('watchFawAssessment barangay fallback error: $e');
+          },
+        );
+
+        // Barangay of every farmer, used to attribute reports to a barangay.
+        farmersSub = _db.collection('farmers').snapshots().listen(
+          (snap) {
+            for (final doc in snap.docs) {
+              final barangay = (doc.data()['barangay'] ?? '').toString();
+              if (barangay.trim().isEmpty) continue;
+              _farmerBarangays[doc.id] = _canonicalBarangay(barangay);
+              if (_municipalityBarangay(barangay) != null) {
+                memberUids.add(doc.id);
+              }
+            }
+            scheduleRecompute();
+          },
+          onError: (e) {
+            debugPrint('watchFawAssessment farmers error: $e');
+          },
+        );
+
+        // Official pest detection reports.
+        reportsSub = _db.collection('reports').snapshots().listen(
+          (snap) {
+            reportDocs = snap.docs;
+            scheduleRecompute();
+          },
+          onError: (e) {
+            debugPrint('watchFawAssessment reports error: $e');
+          },
+        );
+
+        // Official weekly scouting reports.
+        clusteredSub = _db.collection('clustered_reports').snapshots().listen(
+          (snap) {
+            clusteredDocs = snap.docs;
+            scheduleRecompute();
+          },
+          onError: (e) {
+            debugPrint('watchFawAssessment clustered reports error: $e');
           },
         );
       },
       onCancel: () {
-        usersSub?.cancel();
-        fallbackSub?.cancel();
+        debounce?.cancel();
+        municipalitySub?.cancel();
+        barangaySub?.cancel();
+        farmersSub?.cancel();
+        reportsSub?.cancel();
+        clusteredSub?.cancel();
       },
     );
 
@@ -170,66 +267,127 @@ class MunicipalFawService {
   }
 
   Future<List<FawLifeStageReport>> _buildReports(
-      List<QueryDocumentSnapshot<Map<String, dynamic>>> userDocs) async {
+    Set<String> memberUids,
+    Map<String, QueryDocumentSnapshot<Map<String, dynamic>>> userDocs,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> reportDocs,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> clusteredDocs,
+  ) async {
+    // uid -> barangay for every farmer inside the municipality.
+    final Map<String, String> uidToBarangay = {};
+    for (final uid in memberUids) {
+      final userDoc = userDocs[uid];
+      final barangay = userDoc != null
+          ? await _resolveBarangay(uid, userDoc.data())
+          : (_farmerBarangays[uid] ?? '');
+      if (barangay.isEmpty) continue;
+      uidToBarangay[uid] = barangay;
+    }
+
+    if (uidToBarangay.isEmpty) return const [];
+
     final accumulators = <FawLifeStage, Map<String, _BarangayAccumulator>>{
       for (final stage in FawLifeStage.values)
         stage: <String, _BarangayAccumulator>{},
     };
 
-    for (final userDoc in userDocs) {
-      final uid = userDoc.id;
-      final barangay = await _resolveBarangay(uid, userDoc.data());
-      if (barangay.isEmpty) continue;
+    void record(
+      FawLifeStage stage,
+      String barangay,
+      int count,
+      String? growthStage,
+    ) {
+      if (count <= 0) return;
+      final entry = accumulators[stage]!.putIfAbsent(
+        barangay,
+        () => _BarangayAccumulator(),
+      );
+      entry.count += count;
+      final label = growthStageDisplayName(growthStage ?? '');
+      if (label.isNotEmpty) entry.growthStages.add(label);
+    }
 
-      try {
-        final cyclesSnapshot = await _db
-            .collection('users')
-            .doc(uid)
-            .collection('cycles')
-            .get();
+    // ─── Official weekly scouting reports ───────────────────────────────
+    // Only validated reports count, and only the newest report of a cycle
+    // week is kept so that a re-submitted report is not counted twice.
+    final Map<String, _ClusteredReport> clusteredByWeek = {};
+    for (final doc in clusteredDocs) {
+      final data = doc.data();
+      if (!_isValidated(data)) continue;
 
-        for (final cycleDoc in cyclesSnapshot.docs) {
-          final cycleData = cycleDoc.data();
-          // Only active cycles contribute to the current assessment.
-          if (cycleData['isCompleted'] == true) continue;
+      final uid = _ownerUid(data, uidToBarangay);
+      if (uid == null) continue;
 
-          final plantingDate = _parseDateTime(cycleData['plantingDate']);
+      final cycleId = (data['cycleId'] ?? '').toString().trim();
+      final weekNumber = _asInt(data['weekNumber']);
+      if (cycleId.isEmpty || weekNumber == null) continue;
 
-          final weeksSnapshot = await _db
-              .collection('users')
-              .doc(uid)
-              .collection('cycles')
-              .doc(cycleDoc.id)
-              .collection('weeks')
-              .get();
-
-          for (final weekDoc in weeksSnapshot.docs) {
-            final weekData = weekDoc.data();
-            final stations = weekData['stations'];
-            if (stations is! List) continue;
-
-            final growthStage = _growthStageLabel(plantingDate, weekDoc);
-
-            for (final rawStation in stations) {
-              if (rawStation is! Map) continue;
-              final station = Map<String, dynamic>.from(rawStation);
-
-              for (final stage in FawLifeStage.values) {
-                final count = (station[stage.stationField] as num?)?.toInt() ?? 0;
-                if (count <= 0) continue;
-
-                final barangays = accumulators[stage]!;
-                final entry = barangays.putIfAbsent(
-                    barangay, () => _BarangayAccumulator());
-                entry.count += count;
-                if (growthStage != null) entry.growthStages.add(growthStage);
-              }
-            }
-          }
-        }
-      } catch (e) {
-        debugPrint('FAW assessment: could not read cycles for $uid: $e');
+      final key = '$uid#$cycleId#$weekNumber';
+      final existing = clusteredByWeek[key];
+      if (existing == null ||
+          _reportTime(data).isAfter(existing.timestamp)) {
+        clusteredByWeek[key] = _ClusteredReport(
+          uid: uid,
+          cycleId: cycleId,
+          weekNumber: weekNumber,
+          data: data,
+          timestamp: _reportTime(data),
+        );
       }
+    }
+
+    for (final report in clusteredByWeek.values) {
+      final barangay = uidToBarangay[report.uid];
+      if (barangay == null) continue;
+      final growthStage = (report.data['growthStage'] ?? '').toString();
+
+      // The DA-RCPC expert can correct the station counters while
+      // validating, so the adjusted stations are preferred over the totals
+      // that were captured when the report was filed.
+      final stationCounts = _sumStations(report.data['stationsData']);
+      if (stationCounts != null) {
+        for (final stage in FawLifeStage.values) {
+          record(
+            stage,
+            barangay,
+            stationCounts[stage] ?? 0,
+            growthStage,
+          );
+        }
+        continue;
+      }
+
+      final totals = report.data['totals'];
+      if (totals is Map) {
+        for (final stage in FawLifeStage.values) {
+          record(
+            stage,
+            barangay,
+            _asInt(totals[stage.totalsField]) ?? 0,
+            growthStage,
+          );
+        }
+      }
+    }
+
+    // ─── Validated pest detection reports (one observation per report) ──
+    for (final doc in reportDocs) {
+      final data = doc.data();
+      if (!_isValidated(data)) continue;
+
+      final uid = _ownerUid(data, uidToBarangay);
+      if (uid == null) continue;
+
+      final stage = _mapLifeStage(
+        data['lifeStage'] ?? data['stage'] ?? data['originalLifeStage'],
+      );
+      if (stage == null) continue;
+
+      record(
+        stage,
+        uidToBarangay[uid]!,
+        1,
+        (data['growthStage'] ?? '').toString(),
+      );
     }
 
     final reports = <FawLifeStageReport>[];
@@ -257,46 +415,135 @@ class MunicipalFawService {
       ));
     }
 
+    // The life stage with the most findings comes first.
+    reports.sort((a, b) => b.total.compareTo(a.total));
+
     return reports;
+  }
+
+  /// The uid of the farmer that owns a report, when that farmer belongs to
+  /// the municipality.
+  String? _ownerUid(Map<String, dynamic> data, Map<String, String> uidToBarangay) {
+    for (final key in const ['userId', 'farmerId']) {
+      final value = (data[key] ?? '').toString().trim();
+      if (value.isNotEmpty && uidToBarangay.containsKey(value)) {
+        return value;
+      }
+    }
+    return null;
   }
 
   Future<String> _resolveBarangay(
       String uid, Map<String, dynamic> userData) async {
-    final fromUser = (userData['barangay'] ?? '').toString().trim();
+    final fromUser = _canonicalBarangay((userData['barangay'] ?? '').toString());
     if (fromUser.isNotEmpty) return fromUser;
+
+    final fromFarmer = _canonicalBarangay(_farmerBarangays[uid] ?? '');
+    if (fromFarmer.isNotEmpty) return fromFarmer;
 
     try {
       final farmerDoc = await _db.collection('farmers').doc(uid).get();
-      return (farmerDoc.data()?['barangay'] ?? '').toString().trim();
+      return _canonicalBarangay(
+          (farmerDoc.data()?['barangay'] ?? '').toString());
     } catch (e) {
       debugPrint('FAW assessment: could not resolve barangay for $uid: $e');
       return '';
     }
   }
 
-  /// Crop growth stage of the crop when the week was scouted.
-  String? _growthStageLabel(
-      DateTime? plantingDate, QueryDocumentSnapshot<Map<String, dynamic>> weekDoc) {
-    if (plantingDate == null) return null;
-
-    final data = weekDoc.data();
-    final observed =
-        _parseDateTime(data['timestamp']) ?? _parseDateTime(data['lastUpdated']);
-
-    DateTime date;
-    if (observed != null) {
-      date = observed;
-    } else {
-      final weekNumber =
-          int.tryParse(weekDoc.id.replaceAll(RegExp(r'[^0-9]'), ''));
-      if (weekNumber == null) return null;
-      date = plantingDate.add(Duration(days: (weekNumber - 1) * 7 + 3));
+  /// The canonical name of a barangay inside the municipality, or null when
+  /// the name does not belong to it.
+  String? _municipalityBarangay(String raw) {
+    final value = raw.trim();
+    if (value.isEmpty) return null;
+    for (final barangay in LocationConstants.cabatuanBarangays) {
+      if (barangay.toLowerCase() == value.toLowerCase()) return barangay;
     }
-
-    final dap = date.difference(plantingDate).inDays;
-    if (dap < 0) return null;
-    return getGrowthStage(dap).name;
+    return null;
   }
+
+  /// The municipality spelling of a barangay name, so the same barangay is
+  /// never split over several rows because of casing or stray whitespace.
+  String _canonicalBarangay(String raw) {
+    final value = raw.trim();
+    return _municipalityBarangay(value) ?? value;
+  }
+}
+
+/// A clustered scouting report of a single cycle week.
+class _ClusteredReport {
+  final String uid;
+  final String cycleId;
+  final int weekNumber;
+  final Map<String, dynamic> data;
+  final DateTime timestamp;
+
+  const _ClusteredReport({
+    required this.uid,
+    required this.cycleId,
+    required this.weekNumber,
+    required this.data,
+    required this.timestamp,
+  });
+}
+
+/// Only reports that a DA-RCPC expert validated are part of the assessment.
+/// Pending, resolved and rejected reports are left out.
+bool _isValidated(Map<String, dynamic> data) {
+  final status = (data['status'] ?? '').toString().trim().toLowerCase();
+  return status == 'validated';
+}
+
+/// Sums the life stage counters of a list of station maps.
+///
+/// Returns null when the report has no station list at all, so the caller can
+/// fall back to the totals that were captured when the report was filed.
+Map<FawLifeStage, int>? _sumStations(dynamic stations) {
+  if (stations is! List || stations.isEmpty) return null;
+
+  final counts = <FawLifeStage, int>{};
+  for (final rawStation in stations) {
+    if (rawStation is! Map) continue;
+    final station = Map<String, dynamic>.from(rawStation);
+    for (final stage in FawLifeStage.values) {
+      final count = _asInt(station[stage.stationField]) ?? 0;
+      if (count <= 0) continue;
+      counts[stage] = (counts[stage] ?? 0) + count;
+    }
+  }
+  return counts;
+}
+
+int? _asInt(dynamic value) {
+  if (value is num) return value.toInt();
+  if (value is String) return int.tryParse(value.trim());
+  return null;
+}
+
+DateTime _reportTime(Map<String, dynamic> data) {
+  for (final key in const [
+    'reportDate',
+    'timestamp',
+    'submittedAt',
+    'createdAt',
+    'dateConducted',
+  ]) {
+    final parsed = _parseDateTime(data[key]);
+    if (parsed != null) return parsed;
+  }
+  return DateTime.fromMillisecondsSinceEpoch(0);
+}
+
+FawLifeStage? _mapLifeStage(dynamic raw) {
+  final value = (raw ?? '').toString().trim().toLowerCase();
+  if (value.isEmpty) return null;
+  if (value.contains('egg')) return FawLifeStage.egg;
+  if (value.contains('larva')) return FawLifeStage.larva;
+  if (value.contains('pupa')) return FawLifeStage.pupa;
+  if (value.contains('moth') || value.contains('adult')) {
+    return FawLifeStage.moth;
+  }
+  return null;
 }
 
 // ======================= ACTIVITY FEED SERVICE =======================

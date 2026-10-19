@@ -486,9 +486,9 @@ class _HomeDashboardState extends State<HomeDashboard> {
                   fontSize: 28, fontWeight: FontWeight.w800, color: headingBlack),
             ),
             Text(
-              "FAW Life Stages in ${LocationConstants.defaultMunicipality}",
+              "Validated FAW Life Stages in ${LocationConstants.defaultMunicipality}",
               style: GoogleFonts.manrope(
-                  fontSize: 16, color: textGray, fontWeight: FontWeight.w500),
+                fontSize: 16, color: textGray, fontWeight: FontWeight.w500),
             ),
             const SizedBox(height: 24),
             StreamBuilder<List<FawLifeStageReport>>(
@@ -509,7 +509,8 @@ class _HomeDashboardState extends State<HomeDashboard> {
                 if (reports.isEmpty) {
                   return const Padding(
                     padding: EdgeInsets.symmetric(vertical: 20),
-                    child: Text("No FAW life stages recorded yet in this municipality"),
+                    child: Text(
+                        "No validated FAW life stages recorded yet in this municipality"),
                   );
                 }
 
