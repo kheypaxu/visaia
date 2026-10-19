@@ -1,3 +1,4 @@
+import 'package:visaia/services/notification_feed_service.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -677,14 +678,10 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
                   );
                 },
               ),
-              StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('alerts')
-                    .where('farmerId', isEqualTo: FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid)
-                    .where('status', isEqualTo: 'unread')
-                    .snapshots(),
+              StreamBuilder<List<InboxNotification>>(
+                stream: NotificationFeedService.watch(FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid ?? ''),
                 builder: (context, snapshot) {
-                  final unreadCount = snapshot.data?.docs.length ?? 0;
+                  final unreadCount = snapshot.data?.where((n) => n.unread).length ?? 0;
                   return GestureDetector(
                     onTap: () {
                       Navigator.push(context,

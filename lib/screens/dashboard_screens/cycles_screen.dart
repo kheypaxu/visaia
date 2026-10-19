@@ -742,8 +742,6 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                             EditCropCycleScreen(cycleId: cycleId)),
                   );
                 }),
-                _sheetTile(
-                    Icons.share_outlined, 'Share Data', darkGreen, () {}),
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
                   child:
@@ -753,7 +751,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                     Icons.check_circle_outline, 'Mark as Completed', darkGreen,
                     () {
                   Navigator.pop(context);
-                  _markCycleCompleted(cycleId);
+                  _showMarkCompletedDialog(context, cropName, cycleId);
                 }),
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
@@ -783,6 +781,75 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
                   ),
                 ),
                 const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showMarkCompletedDialog(
+      BuildContext context, String cropName, String cycleId) {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.5),
+      builder: (dialogContext) {
+        return Dialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(28)),
+          backgroundColor: Colors.white,
+          child: Padding(
+            padding:
+                const EdgeInsets.symmetric(vertical: 36, horizontal: 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFEDF5E1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.check_circle_outline_rounded,
+                      color: Color(0xFF173408), size: 40),
+                ),
+                const SizedBox(height: 28),
+                Text('Mark Cycle as Completed?',
+                    style: GoogleFonts.epilogue(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: headingBlack)),
+                const SizedBox(height: 12),
+                RichText(
+                  textAlign: TextAlign.center,
+                  text: TextSpan(
+                    style: GoogleFonts.manrope(
+                        fontSize: 14, color: textGray, height: 1.5),
+                    children: [
+                      const TextSpan(
+                          text: 'Are you sure you want to mark '),
+                      TextSpan(
+                        text: cropName,
+                        style: GoogleFonts.manrope(
+                            fontWeight: FontWeight.w800,
+                            color: headingBlack),
+                      ),
+                      const TextSpan(
+                          text:
+                              ' as completed? It will be moved to the completed cycles list.'),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 32),
+                _dialogBtn('Mark as Completed', darkGreen, Colors.white, () {
+                  Navigator.pop(dialogContext);
+                  _markCycleCompleted(cycleId);
+                }),
+                const SizedBox(height: 10),
+                _dialogBtn('Cancel', const Color(0xFFF3F5EE), headingBlack,
+                    () => Navigator.pop(dialogContext)),
               ],
             ),
           ),

@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:visaia/screens/monitoring_screens/monitoring.dart';
 import 'package:visaia/screens/logging_screens/harvest_recording.dart';
 import 'package:visaia/screens/cycle_screens/completed_cycle_details.dart';
+import 'package:visaia/services/faw_activity_service.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
 class CycleDetailsScreen extends StatefulWidget {
@@ -26,9 +27,17 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
   Map<String, dynamic>? _fieldData;
   List<int> _unscoutedWeeks = [];
 
+  late final ActivityFeedService _activityService;
+  late final Stream<List<ActivityFeedItem>> _activityStream;
+
   @override
   void initState() {
     super.initState();
+    _activityService = ActivityFeedService(userId: widget.uid);
+    _activityStream = _activityService.watchCycleActivity(
+      cycleId: widget.cycleId,
+      limit: 8,
+    );
     _fetchData();
   }
 
@@ -453,8 +462,7 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
         lat / _fieldBoundaries.length, lng / _fieldBoundaries.length);
   }
 
-  String _formatTimeAgo(Timestamp timestamp) {
-    final DateTime dateTime = timestamp.toDate();
+  String _formatTimeAgo(DateTime dateTime) {
     final Duration diff = DateTime.now().difference(dateTime);
     if (diff.inDays > 7) {
       return DateFormat('MMM d').format(dateTime);
@@ -471,76 +479,44 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
     return 'Just now';
   }
 
-  IconData _getIconForActivity(String title) {
-    if (title.contains('Watering')) return Icons.water_drop_outlined;
-    if (title.contains('Field Scouting')) return Icons.pest_control_outlined;
-    if (title.contains('Fertilizing')) return Icons.science_outlined;
-    if (title.contains('Harvest')) return Icons.agriculture_outlined;
+  IconData _getIconForActivity(ActivityFeedItem item) {
+    switch (item.kind) {
+      case ActivityFeedKind.scouting:
+        return Icons.pest_control_outlined;
+      case ActivityFeedKind.pestReport:
+        return Icons.bug_report;
+      case ActivityFeedKind.dailyLog:
+        break;
+    }
+
+    final title = item.title.toLowerCase();
+    if (title.contains('water')) return Icons.water_drop_outlined;
+    if (title.contains('scout')) return Icons.pest_control_outlined;
+    if (title.contains('fertiliz')) return Icons.science_outlined;
+    if (title.contains('chemical')) return Icons.science_outlined;
+    if (title.contains('harvest')) return Icons.agriculture_outlined;
     return Icons.assignment_outlined;
   }
 
-  Color _getColorForActivity(String title) {
-    if (title.contains('Watering')) return const Color(0xFF3B82F6);
-    if (title.contains('Field Scouting')) return const Color(0xFF8B5CF6);
-    if (title.contains('Fertilizing')) return const Color(0xFFF59E0B);
+  Color _getColorForActivity(ActivityFeedItem item) {
+    switch (item.kind) {
+      case ActivityFeedKind.scouting:
+        return const Color(0xFF8B5CF6);
+      case ActivityFeedKind.pestReport:
+        return const Color(0xFFBA1A1A);
+      case ActivityFeedKind.dailyLog:
+        break;
+    }
+
+    final title = item.title.toLowerCase();
+    if (title.contains('water')) return const Color(0xFF3B82F6);
+    if (title.contains('scout')) return const Color(0xFF8B5CF6);
+    if (title.contains('fertiliz')) return const Color(0xFFF59E0B);
+    if (title.contains('chemical')) return const Color(0xFFF59E0B);
+    if (title.contains('harvest')) return const Color(0xFF1B5E37);
     return const Color(0xFF1B5E37);
   }
 
-Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
-  final plantingTimestamp = _plantingTimestamp;
-  if (plantingTimestamp == null) return [];
-
-  final plantingDate = plantingTimestamp.toDate();
-  final now = DateTime.now();
-  final daysSincePlanting = _isCycleCompleted && _totalDays > 0
-      ? _totalDays
-      : now.difference(plantingDate).inDays;
-  if (daysSincePlanting < 0) return [];
-
-  final List<Map<String, dynamic>> allActivities = [];
-
-  for (int offset = 0; offset < 5; offset++) {
-    int dayNumber = daysSincePlanting - offset;
-    if (dayNumber < 0) continue;
-
-    final dayIndex = dayNumber + 1;
-    final dayId = 'day_${dayIndex.toString().padLeft(2, '0')}';
-
-    try {
-      // Remove orderBy to avoid needing a composite index
-      final activitiesSnapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.uid)
-          .collection('cycles')
-          .doc(widget.cycleId)
-          .collection('dailyLogs')
-          .doc(dayId)
-          .collection('activities')
-          .get(); // No orderBy here
-
-      for (var doc in activitiesSnapshot.docs) {
-        final data = doc.data();
-        allActivities.add({
-          'id': doc.id,
-          'title': data['type'] ?? 'Activity',
-          'subtitle': data['notes'] ?? '',
-          'timestamp':
-              data['timestamp'] as Timestamp? ?? Timestamp.now(),
-          'completed': data['completed'] ?? false,
-        });
-      }
-    } catch (e) {
-      debugPrint('No activities for $dayId');
-    }
-  }
-
-  // Sort in memory instead of using orderBy
-  allActivities.sort((a, b) => (b['timestamp'] as Timestamp)
-      .toDate()
-      .compareTo((a['timestamp'] as Timestamp).toDate()));
-
-  return allActivities.take(5).toList();
-}
 
   @override
   Widget build(BuildContext context) {
@@ -1584,8 +1560,8 @@ Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
             ],
           ),
           const SizedBox(height: 16),
-          FutureBuilder<List<Map<String, dynamic>>>(
-            future: _fetchRecentActivities(),
+          StreamBuilder<List<ActivityFeedItem>>(
+            stream: _activityStream,
             builder: (context, snapshot) {
               if (snapshot.connectionState ==
                   ConnectionState.waiting) {
@@ -1624,13 +1600,11 @@ Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
                   final isLast =
                       index == activities.length - 1;
                   return _buildActivityItem(
-                    icon:
-                        _getIconForActivity(act['title']),
-                    title: act['title'],
-                    subtitle: act['subtitle'],
-                    time: _formatTimeAgo(act['timestamp']),
-                    iconColor:
-                        _getColorForActivity(act['title']),
+                    icon: _getIconForActivity(act),
+                    title: act.title,
+                    subtitle: act.subtitle,
+                    time: _formatTimeAgo(act.timestamp),
+                    iconColor: _getColorForActivity(act),
                     isLast: isLast,
                   );
                 }).toList(),
@@ -1671,7 +1645,7 @@ Future<List<Map<String, dynamic>>> _fetchRecentActivities() async {
           ),
           const SizedBox(height: 4),
           Text(
-            'Activities from daily logs will appear here',
+            'Daily logs, field scouting, and pest reports will appear here',
             style: TextStyle(
               fontSize: 12,
               color: const Color(0xFF5E6266)

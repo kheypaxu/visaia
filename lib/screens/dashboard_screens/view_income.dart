@@ -1,3 +1,4 @@
+import 'package:visaia/services/pdf_theme_service.dart';
 import 'package:visaia/core/models/cycle_metrics.dart';
 import 'dart:io';
 
@@ -947,7 +948,7 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
     setState(() => _isExportingPdf = true);
 
     try {
-      final pdf = pw.Document();
+      final pdf = pw.Document(theme: await PdfThemeService.load());
       final now = DateTime.now();
       final dateStr = DateFormat('MMMM dd, yyyy').format(now);
 

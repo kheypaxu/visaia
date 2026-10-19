@@ -1,3 +1,4 @@
+import 'package:visaia/services/pdf_theme_service.dart';
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -487,7 +488,7 @@ class FarmReportPdfService {
 
   /// Generates the concise, executive PDF for a specific farm (info about the farm & report counts)
   static Future<File> generateFarmReportPdf(FarmReportData data) async {
-    final pdf = pw.Document();
+    final pdf = pw.Document(theme: await PdfThemeService.load());
 
     final dateStr = DateFormat('MMMM dd, yyyy').format(data.reportDate);
     final progressPercent = (data.growthProgress * 100).round();
@@ -1048,7 +1049,7 @@ class FarmReportPdfService {
     required double totalAcres,
     required List<Map<String, dynamic>> allFarms,
   }) async {
-    final pdf = pw.Document();
+    final pdf = pw.Document(theme: await PdfThemeService.load());
     final now = DateTime.now();
     final dateStr = DateFormat('MMMM dd, yyyy').format(now);
     final db = FirebaseFirestore.instance;

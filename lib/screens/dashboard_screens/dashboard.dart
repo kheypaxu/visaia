@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:visaia/screens/dashboard_screens/all_farms_data_screen.dart';
+import 'package:visaia/services/faw_activity_service.dart';
+import 'package:visaia/utils/location_constants.dart';
 
 export 'package:visaia/screens/dashboard_screens/all_farms_data_screen.dart';
 
@@ -146,39 +148,6 @@ class PestModel {
   }
 }
 
-class ActivityLogModel {
-  final String id;
-  final String fieldId;
-  final String fieldName;
-  final String type;
-  final String title;
-  final String description;
-  final DateTime timestamp;
-
-  ActivityLogModel({
-    required this.id,
-    required this.fieldId,
-    required this.fieldName,
-    required this.type,
-    required this.title,
-    required this.description,
-    required this.timestamp,
-  });
-
-  factory ActivityLogModel.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    return ActivityLogModel(
-      id: doc.id,
-      fieldId: data['fieldId'] ?? '',
-      fieldName: data['fieldName'] ?? 'Unknown Field',
-      type: data['type'] ?? 'activity',
-      title: data['title'] ?? 'Activity',
-      description: data['description'] ?? '',
-      timestamp: (data['timestamp'] as Timestamp).toDate(),
-    );
-  }
-}
-
 // ======================= FIRESTORE SERVICE =======================
 
 class MonitoringFirestoreService {
@@ -281,30 +250,14 @@ class MonitoringFirestoreService {
     }
   }
 
-  // ----- Recent Activity Logs (last 5) -----
-  Stream<List<ActivityLogModel>> getRecentActivityLogs({int limit = 5}) {
+  // ----- Recent Activity (daily logs, weekly scouting, pest uploads) -----
+  Stream<List<ActivityFeedItem>> getRecentActivityLogs({int limit = 6}) {
     if (_userId.isEmpty) return Stream.value([]);
-    return _db
-        .collection('users')
-        .doc(_userId)
-        .collection('activityLogs')
-        .orderBy('timestamp', descending: true)
-        .limit(limit * 3) // fetch extra to filter by farm
-        .snapshots()
-        .asyncMap((snap) async {
-      List<ActivityLogModel> logs = snap.docs
-          .map((doc) => ActivityLogModel.fromFirestore(doc))
-          .toList();
-
-      if (_farmId != null && _farmId.isNotEmpty && logs.isNotEmpty) {
-        final fieldIds = await _getFieldIdsForFarm();
-        logs = logs.where((l) => fieldIds.contains(l.fieldId)).toList();
-      }
-
-      return logs.take(limit).toList();
-    }).handleError((e) {
+    return ActivityFeedService(userId: _userId, db: _db)
+        .watchUserActivity(limit: limit)
+        .handleError((e) {
       debugPrint('getRecentActivityLogs error: $e');
-      return <ActivityLogModel>[];
+      return <ActivityFeedItem>[];
     });
   }
 
@@ -360,143 +313,60 @@ class MonitoringFirestoreService {
     });
   }
 
-  Stream<List<PestModel>> getPestsFromScouting() async* {
-    if (_userId.isEmpty) {
-      yield [];
-      return;
-    }
-    await for (final cycles in getActiveCycles()) {
-      List<PestModel> allPests = [];
-      for (final cycle in cycles) {
-        try {
-          final weekDoc = await _getLatestWeek(cycle.id);
-          if (weekDoc != null && weekDoc.exists) {
-            final pests = _extractPestsFromWeek(weekDoc, cycle.fieldName, cycle.id);
-            allPests.addAll(pests);
-          }
-        } catch (e) {
-          debugPrint('Error processing cycle ${cycle.id}: $e');
-        }
-      }
-      yield allPests;
-    }
-  }
-
-  Future<DocumentSnapshot?> _getLatestWeek(String cycleId) async {
-    if (_userId.isEmpty) return null;
-    try {
-      final query = await _db
-          .collection('users')
-          .doc(_userId)
-          .collection('cycles')
-          .doc(cycleId)
-          .collection('weeks')
-          .orderBy('timestamp', descending: true)
-          .limit(1)
-          .get();
-      return query.docs.isNotEmpty ? query.docs.first : null;
-    } catch (e) {
-      debugPrint('Error getting latest week for cycle $cycleId: $e');
-      return null;
-    }
-  }
-
-List<PestModel> _extractPestsFromWeek(
-    DocumentSnapshot weekDoc, String fieldName, String cycleId) {
-  final data = weekDoc.data() as Map<String, dynamic>?;
-  if (data == null) return [];
-
-  // Get timestamp safely
-  DateTime detectedAt;
-  final ts = data['timestamp'];
-  if (ts is Timestamp) {
-    detectedAt = ts.toDate();
-  } else if (ts is DateTime) {
-    detectedAt = ts;
-  } else {
-    detectedAt = DateTime.now(); // fallback
-  }
-
-  final stations = data['stations'] as List<dynamic>? ?? [];
-  int totalEggs = 0;
-  int totalLarvae = 0;
-  int totalPupae = 0;
-
-  for (var station in stations) {
-    final stationMap = station as Map<String, dynamic>?;
-    if (stationMap != null) {
-      totalEggs += (stationMap['eggMasses'] as int?) ?? 0;
-      totalLarvae += (stationMap['larvae'] as int?) ?? 0;
-      totalPupae += (stationMap['pupae'] as int?) ?? 0;
-    }
-  }
-
-  final List<PestModel> pests = [];
-  if (totalEggs > 0) {
-    pests.add(PestModel(
-      id: '${weekDoc.id}_eggs',
-      fieldId: cycleId, // cycleId is the parent cycle document ID
-      fieldName: fieldName,
-      name: 'FAW Eggs',
-      severity: _severityFromCount(totalEggs),
-      detectedAt: detectedAt,
-      isActive: true,
-    ));
-  }
-  if (totalLarvae > 0) {
-    pests.add(PestModel(
-      id: '${weekDoc.id}_larvae',
-      fieldId: cycleId,
-      fieldName: fieldName,
-      name: 'FAW Larvae',
-      severity: _severityFromCount(totalLarvae),
-      detectedAt: detectedAt,
-      isActive: true,
-    ));
-  }
-  if (totalPupae > 0) {
-    pests.add(PestModel(
-      id: '${weekDoc.id}_pupae',
-      fieldId: cycleId,
-      fieldName: fieldName,
-      name: 'FAW Pupae',
-      severity: _severityFromCount(totalPupae),
-      detectedAt: detectedAt,
-      isActive: true,
-    ));
-  }
-  return pests;
-}
-
-String _severityFromCount(int count) {
-  if (count == 0) return 'low';
-  if (count <= 5) return 'low';
-  if (count <= 20) return 'moderate';
-  return 'high';
-}
-
-
   // ----- (Optional) NET INCOME if you have expenses collection -----
   // Stream<double> getNetIncome() { ... }
 }
 
 // ======================= HOMEDASHBOARD WIDGET =======================
 
-class HomeDashboard extends StatelessWidget {
+class HomeDashboard extends StatefulWidget {
   final String userId;
   final String? activeFarmId;
 
   const HomeDashboard({super.key, required this.userId, this.activeFarmId});
 
+  @override
+  State<HomeDashboard> createState() => _HomeDashboardState();
+}
+
+class _HomeDashboardState extends State<HomeDashboard> {
   // Brand colors
   static const Color darkGreen = Color(0xFF0D4D33);
   static const Color textGray = Color(0xFF43483E);
   static const Color headingBlack = Color(0xFF1A1C18);
 
+  late final MonitoringFirestoreService _service;
+  late final MunicipalFawService _fawService;
+
+  late final Stream<double> _netIncomeStream;
+  late final Stream<double> _totalYieldStream;
+  late final Stream<List<CycleModel>> _activeCyclesStream;
+  late final Future<List<FieldModel>> _fieldsFuture;
+  late final Stream<List<FawLifeStageReport>> _fawStream;
+  late final Stream<List<ActivityFeedItem>> _activityStream;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _service = MonitoringFirestoreService(
+      userId: widget.userId,
+      farmId: widget.activeFarmId,
+    );
+    _fawService = MunicipalFawService(
+      municipality: LocationConstants.defaultMunicipality,
+    );
+
+    _netIncomeStream = _service.getNetIncome();
+    _totalYieldStream = _service.getTotalYield();
+    _activeCyclesStream = _service.getActiveCycles();
+    _fieldsFuture = _service.getFields();
+    _fawStream = _fawService.watchFawAssessment();
+    _activityStream = _service.getRecentActivityLogs(limit: 6);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final service = MonitoringFirestoreService(userId: userId, farmId: activeFarmId);
-
     return Scaffold(
       body: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
@@ -508,7 +378,7 @@ class HomeDashboard extends StatelessWidget {
               children: [
                 Expanded(
                   child: StreamBuilder<double>(
-                    stream: service.getNetIncome(),
+                    stream: _netIncomeStream,
                     builder: (ctx, snapshot) {
                       final total = snapshot.data ?? 0.0;
 
@@ -525,7 +395,7 @@ class HomeDashboard extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: StreamBuilder<double>(
-                    stream: service.getTotalYield(),
+                    stream: _totalYieldStream,
                     builder: (ctx, snapshot) {
                       final totalYield = snapshot.data ?? 0.0;
 
@@ -546,11 +416,11 @@ class HomeDashboard extends StatelessWidget {
 
             // ----- Active Cycle & Field Count -----
             FutureBuilder<List<FieldModel>>(
-              future: service.getFields(),
+              future: _fieldsFuture,
               builder: (ctx, fieldSnapshot) {
                 final fieldCount = fieldSnapshot.data?.length ?? 0;
                 return StreamBuilder<List<CycleModel>>(
-                  stream: service.getActiveCycles(),
+                  stream: _activeCyclesStream,
                   builder: (ctx, cycleSnapshot) {
                     final cycles = cycleSnapshot.data ?? [];
                     final activeCycleCount = cycles.length;
@@ -586,7 +456,7 @@ class HomeDashboard extends StatelessWidget {
                 onPressed: () {
                   Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => AllFarmsDataScreen(userId: userId),
+                      builder: (_) => AllFarmsDataScreen(userId: widget.userId),
                     ),
                   );
                 },
@@ -609,30 +479,44 @@ class HomeDashboard extends StatelessWidget {
             ),
             const SizedBox(height: 40),
 
-            // ----- Active Pests Section -----
+            // ----- FAW Assessment Section -----
             Text(
               "FAW Assessment",
               style: GoogleFonts.epilogue(
                   fontSize: 28, fontWeight: FontWeight.w800, color: headingBlack),
             ),
             Text(
-              "FAW Life Stages",
+              "FAW Life Stages in ${LocationConstants.defaultMunicipality}",
               style: GoogleFonts.manrope(
                   fontSize: 16, color: textGray, fontWeight: FontWeight.w500),
             ),
             const SizedBox(height: 24),
-            StreamBuilder<List<PestModel>>(
-              stream: service.getPestsFromScouting(),
+            StreamBuilder<List<FawLifeStageReport>>(
+              stream: _fawStream,
               builder: (ctx, snapshot) {
-                final pests = snapshot.data ?? [];
-                if (pests.isEmpty) {
+                if (snapshot.connectionState == ConnectionState.waiting &&
+                    !snapshot.hasData) {
                   return const Padding(
                     padding: EdgeInsets.symmetric(vertical: 20),
-                    child: Text("No pests detected in recent scouting"),
+                    child: Center(
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: darkGreen),
+                    ),
                   );
                 }
+
+                final reports = snapshot.data ?? [];
+                if (reports.isEmpty) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 20),
+                    child: Text("No FAW life stages recorded yet in this municipality"),
+                  );
+                }
+
                 return Column(
-                  children: pests.map((pest) => _buildPestPillFromModel(pest)).toList(),
+                  children: reports
+                      .map((report) => _buildFawStageCard(report))
+                      .toList(),
                 );
               },
             ),
@@ -648,18 +532,20 @@ class HomeDashboard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 20),
-            StreamBuilder<List<ActivityLogModel>>(
-              stream: service.getRecentActivityLogs(),
+            StreamBuilder<List<ActivityFeedItem>>(
+              stream: _activityStream,
               builder: (ctx, snapshot) {
-                final logs = snapshot.data ?? [];
-                if (logs.isEmpty) {
+                final items = snapshot.data ?? [];
+                if (items.isEmpty) {
                   return const Padding(
                     padding: EdgeInsets.symmetric(vertical: 20),
                     child: Text("No recent activity"),
                   );
                 }
                 return Column(
-                  children: logs.map((log) => _buildActivityCardFromModel(log)).toList(),
+                  children: items
+                      .map((item) => _buildActivityCardFromFeedItem(item))
+                      .toList(),
                 );
               },
             ),
@@ -670,59 +556,240 @@ class HomeDashboard extends StatelessWidget {
     );
   }
 
-  // ----- Dynamic Pest Pill from PestModel -----
-  Widget _buildPestPillFromModel(PestModel pest) {
-    Color bgColor;
-    Color iconColor;
-    switch (pest.severity) {
-      case 'high':
-        bgColor = const Color.fromARGB(255, 247, 206, 206);
-        iconColor = const Color(0xFFBA1A1A);
-        break;
-      case 'moderate':
-        bgColor = const Color.fromARGB(166, 255, 221, 221);
-        iconColor = const Color(0xFFBA1A1A);
-        break;
-      case 'low':
-        bgColor = const Color(0xFF7E5800);
-        iconColor = const Color.fromARGB(255, 255, 235, 200);
-        break;
-      default: // monitoring
-        bgColor = const Color.fromARGB(197, 144, 118, 56);
-        iconColor = const Color.fromARGB(249, 255, 225, 168);
-    }
-    return _buildPestPill(
-      pest.name,
-      "${pest.severity.toUpperCase()} severity • ${_relativeTime(pest.detectedAt)}",
-      bgColor,
-      iconColor,
+  // ----- FAW Life Stage Card (life stage -> barangay -> count) -----
+  Widget _buildFawStageCard(FawLifeStageReport report) {
+    final accent = _fawStageColor(report.stage);
+    final barangayCount = report.findings.length;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: accent.withValues(alpha: 0.35)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(_fawStageIcon(report.stage), color: accent, size: 24),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      report.stage.label.toUpperCase(),
+                      style: GoogleFonts.manrope(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: headingBlack,
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${report.total} found across $barangayCount barangy${barangayCount == 1 ? '' : 's'}',
+                      style: GoogleFonts.manrope(
+                        fontSize: 13,
+                        color: textGray,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  '${report.total}',
+                  style: GoogleFonts.manrope(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    color: accent,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (report.growthStages.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: report.growthStages
+                  .map((stage) => Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF3F6F1),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          stage,
+                          style: GoogleFonts.manrope(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: textGray,
+                          ),
+                        ),
+                      ))
+                  .toList(),
+            ),
+          ],
+          const SizedBox(height: 14),
+          ...report.findings.map(
+            (finding) => _buildFawFindingRow(finding, accent),
+          ),
+        ],
+      ),
     );
   }
 
-  // ----- Dynamic Activity Card from ActivityLogModel -----
-  Widget _buildActivityCardFromModel(ActivityLogModel log) {
-    IconData icon;
-    Color iconBg;
-    switch (log.type) {
-      case 'irrigation':
-        icon = Icons.water_drop;
-        iconBg = const Color.fromARGB(255, 228, 248, 229);
-        break;
-      case 'fertilization':
-        icon = Icons.center_focus_strong;
-        iconBg = const Color.fromARGB(223, 235, 216, 179);
-        break;
-      default:
-        icon = Icons.notifications_active;
-        iconBg = Colors.grey.shade200;
+  Widget _buildFawFindingRow(FawBarangayFinding finding, Color accent) {
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F9F6),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.location_on_outlined, size: 16, color: accent),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              finding.barangay,
+              style: GoogleFonts.manrope(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: headingBlack,
+              ),
+            ),
+          ),
+          Text(
+            '${finding.count}',
+            style: GoogleFonts.manrope(
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+              color: accent,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            'found',
+            style: GoogleFonts.manrope(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  IconData _fawStageIcon(FawLifeStage stage) {
+    switch (stage) {
+      case FawLifeStage.egg:
+        return Icons.circle;
+      case FawLifeStage.larva:
+        return Icons.bug_report;
+      case FawLifeStage.pupa:
+        return Icons.coffee;
+      case FawLifeStage.moth:
+        return Icons.flutter_dash;
     }
+  }
+
+  Color _fawStageColor(FawLifeStage stage) {
+    switch (stage) {
+      case FawLifeStage.egg:
+        return const Color(0xFFE91E63);
+      case FawLifeStage.larva:
+        return const Color(0xFFF57C00);
+      case FawLifeStage.pupa:
+        return const Color(0xFF7E57C2);
+      case FawLifeStage.moth:
+        return const Color(0xFF1B5E37);
+    }
+  }
+
+  // ----- Activity Card from the unified activity feed -----
+  Widget _buildActivityCardFromFeedItem(ActivityFeedItem item) {
+    final icon = _activityIcon(item);
+    final iconBg = _activityIconBg(item);
+    final tag = item.cycleName ?? item.fieldName;
+
     return _buildActivityCard(
-      log.title,
-      log.description,
-      _relativeTime(log.timestamp),
+      item.title,
+      item.subtitle,
+      _relativeTime(item.timestamp),
       icon,
       iconBg,
+      tag: tag,
     );
+  }
+
+  IconData _activityIcon(ActivityFeedItem item) {
+    switch (item.kind) {
+      case ActivityFeedKind.scouting:
+        return Icons.pest_control_outlined;
+      case ActivityFeedKind.pestReport:
+        return Icons.bug_report;
+      case ActivityFeedKind.dailyLog:
+        break;
+    }
+
+    final title = item.title.toLowerCase();
+    if (title.contains('water')) return Icons.water_drop;
+    if (title.contains('fertiliz')) return Icons.center_focus_strong;
+    if (title.contains('scout')) return Icons.pest_control_outlined;
+    if (title.contains('harvest')) return Icons.agriculture_outlined;
+    if (title.contains('chemical')) return Icons.science_outlined;
+    return Icons.assignment_outlined;
+  }
+
+  Color _activityIconBg(ActivityFeedItem item) {
+    switch (item.kind) {
+      case ActivityFeedKind.scouting:
+        return const Color(0xFFEDE7F6);
+      case ActivityFeedKind.pestReport:
+        return const Color(0xFFFDE7E7);
+      case ActivityFeedKind.dailyLog:
+        break;
+    }
+
+    final title = item.title.toLowerCase();
+    if (title.contains('water')) return const Color(0xFFE4F8E5);
+    if (title.contains('fertiliz')) return const Color(0xFFEBE8B3);
+    if (title.contains('scout')) return const Color(0xFFEDE7F6);
+    if (title.contains('harvest')) return const Color(0xFFFFF3E0);
+    if (title.contains('chemical')) return const Color(0xFFEBE8B3);
+    return Colors.grey.shade200;
   }
 
   String _relativeTime(DateTime date) {
@@ -864,49 +931,14 @@ class HomeDashboard extends StatelessWidget {
     );
   }
 
-  Widget _buildPestPill(String title, String subtitle, Color circleBg, Color iconColor) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(100),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 58,
-            height: 58,
-            decoration: BoxDecoration(
-              color: circleBg,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(Icons.bug_report, color: iconColor, size: 26),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title,
-                    style: GoogleFonts.manrope(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 18,
-                        color: headingBlack)),
-                Text(subtitle,
-                    style: GoogleFonts.manrope(
-                        color: textGray,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500)),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildActivityCard(String title, String subtitle, String time, IconData icon, Color iconBg) {
+  Widget _buildActivityCard(
+    String title,
+    String subtitle,
+    String time,
+    IconData icon,
+    Color iconBg, {
+    String? tag,
+  }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(20),
@@ -932,15 +964,39 @@ class HomeDashboard extends StatelessWidget {
                         fontWeight: FontWeight.w800,
                         fontSize: 16,
                         color: headingBlack)),
-                const SizedBox(height: 2),
-                Text(subtitle,
-                    style: GoogleFonts.manrope(
-                        color: textGray,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500)),
+                if (subtitle.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.manrope(
+                          color: textGray,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500)),
+                ],
+                if (tag != null && tag.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      tag,
+                      style: GoogleFonts.manrope(
+                          color: Colors.grey.shade600,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.2),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
+          const SizedBox(width: 8),
           Text(time,
               style: GoogleFonts.manrope(
                   color: Colors.grey.shade500,
