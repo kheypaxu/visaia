@@ -372,11 +372,12 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
 
       developer.log('📤 Saving farmer data: $farmerData');
 
-      // Save to Firestore
+      // Save to Firestore. Merging keeps fields that are not part of this
+      // form — most importantly the uploaded profile photo — intact.
       await FirebaseFirestore.instance
           .collection("farmers")
           .doc(user.uid)
-          .set(farmerData);
+          .set(farmerData, SetOptions(merge: true));
 
       // Also save municipality & barangay to users collection for dashboard targeting
       await FirebaseFirestore.instance

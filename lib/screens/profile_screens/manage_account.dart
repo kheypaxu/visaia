@@ -3,9 +3,11 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:image_picker/image_picker.dart';
 import 'package:visaia/utils/location_constants.dart';
 import 'package:visaia/utils/image_compression.dart';
+import 'package:visaia/widgets/image_source_sheet.dart';
 
 class ManageAccountScreen extends StatefulWidget {
   const ManageAccountScreen({super.key});
@@ -93,7 +95,7 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
           _fullName = data['fullName'] ?? '';
           _email = data['email'] ?? user.email ?? '';
           _rsbsaId = data['rsbsaId'] ?? '';
-          _profileImageBase64 = data['profileImage'] ?? '';
+          _profileImageBase64 = data['profileImage']?.toString() ?? '';
           _idFrontBase64 = data['farmerIdImage'] ?? '';
           _idBackBase64 = data['farmerIdImageBack'] ?? '';
           _idFrontFileName = data['farmerIdFileName'] ?? '';
@@ -148,133 +150,14 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
     }
   }
 
-  /* ================= ID / PROFILE IMAGE HANDLING ================= */
-
-  /// Lets the farmer choose between taking a photo or browsing the gallery.
-  Future<ImageSource?> _pickImageSource() {
-    return showModalBottomSheet<ImageSource>(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 12),
-              Container(
-                width: 44,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-              ),
-              const SizedBox(height: 18),
-              Text(
-                'Select a source',
-                style: GoogleFonts.manrope(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  color: darkGreen,
-                ),
-              ),
-              const SizedBox(height: 10),
-              ListTile(
-                leading: const Icon(Icons.photo_camera_rounded,
-                    color: Color(0xFF4A633F), size: 24),
-                title: Text('Take a photo',
-                    style: GoogleFonts.manrope(
-                        color: darkGreen, fontSize: 15, fontWeight: FontWeight.w600)),
-                onTap: () => Navigator.pop(context, ImageSource.camera),
-              ),
-              ListTile(
-                leading: const Icon(Icons.photo_library_rounded,
-                    color: Color(0xFF4A633F), size: 24),
-                title: Text('Choose from gallery',
-                    style: GoogleFonts.manrope(
-                        color: darkGreen, fontSize: 15, fontWeight: FontWeight.w600)),
-                onTap: () => Navigator.pop(context, ImageSource.gallery),
-              ),
-              const SizedBox(height: 10),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  /// Picks, compresses and persists the farmer's profile picture.
-  Future<void> _pickAndSaveProfileImage() async {
-    if (_isUploadingImage) return;
-
-    try {
-      final source = await _pickImageSource();
-      if (source == null) return;
-
-      setState(() => _isUploadingImage = true);
-
-      final picked = await ImagePicker().pickImage(
-        source: source,
-        imageQuality: 90,
-        maxWidth: 2000,
-        maxHeight: 2000,
-      );
-
-      if (picked == null) {
-        if (mounted) setState(() => _isUploadingImage = false);
-        return;
-      }
-
-      final compressed = await compressImageToBase64(
-        picked.path,
-        fileName: picked.name,
-        quality: 55,
-        maxDimension: 720,
-      );
-
-      if (compressed == null) {
-        if (mounted) {
-          setState(() => _isUploadingImage = false);
-          _showSnack('Could not read the selected image.', Colors.red);
-        }
-        return;
-      }
-
-      final user = _auth.currentUser;
-      if (user == null) {
-        if (mounted) setState(() => _isUploadingImage = false);
-        return;
-      }
-
-      await _firestore
-          .collection('farmers')
-          .doc(user.uid)
-          .set({'profileImage': compressed.base64}, SetOptions(merge: true));
-
-      if (!mounted) return;
-      setState(() {
-        _profileImageBase64 = compressed.base64;
-        _isUploadingImage = false;
-      });
-      _showSnack('Profile photo updated', Colors.green);
-    } catch (e) {
-      debugPrint('Error uploading profile image: $e');
-      if (mounted) {
-        setState(() => _isUploadingImage = false);
-        _showSnack('Error updating profile photo: $e', Colors.red);
-      }
-    }
-  }
+  /* ================= ID HANDLING ================= */
 
   /// Picks, compresses and persists one side (front / back) of the ID.
   Future<void> _pickAndSaveIdSide(IdSide side) async {
     if (_isUploadingImage) return;
 
     try {
-      final source = await _pickImageSource();
+      final source = await pickImageSource(context);
       if (source == null) return;
 
       setState(() {
@@ -611,6 +494,10 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
     return parts[0][0].toUpperCase();
   }
 
+  /// Decoded profile photo, or `null` when the farmer has no (valid) photo.
+  Uint8List? get _profileImageBytes =>
+      decodeBase64Safely(_profileImageBase64.isEmpty ? null : _profileImageBase64);
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -643,55 +530,22 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 16.0),
-            child: GestureDetector(
-              onTap: _isUploadingImage ? null : _pickAndSaveProfileImage,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  CircleAvatar(
-                    radius: 18,
-                    backgroundImage: _profileImageBase64.isNotEmpty
-                        ? MemoryImage(base64Decode(_profileImageBase64))
-                        : null,
-                    child: _profileImageBase64.isEmpty
-                        ? Text(
-                            _getInitials(),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                            ),
-                          )
-                        : null,
-                  ),
-                  Positioned(
-                    right: -2,
-                    bottom: -2,
-                    child: Container(
-                      padding: const EdgeInsets.all(3),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF2D4421),
-                        shape: BoxShape.circle,
-                        border: Border.all(color: bgColor, width: 2),
+            child: CircleAvatar(
+              radius: 18,
+              backgroundColor: const Color(0xFF2D4421),
+              backgroundImage: _profileImageBytes != null
+                  ? MemoryImage(_profileImageBytes!)
+                  : null,
+              child: _profileImageBytes == null
+                  ? Text(
+                      _getInitials(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
                       ),
-                      child: _isUploadingImage
-                          ? const SizedBox(
-                              width: 10,
-                              height: 10,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 1.6,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(
-                              Icons.photo_camera_rounded,
-                              color: Colors.white,
-                              size: 10,
-                            ),
-                    ),
-                  ),
-                ],
-              ),
+                    )
+                  : null,
             ),
           ),
         ],
@@ -807,56 +661,22 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
               ),
               child: Row(
                 children: [
-                  GestureDetector(
-                    onTap: _isUploadingImage ? null : _pickAndSaveProfileImage,
-                    child: Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        CircleAvatar(
-                          radius: 38,
-                          backgroundColor: const Color(0xFF2D4421),
-                          backgroundImage: _profileImageBase64.isNotEmpty
-                              ? MemoryImage(base64Decode(_profileImageBase64))
-                              : null,
-                          child: _profileImageBase64.isEmpty
-                              ? Text(
-                                  _getInitials(),
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 26,
-                                  ),
-                                )
-                              : null,
-                        ),
-                        Positioned(
-                          right: -2,
-                          bottom: -2,
-                          child: Container(
-                            padding: const EdgeInsets.all(5),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF2D4421),
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 2),
+                  CircleAvatar(
+                    radius: 38,
+                    backgroundColor: const Color(0xFF2D4421),
+                    backgroundImage: _profileImageBytes != null
+                        ? MemoryImage(_profileImageBytes!)
+                        : null,
+                    child: _profileImageBytes == null
+                        ? Text(
+                            _getInitials(),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 26,
                             ),
-                            child: _isUploadingImage
-                                ? const SizedBox(
-                                    width: 12,
-                                    height: 12,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 1.8,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Icon(
-                                    Icons.photo_camera_rounded,
-                                    color: Colors.white,
-                                    size: 13,
-                                  ),
-                          ),
-                        ),
-                      ],
-                    ),
+                          )
+                        : null,
                   ),
                   const SizedBox(width: 20),
                   Expanded(
@@ -864,13 +684,13 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          _profileImageBase64.isEmpty
+                          _profileImageBytes == null
                               ? 'No profile photo yet'
                               : 'Profile photo updated',
                           style: GoogleFonts.manrope(
                             fontSize: 15,
                             fontWeight: FontWeight.w700,
-                            color: _profileImageBase64.isEmpty
+                            color: _profileImageBytes == null
                                 ? Colors.grey
                                 : darkGreen,
                           ),
@@ -883,32 +703,12 @@ class _ManageAccountScreenState extends State<ManageAccountScreen> {
                             color: textGray.withValues(alpha: 0.65),
                           ),
                         ),
-                        const SizedBox(height: 14),
-                        SizedBox(
-                          height: 42,
-                          child: OutlinedButton.icon(
-                            onPressed:
-                                _isUploadingImage ? null : _pickAndSaveProfileImage,
-                            icon: const Icon(Icons.image_outlined, size: 18),
-                            label: Text(
-                              _profileImageBase64.isEmpty
-                                  ? 'Choose photo'
-                                  : 'Change photo',
-                              style: GoogleFonts.manrope(
-                                fontSize: 13.5,
-                                fontWeight: FontWeight.w700,
-                                color: const Color(0xFF173408),
-                              ),
-                            ),
-                            style: OutlinedButton.styleFrom(
-                              side: const BorderSide(
-                                color: Color(0xFF173408),
-                                width: 1.2,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(22),
-                              ),
-                            ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'To change your photo, go back to your Profile tab and tap the camera button on your picture.',
+                          style: GoogleFonts.manrope(
+                            fontSize: 12.5,
+                            color: textGray.withValues(alpha: 0.65),
                           ),
                         ),
                       ],

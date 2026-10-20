@@ -23,6 +23,10 @@ class AuthCacheService {
   static const String _keyActiveFarmName = 'cached_active_farm_name';
   static const String _keyHasCachedSession = 'has_cached_session';
 
+  /// The profile photo is cached per account so a photo uploaded by one
+  /// farmer can never be rendered inside another farmer's account.
+  static String _profileImageKey(String uid) => '${_keyProfileImage}_$uid';
+
   SharedPreferences? _prefs;
   bool isOfflineSessionActive = false;
 
@@ -70,9 +74,15 @@ class AuthCacheService {
     if (verificationStatus != null) {
       await _safePrefs.setString(_keyVerificationStatus, verificationStatus);
     }
-    if (profileImage != null) {
-      await _safePrefs.setString(_keyProfileImage, profileImage);
+    // Always resolve the cached photo for this account: a farmer without a
+    // photo must clear a previously cached one instead of inheriting it.
+    await _safePrefs.remove(_profileImageKey(uid));
+    if (profileImage != null && profileImage.isNotEmpty) {
+      await _safePrefs.setString(_profileImageKey(uid), profileImage);
     }
+    // Purge the legacy account-agnostic key that used to leak one farmer's
+    // photo into another farmer's session.
+    await _safePrefs.remove(_keyProfileImage);
     if (hasFarm != null) await _safePrefs.setBool(_keyHasFarm, hasFarm);
     if (hasFields != null) await _safePrefs.setBool(_keyHasFields, hasFields);
     if (activeFarmId != null) {
@@ -122,8 +132,13 @@ class AuthCacheService {
     if (verificationStatus != null) {
       await _safePrefs.setString(_keyVerificationStatus, verificationStatus);
     }
-    if (profileImage != null) {
-      await _safePrefs.setString(_keyProfileImage, profileImage);
+    final uid = cachedUid;
+    if (uid != null && uid.isNotEmpty && profileImage != null) {
+      if (profileImage.isEmpty) {
+        await _safePrefs.remove(_profileImageKey(uid));
+      } else {
+        await _safePrefs.setString(_profileImageKey(uid), profileImage);
+      }
     }
   }
 
@@ -175,6 +190,7 @@ class AuthCacheService {
   Future<void> clearCache() async {
     await init();
     isOfflineSessionActive = false;
+    final cachedUid = _safePrefs.getString(_keyUid);
     await _safePrefs.remove(_keyUid);
     await _safePrefs.remove(_keyEmail);
     await _safePrefs.remove(_keyName);
@@ -182,6 +198,9 @@ class AuthCacheService {
     await _safePrefs.remove(_keyPasswordSalt);
     await _safePrefs.remove(_keyVerificationStatus);
     await _safePrefs.remove(_keyProfileImage);
+    if (cachedUid != null) {
+      await _safePrefs.remove(_profileImageKey(cachedUid));
+    }
     await _safePrefs.remove(_keyHasFarm);
     await _safePrefs.remove(_keyHasFields);
     await _safePrefs.remove(_keyActiveFarmId);
@@ -200,7 +219,13 @@ class AuthCacheService {
   String? get cachedName => _safePrefs.getString(_keyName);
   String? get cachedVerificationStatus =>
       _safePrefs.getString(_keyVerificationStatus);
-  String? get cachedProfileImage => _safePrefs.getString(_keyProfileImage);
+
+  /// Cached profile photo for the currently cached account only.
+  String? get cachedProfileImage {
+    final uid = cachedUid;
+    if (uid == null || uid.isEmpty) return null;
+    return _safePrefs.getString(_profileImageKey(uid));
+  }
   bool? get cachedHasFarm => _safePrefs.getBool(_keyHasFarm);
   bool? get cachedHasFields => _safePrefs.getBool(_keyHasFields);
   String? get cachedActiveFarmId => _safePrefs.getString(_keyActiveFarmId);

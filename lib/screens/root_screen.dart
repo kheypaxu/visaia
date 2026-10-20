@@ -1,5 +1,4 @@
 import 'package:visaia/services/notification_feed_service.dart';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -24,6 +23,7 @@ import 'package:visaia/services/auth_cache_service.dart';
 import 'package:visaia/services/offline_sync_service.dart';
 import 'package:visaia/widgets/offline_banner.dart';
 import 'package:visaia/widgets/offline_queue_sheet.dart';
+import 'package:visaia/utils/image_compression.dart';
 
 enum NavItem { reports, home, cycle, map, profile }
 
@@ -319,6 +319,9 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
   // Store profile image data
   String? _profileImageBase64;
 
+  /// Decoded avatar for the signed-in account, or `null` when unavailable.
+  Uint8List? get _profileImageBytes => decodeBase64Safely(_profileImageBase64);
+
   static const _navItems = [
     NavItem.home,
     NavItem.cycle,
@@ -357,31 +360,32 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
   // Load profile image from Firestore or local cache
   Future<void> _loadProfileImage() async {
     await _cacheService.init();
-    if (_cacheService.cachedProfileImage != null && mounted) {
+
+    // Only reuse the cached photo when it belongs to the signed-in account.
+    if (_cacheService.cachedUid == userId &&
+        _cacheService.cachedProfileImage != null &&
+        mounted) {
       setState(() {
         _profileImageBase64 = _cacheService.cachedProfileImage;
       });
     }
 
     if (userId.isEmpty) return;
-    
+
     try {
       final doc = await _firestore
           .collection('farmers')
           .doc(userId)
           .get();
-      
+
       if (doc.exists && mounted) {
         final data = doc.data();
-        if (data != null && data.containsKey('profileImage')) {
-          final img = data['profileImage'] as String?;
-          setState(() {
-            _profileImageBase64 = img;
-          });
-          if (img != null) {
-            await _cacheService.updateProfile(profileImage: img);
-          }
-        }
+        final img = data?['profileImage']?.toString();
+        setState(() {
+          _profileImageBase64 = img;
+        });
+        // Sync the cache so it mirrors exactly what is stored for this account.
+        await _cacheService.updateProfile(profileImage: img ?? '');
       }
     } catch (e) {
       debugPrint('Error loading profile image (using cache): $e');
@@ -730,10 +734,10 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
                 child: CircleAvatar(
                   radius: 20,
                   backgroundColor: const Color(0xFFE0E0E0),
-                  backgroundImage: _profileImageBase64 != null
-                      ? MemoryImage(base64Decode(_profileImageBase64!))
+                  backgroundImage: _profileImageBytes != null
+                      ? MemoryImage(_profileImageBytes!)
                       : null,
-                  child: _profileImageBase64 == null
+                  child: _profileImageBytes == null
                       ? Text(
                           initials,
                           style: GoogleFonts.inter(

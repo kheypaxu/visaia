@@ -1,8 +1,6 @@
-import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
@@ -14,7 +12,10 @@ import 'package:visaia/screens/profile_screens/preferences.dart';
 import 'package:visaia/screens/profile_screens/help_and_support.dart';
 import 'package:visaia/screens/profile_screens/privacy_data_screen.dart';
 import 'package:visaia/screens/onboarding/farm_area_setup.dart';
+import 'package:visaia/services/auth_cache_service.dart';
 import 'package:visaia/services/auth_service.dart';
+import 'package:visaia/utils/image_compression.dart';
+import 'package:visaia/widgets/image_source_sheet.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -414,45 +415,73 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   // ================= PROFILE IMAGE =================
+  /// Single entry point for changing the farmer's profile photo.
+  ///
+  /// The photo is stored as Base64 on `farmers/{uid}.profileImage` — the same
+  /// field the LGU-MAO dashboard reads for the account verification and
+  /// farmers pages.
   Future<void> _pickAndUploadImage() async {
+    if (_uploading) return;
+
     try {
-      final picked = await ImagePicker().pickImage(
-        source: ImageSource.gallery,
-        imageQuality: 70,
-      );
-      if (picked == null) return;
+      final source = await pickImageSource(context);
+      if (source == null) return;
 
       setState(() => _uploading = true);
 
-      final compressed = await FlutterImageCompress.compressWithFile(
-        picked.path,
-        quality: 50,
-        format: CompressFormat.jpeg,
+      final picked = await ImagePicker().pickImage(
+        source: source,
+        imageQuality: 90,
+        maxWidth: 2000,
+        maxHeight: 2000,
       );
-      if (compressed == null) return;
 
-      final base64Image = base64Encode(compressed);
+      if (picked == null) {
+        if (mounted) setState(() => _uploading = false);
+        return;
+      }
+
+      final compressed = await compressImageToBase64(
+        picked.path,
+        fileName: picked.name,
+        quality: 55,
+        maxDimension: 720,
+      );
+
+      if (compressed == null) {
+        if (mounted) {
+          setState(() => _uploading = false);
+          _showSnack('Could not process the selected image.', Colors.red);
+        }
+        return;
+      }
 
       await _firestore.collection('farmers').doc(currentUser!.uid).set(
-        {'profileImage': base64Image},
+        {'profileImage': compressed.base64},
         SetOptions(merge: true),
       );
 
+      // Keep the offline cache in sync so the app bar avatar updates right away.
+      await AuthCacheService().updateProfile(profileImage: compressed.base64);
+
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Profile image updated')),
-        );
+        _showSnack('Profile image updated', Colors.green);
       }
     } catch (e) {
       debugPrint(e.toString());
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Error uploading image: $e")),
-        );
+        _showSnack('Error uploading image: $e', Colors.red);
       }
     } finally {
       if (mounted) setState(() => _uploading = false);
     }
+  }
+
+  void _showSnack(String message, Color color) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: color),
+    );
   }
 
   // ================= SWITCH FARM =================
@@ -532,7 +561,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
           }
 
           final rsbsaId = (farmerData['rsbsaId'] ?? farmerData['rsbsaNumber'] ?? '').toString();
-          final profileImage = farmerData['profileImage'];
+          final profileImage = decodeBase64Safely(
+              farmerData['profileImage']?.toString());
 
           return SafeArea(
             child: SingleChildScrollView(
@@ -552,7 +582,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               child: CircleAvatar(
                                 radius: 56,
                                 backgroundImage: profileImage != null
-                                    ? MemoryImage(base64Decode(profileImage))
+                                    ? MemoryImage(profileImage)
                                     : null,
                                 child: profileImage == null
                                     ? Text(
