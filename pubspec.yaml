@@ -2,7 +2,7 @@ name: visaia
 description: "A new Flutter project."
 publish_to: "none"
 
-version: 2.0.2+47
+version: 2.0.2+48
 
 environment:
   sdk: ^3.9.2
@@ -63,6 +63,8 @@ flutter:
   uses-material-design: true
 
   assets:
+    - assets/fonts/Roboto-Regular.ttf
+    - assets/fonts/Roboto-Medium.ttf
     - assets/images/bg.png
     - assets/images/login-bg.png
     - assets/images/img1.png
@@ -79,6 +81,7 @@ flutter:
     - assets/images/nobg-gardo.png
     - assets/images/zigzag.png
     - assets/images/map/
+
 
 
 

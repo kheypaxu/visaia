@@ -27,11 +27,13 @@ void main() {
         }
       }
       final pdf = pw.Document(theme: await PdfThemeService.load());
+      final logo = await PdfThemeService.loadLogo();
       pdf.addPage(
         pw.Page(
           build: (_) => pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
+              PdfThemeService.brandHeader(logo),
               pw.Text(
                 'Export typography check',
                 style: pw.TextStyle(

@@ -272,7 +272,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
           : _errorMessage != null
           ? _buildErrorView()
           : DefaultTabController(
-              length: 4,
+              length: 3,
               child: Column(
                 children: [
                   Padding(
@@ -303,16 +303,15 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                     tabs: [
                       Tab(text: 'Gross Income'),
                       Tab(text: 'Cost Deduction'),
-                      Tab(text: 'Income Projection'),
                       Tab(text: 'Audit'),
                     ],
                   ),
                   Expanded(
                     child: TabBarView(
                       children: [
-                        _tabBody('gross', [_buildGrossIncomeCard()]),
-                        _tabBody('cost', [_buildLossesCard()]),
-                        _tabBody('projection', [
+                        _tabBody('gross', [
+                          _buildGrossIncomeCard(),
+                          const SizedBox(height: 24),
                           Text(
                             'Monthly Income Projection',
                             style: GoogleFonts.epilogue(
@@ -362,6 +361,11 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                           _buildRevenueChart(),
 
                           const SizedBox(height: 32),
+                        ]),
+                        _tabBody('cost', [
+                          _buildLossesCard(),
+                          const SizedBox(height: 20),
+                          _buildNetIncomeCard(),
                         ]),
                         _tabBody('audit', [
                           // ─── 1. PENDING AUDIT SECTION ─────────────────────────
@@ -737,14 +741,53 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
           for (final entry in _financialBreakdown.entries)
             if (!entry.key.contains('adjustment') || entry.value.abs() >= 0.005)
               _buildFinancialRow(entry.key, entry.value),
-          const Divider(),
-          _buildFinancialRow('Net income', _netIncome),
-          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNetIncomeCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(28),
+      decoration: BoxDecoration(
+        color: darkGreen,
+        borderRadius: BorderRadius.circular(30),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'NET INCOME',
+            style: GoogleFonts.manrope(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+              letterSpacing: 1,
+            ),
+          ),
+          const SizedBox(height: 16),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              _formatCurrency(_netIncome),
+              style: GoogleFonts.manrope(
+                fontSize: 40,
+                fontWeight: FontWeight.w800,
+                color: Colors.white,
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
           Text(
             'Net income = gross income - damage costs - cycle expenses '
             '+ saved net adjustment (if any). Damaged harvest value is not deducted again. '
             'Saved adjustments reconcile stored totals with itemized amounts.',
-            style: GoogleFonts.manrope(fontSize: 12, color: textGray),
+            style: GoogleFonts.manrope(
+              fontSize: 12,
+              color: Colors.white.withValues(alpha: 0.8),
+            ),
           ),
         ],
       ),
@@ -958,18 +1001,6 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                     : 'Last 6 Months Revenue Flow',
                 style: GoogleFonts.manrope(fontSize: 12, color: textGray),
               ),
-              Row(
-                children: [
-                  Text(
-                    'Export',
-                    style: GoogleFonts.manrope(
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const Icon(Icons.download, size: 15),
-                ],
-              ),
             ],
           ),
           const SizedBox(height: 25),
@@ -1085,14 +1116,20 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
 
     try {
       final pdf = pw.Document(theme: await PdfThemeService.load());
+      final exportLogo = await PdfThemeService.loadLogo();
       final now = DateTime.now();
       final dateStr = DateFormat('MMMM dd, yyyy').format(now);
+      final projectionMonths = List.generate(_showOneYear ? 12 : 6, (i) {
+        final count = _showOneYear ? 12 : 6;
+        return DateTime(now.year, now.month - count + 1 + i, 1);
+      });
 
       pdf.addPage(
         pw.MultiPage(
           pageFormat: PdfPageFormat.a4,
           margin: const pw.EdgeInsets.all(40),
           build: (pw.Context context) => [
+            PdfThemeService.brandHeader(exportLogo),
             pw.Header(
               level: 0,
               child: pw.Text(
@@ -1147,6 +1184,60 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
               ),
             ),
             pw.SizedBox(height: 20),
+            pw.Text(
+              'Monthly Income Projection - Last ${projectionMonths.length} Months',
+              style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
+            ),
+            pw.SizedBox(height: 8),
+            pw.Text(
+              'Recorded harvest income for the selected period; future income is not forecast.',
+            ),
+            pw.SizedBox(height: 10),
+            pw.Container(
+              height: 130,
+              child: pw.Row(
+                crossAxisAlignment: pw.CrossAxisAlignment.end,
+                mainAxisAlignment: pw.MainAxisAlignment.spaceAround,
+                children: [
+                  for (final revenue in _monthlyRevenues)
+                    pw.Column(
+                      mainAxisAlignment: pw.MainAxisAlignment.end,
+                      children: [
+                        pw.Container(
+                          width: 18,
+                          height: revenue.level > 0 ? revenue.level * 100 : 2,
+                          color: PdfColors.green900,
+                        ),
+                        pw.SizedBox(height: 6),
+                        pw.Text(
+                          revenue.month,
+                          style: const pw.TextStyle(fontSize: 8),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+            pw.SizedBox(height: 12),
+            pw.TableHelper.fromTextArray(
+              headers: ['Month', 'Harvest income'],
+              headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+              headerDecoration: const pw.BoxDecoration(
+                color: PdfColors.green50,
+              ),
+              cellPadding: const pw.EdgeInsets.all(8),
+              data: [
+                for (final month in projectionMonths)
+                  [
+                    DateFormat('MMM yyyy').format(month),
+                    _formatCurrency(
+                      _rawMonthlyIncome[DateFormat('yyyy-MM').format(month)] ??
+                          0,
+                    ),
+                  ],
+              ],
+            ),
+            pw.SizedBox(height: 24),
 
             pw.Container(
               padding: const pw.EdgeInsets.all(16),
@@ -1199,19 +1290,83 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                       ? '\u20B1${_avgMarketPrice.toStringAsFixed(2)}/kg'
                       : 'N/A',
                 ],
-                ['Net Income', _formatCurrency(_netIncome)],
                 ['Completed Cycles', '${_completedCycleIds.length}'],
                 ['Completed Crops', '${_completedCrops.length}'],
               ],
             ),
             pw.SizedBox(height: 24),
-
+            pw.Container(
+              width: double.infinity,
+              padding: const pw.EdgeInsets.all(24),
+              decoration: pw.BoxDecoration(
+                color: PdfColors.green900,
+                borderRadius: pw.BorderRadius.circular(8),
+              ),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text(
+                    'NET INCOME',
+                    style: pw.TextStyle(
+                      fontSize: 16,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.white,
+                    ),
+                  ),
+                  pw.SizedBox(height: 12),
+                  pw.FittedBox(
+                    fit: pw.BoxFit.scaleDown,
+                    child: pw.Text(
+                      _formatCurrency(_netIncome),
+                      style: pw.TextStyle(
+                        fontSize: 36,
+                        fontWeight: pw.FontWeight.bold,
+                        color: PdfColors.white,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            pw.SizedBox(height: 16),
             pw.Text(
               'Net = gross harvest income - damage costs - cycle expenses + saved net adjustment. Pending audits are included. Yield is in kg; weighted price is informational, not the income formula.',
             ),
+            pw.SizedBox(height: 20),
+            pw.Text(
+              'Audit',
+              style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
+            ),
+            pw.SizedBox(height: 10),
+            pw.Text(
+              'Pending Audit (${_pendingAuditCrops.length})',
+              style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
+            ),
+            pw.SizedBox(height: 8),
+            if (_pendingAuditCrops.isEmpty)
+              pw.Text('No crops awaiting audit.')
+            else
+              pw.TableHelper.fromTextArray(
+                headers: ['Crop', 'Field', 'Gross income', 'Net income'],
+                headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                headerDecoration: const pw.BoxDecoration(
+                  color: PdfColors.grey200,
+                ),
+                cellPadding: const pw.EdgeInsets.all(8),
+                data: [
+                  for (final crop in _pendingAuditCrops)
+                    [
+                      crop.name,
+                      crop.plot,
+                      _formatCurrency(crop.grossIncome),
+                      _formatCurrency(crop.netIncome),
+                    ],
+                ],
+              ),
+            pw.SizedBox(height: 16),
             if (_completedCrops.isNotEmpty) ...[
               pw.Text(
-                'Completed Crops',
+                'Completed Audit (${_completedCrops.length})',
                 style: pw.TextStyle(
                   fontSize: 16,
                   fontWeight: pw.FontWeight.bold,
@@ -1224,12 +1379,20 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                   color: PdfColors.grey200,
                 ),
                 cellPadding: const pw.EdgeInsets.all(8),
-                headers: ['Crop', 'Field', 'Status'],
+                headers: ['Crop', 'Field', 'Gross income', 'Net income'],
                 data: _completedCrops
-                    .map((c) => [c.name, c.plot, 'Completed'])
+                    .map(
+                      (c) => [
+                        c.name,
+                        c.plot,
+                        _formatCurrency(c.grossIncome),
+                        _formatCurrency(c.netIncome),
+                      ],
+                    )
                     .toList(),
               ),
-            ],
+            ] else
+              pw.Text('No completed audits yet.'),
 
             pw.SizedBox(height: 30),
             pw.Divider(),

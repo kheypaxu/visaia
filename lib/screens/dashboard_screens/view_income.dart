@@ -949,6 +949,7 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
 
     try {
       final pdf = pw.Document(theme: await PdfThemeService.load());
+      final exportLogo = await PdfThemeService.loadLogo();
       final now = DateTime.now();
       final dateStr = DateFormat('MMMM dd, yyyy').format(now);
 
@@ -957,6 +958,7 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
           pageFormat: PdfPageFormat.a4,
           margin: const pw.EdgeInsets.all(40),
           build: (pw.Context context) => [
+            PdfThemeService.brandHeader(exportLogo),
             pw.Header(
               level: 0,
               child: pw.Text(

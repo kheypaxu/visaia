@@ -489,6 +489,7 @@ class FarmReportPdfService {
   /// Generates the concise, executive PDF for a specific farm (info about the farm & report counts)
   static Future<File> generateFarmReportPdf(FarmReportData data) async {
     final pdf = pw.Document(theme: await PdfThemeService.load());
+    final exportLogo = await PdfThemeService.loadLogo();
 
     final dateStr = DateFormat('MMMM dd, yyyy').format(data.reportDate);
     final progressPercent = (data.growthProgress * 100).round();
@@ -560,6 +561,7 @@ class FarmReportPdfService {
           );
         },
         build: (pw.Context context) => [
+          PdfThemeService.brandHeader(exportLogo),
           // ── Title Header ──
           pw.Center(
             child: pw.Text(
@@ -1050,6 +1052,7 @@ class FarmReportPdfService {
     required List<Map<String, dynamic>> allFarms,
   }) async {
     final pdf = pw.Document(theme: await PdfThemeService.load());
+    final exportLogo = await PdfThemeService.loadLogo();
     final now = DateTime.now();
     final dateStr = DateFormat('MMMM dd, yyyy').format(now);
     final db = FirebaseFirestore.instance;
@@ -1185,6 +1188,7 @@ class FarmReportPdfService {
           );
         },
         build: (pw.Context context) => [
+          PdfThemeService.brandHeader(exportLogo),
           // Title
           pw.Center(
             child: pw.Text(
