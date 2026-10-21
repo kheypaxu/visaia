@@ -154,7 +154,7 @@ class _SplashScreenState extends State<SplashScreen>
                                       ),
                                     ),
                                     child: Image.asset(
-                                      'assets/images/final-logo.png',
+                                      'assets/images/final-logo-visaia.png',
                                       width: 112,
                                       height: 112,
                                       semanticLabel: 'Visaia logo',

@@ -216,7 +216,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
 
                           // Official App Logo Image
                           Image.asset(
-                            'assets/images/final-logo.png',
+                            'assets/images/final-logo-visaia.png',
                             width: logoSize,
                             height: logoSize,
                             fit: BoxFit.contain,
