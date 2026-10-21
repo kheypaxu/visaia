@@ -54,10 +54,10 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/images/final-logo-visaia.png"
+  image_path: "assets/images/AppIcon.png"
   adaptive_icon_background: "#00000000"
-  adaptive_icon_foreground: "assets/images/final-logo-visaia.png"
-  adaptive_icon_foreground_inset: 26
+  adaptive_icon_foreground: "assets/images/AppIcon.png"
+  adaptive_icon_foreground_inset: 0
   remove_alpha_ios: true
 
 flutter:
