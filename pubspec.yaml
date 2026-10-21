@@ -2,7 +2,7 @@ name: visaia
 description: "A new Flutter project."
 publish_to: "none"
 
-version: 2.0.2+48
+version: 2.0.2+49
 
 environment:
   sdk: ^3.9.2
@@ -55,8 +55,9 @@ flutter_launcher_icons:
   android: true
   ios: true
   image_path: "assets/images/final-logo-visaia.png"
-  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_background: "#00000000"
   adaptive_icon_foreground: "assets/images/final-logo-visaia.png"
+  adaptive_icon_foreground_inset: 26
   remove_alpha_ios: true
 
 flutter:
@@ -81,6 +82,7 @@ flutter:
     - assets/images/nobg-gardo.png
     - assets/images/zigzag.png
     - assets/images/map/
+
 
 
 
