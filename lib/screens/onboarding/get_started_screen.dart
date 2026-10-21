@@ -159,7 +159,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
                         child: Column(
                           children: [
                             Image.asset(
-                              'assets/images/logo.png',
+                              'assets/images/final-logo.png',
                               width: 78,
                               height: 78,
                               semanticLabel: 'Visaia logo',
