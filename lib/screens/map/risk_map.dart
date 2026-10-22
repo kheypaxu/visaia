@@ -614,16 +614,6 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
   for (var point in _riskPoints) {
     if (markerCount >= maxRiskPointsRender) break;
     if (_selectedStage == PestLifeStage.all || point.stage == _selectedStage) {
-      if (_showSourceReports) {
-      _cachedMarkers.add(
-        Marker(
-          point: point.location,
-          width: 40,
-          height: 40,
-          child: _buildRiskMarker(point),
-        ),
-      );
-    }
       final radius = _getSpreadRadiusMeters(point.stage, point.riskLevel);
       if (radius > 0) {
         _cachedCircles.add(
@@ -673,50 +663,6 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
         continue;
       }
 
-    if (_showSourceReports) {
-      _cachedMarkers.add(
-      Marker(
-        point: report.location,
-        width: 45,
-        height: 45,
-
-        child: GestureDetector(
-          onTap: () {
-            _showReportDetails(report);
-          },
-
-          child: Container(
-            decoration: BoxDecoration(
-              color: _getRiskColor(report.riskLevel),
-              shape: BoxShape.circle,
-
-              border: Border.all(
-                color: Colors.white,
-                width: 2,
-              ),
-
-              boxShadow: [
-                BoxShadow(
-                  color: _getRiskColor(report.riskLevel)
-                      .withValues(alpha: 0.5),
-
-                  blurRadius: 12,
-                  spreadRadius: 4,
-                ),
-              ],
-            ),
-
-            child: const Icon(
-              Icons.warning,
-              color: Colors.white,
-              size: 22,
-            ),
-          ),
-        ),
-      ),
-    );
-    }
-
     _cachedCircles.add(
       CircleMarker(
         point: report.location,
@@ -748,7 +694,11 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       ),
     );
 
-    if (_showSourceReports) {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid ??
+        AuthCacheService().cachedUid;
+    if (_showSourceReports &&
+        threat.ownerId.isNotEmpty &&
+        threat.ownerId != currentUserId) {
       _cachedMarkers.add(
       Marker(
         point: threat.location,
@@ -762,72 +712,36 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
   }
   }
 
-  /// Marker for a nearby threat. Uses the same life stage location pins as
-  /// the web dashboard risk map.
+  /// Nearby report pins show the detected pest rather than a warning triangle.
   Widget _buildThreatMarker(FawThreat threat) {
-    final size = (threat.riskLevel == RiskLevel.veryHigh ||
-            threat.riskLevel == RiskLevel.high)
-        ? 48.0
-        : 42.0;
-    final accent = threat.riskLevel.color;
-
-    return GestureDetector(
-      onTap: () => _showThreatDetails(threat),
-      child: SizedBox(
-        width: size,
-        height: size,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            // Soft risk coloured glow behind the pin.
-            Positioned.fill(
-              child: Container(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: accent.withValues(alpha: 0.55),
-                      blurRadius: 14,
-                      spreadRadius: 3,
-                    ),
-                  ],
+    final label = '${threat.stage.label} report - ${threat.riskLevel.label} risk';
+    return Tooltip(
+      message: label,
+      child: Semantics(
+        label: label,
+        button: true,
+        child: GestureDetector(
+          onTap: () => _showThreatDetails(threat),
+          child: Container(
+            decoration: BoxDecoration(
+              color: threat.riskLevel.color,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+              boxShadow: [
+                BoxShadow(
+                  color: threat.riskLevel.color.withValues(alpha: 0.35),
+                  blurRadius: 8,
                 ),
+              ],
+            ),
+            child: ExcludeSemantics(
+              child: Icon(
+                _getStageIcon(_toPestLifeStage(threat.stage)),
+                color: Colors.white,
+                size: 26,
               ),
             ),
-            // The pin itself, tip anchored on the location.
-            Positioned.fill(
-              child: Padding(
-                padding: EdgeInsets.only(
-                  top: size * 0.08,
-                  left: size * 0.12,
-                  right: size * 0.12,
-                ),
-                child: Image.asset(
-                  threat.pinAsset,
-                  fit: BoxFit.contain,
-                  errorBuilder: (context, error, stack) => Icon(
-                    Icons.bug_report,
-                    color: accent,
-                    size: size * 0.5,
-                  ),
-                ),
-              ),
-            ),
-            // Risk dot so the level is readable at a glance.
-            Positioned(
-              top: 0,
-              right: 0,
-              child: Container(
-                width: 14,
-                height: 14,
-                decoration: BoxDecoration(
-                  color: accent,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 2),
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -860,62 +774,6 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       case PestLifeStage.moth:
         return (FawRiskService.mothRadiusKm * 1000).roundToDouble();
     }
-  }
-
-  Widget _buildRiskMarker(RiskPoint point) {
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0.9, end: 1.15),
-      duration: const Duration(milliseconds: 900),
-      curve: Curves.easeInOut,
-
-      onEnd: () {
-        if (mounted) {
-          setState(() {});
-        }
-      },
-
-      builder: (context, scale, child) {
-        return Transform.scale(
-          scale: scale,
-          child: child,
-        );
-      },
-
-      child: GestureDetector(
-        onTap: () {
-          _showRiskDetails(point);
-        },
-
-        child: Container(
-          width: 40,
-          height: 40,
-
-          decoration: BoxDecoration(
-            color: _getRiskColor(point.riskLevel),
-            shape: BoxShape.circle,
-            border: Border.all(
-              color: Colors.white,
-              width: 2,
-            ),
-
-            boxShadow: [
-              BoxShadow(
-                color: _getRiskColor(point.riskLevel)
-                    .withValues(alpha: 0.5),
-                blurRadius: 10,
-                spreadRadius: 3,
-              ),
-            ],
-          ),
-
-          child: Icon(
-            _getStageIcon(point.stage),
-            color: Colors.white,
-            size: 20,
-          ),
-        ),
-      ),
-    );
   }
 
   void _zoomIn() {
@@ -1902,7 +1760,9 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
               child: Column(mainAxisSize: MainAxisSize.min, children: [
                 SwitchListTile.adaptive(
                   dense: true,
-                  title: const Text('Show source reports', style: TextStyle(color: Colors.white, fontSize: 13)),
+                  title: const Text('Show nearby report pins', style: TextStyle(color: Colors.white, fontSize: 13)),
+                  subtitle: const Text('Your own report pins stay hidden.',
+                    style: TextStyle(color: Colors.white70, fontSize: 11)),
                   value: _showSourceReports,
                   onChanged: (value) => setState(() {
                     _showSourceReports = value;
