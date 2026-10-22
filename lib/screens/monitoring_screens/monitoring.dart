@@ -110,6 +110,9 @@ class MonitoringScreen extends StatefulWidget {
   final String cycleId;
   final String? userId;
 
+  // Quick Log shares scouting behavior while presenting a single-station form.
+  final bool quickLog;
+  final Widget Function(Future<bool> Function() saveDraft)? cycleSelector;
   final int? initialWeekIndex;
   final int? initialStationIndex;
 
@@ -117,6 +120,8 @@ class MonitoringScreen extends StatefulWidget {
     super.key,
     required this.cycleId,
     this.userId,
+    this.quickLog = false,
+    this.cycleSelector,
     this.initialWeekIndex,
     this.initialStationIndex,
   });
@@ -204,6 +209,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   // Weekly state
   int _selectedWeek = 0;
   int _expandedStationIndex = -1;
+  int _quickStationIndex = 0;
   List<Map<String, dynamic>> _stationData = [];
 
   // Daily state — now derived from selected week
@@ -621,12 +627,13 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
 
   void _incrementPestCount(int index, String key) {
     if (_isCurrentWeekLocked) return;
+    if (key == 'damaged' && (_stationData[index]['damaged'] as int? ?? 0) >= 10) return;
     setState(() {
       _stationData[index][key] = (_stationData[index][key] as int) + 1;
       
       if (key == 'eggMasses' || key == 'larvae' || key == 'pupae' || key == 'moths' || key == 'damaged') {
         final newCount = _stationData[index][key] as int;
-        if (newCount > 0 && !(_stationData[index]['verificationRequired'] as bool? ?? false)) {
+        if (newCount > 0) {
           _stationData[index]['verificationRequired'] = true;
           _stationData[index]['verificationCompleted'] = false;
         }
@@ -892,8 +899,19 @@ void _showSafeModal(double percent, int damaged, int inspected) {
       _stationData[index]['completed'] = true;
       _expandedStationIndex = -1;
     });
-    _scheduleAutoSave();
-    
+    _autoSaveTimer?.cancel();
+    final saved = await _saveCurrentWeekData();
+    if (!mounted) return;
+    if (!saved) {
+      setState(() => _stationData[index]['completed'] = false);
+      return;
+    }
+    if (widget.quickLog) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Station ${index + 1} saved successfully.')),
+      );
+    }
+
     // Check if all stations are now completed
     final totalStations = _stationData.length;
     final completedCount = _stationData.where((s) => s['completed'] as bool? ?? false).length;
@@ -1136,7 +1154,10 @@ Future<void> _loadCycleData() async {
     final initialStation = widget.initialStationIndex;
     if (mounted && initialStation != null &&
         initialStation >= 0 && initialStation < _stationData.length) {
-      setState(() => _expandedStationIndex = initialStation);
+      setState(() {
+        _expandedStationIndex = initialStation;
+        _quickStationIndex = initialStation;
+      });
     }
     await _loadDailyLogData(_dailySelectedDay);
     await _updateCycleGrowthStage();
@@ -1332,7 +1353,7 @@ Future<void> _loadCycleData() async {
     });
   }
 
-  Future<void> _saveCurrentWeekData({bool silent = false}) async {
+  Future<bool> _saveCurrentWeekData({bool silent = false}) async {
     final weekId = 'week_${_selectedWeek + 1}';
     final stateMap = _recommendedTaskState[_selectedWeek] ?? {};
     final firestoreTaskMap = stateMap.map((k, v) => MapEntry(k.toString(), v));
@@ -1352,12 +1373,14 @@ Future<void> _loadCycleData() async {
     try {
       await _firestoreService.saveWeek(widget.cycleId, weekId, data);
       _loadAllWeeksStatus();
+      return true;
     } catch (e) {
       if (!silent && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Auto-save failed: $e')),
         );
       }
+      return false;
     }
   }
 
@@ -1506,11 +1529,22 @@ Future<void> _loadCycleData() async {
                     ? _buildErrorState()
                     : Column(
                         children: [
+                          if (widget.quickLog) ...[
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(8, 8, 20, 0),
+                              child: Row(children: [
+                                const BackButton(),
+                                Expanded(child: Text('Field Scouting',
+                                  style: GoogleFonts.inter(fontSize: 22, fontWeight: FontWeight.w800, color: kPrimaryGreen))),
+                              ]),
+                            ),
+                          ] else ...[
                           _buildHeader(),
                           const SizedBox(height: 12),
                           _buildControlMethodsCard(),
                           const SizedBox(height: 12),
                           _buildGrowthStageCard(),
+                          ],
                           const SizedBox(height: 16),
                           Expanded(
                             child: SingleChildScrollView(
@@ -1520,7 +1554,15 @@ Future<void> _loadCycleData() async {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  _buildWeeklyContent(),
+                                  if (widget.quickLog)
+                                    Stack(children: [
+                                      _buildQuickLogForm(),
+                                      if (_isWeekLoading) const Positioned.fill(child: ColoredBox(
+                                        color: Color(0xCCFFFFFF),
+                                        child: Center(child: CircularProgressIndicator()),
+                                      )),
+                                    ])
+                                  else _buildWeeklyContent(),
                                   const SizedBox(height: 40),
                                 ],
                               ),
@@ -1564,6 +1606,123 @@ Future<void> _loadCycleData() async {
             ),
         ],
       )
+    );
+  }
+
+  Widget _quickFormCard(Widget child) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: const Color(0xFFDDEEE4)),
+    ),
+    child: child,
+  );
+
+  Widget _buildQuickLogForm() {
+    if (_stationData.isEmpty) return const Center(child: Text('No stations available.'));
+    final index = _quickStationIndex.clamp(0, _stationData.length - 1);
+    final station = _stationData[index];
+    final completed = station['completed'] == true;
+    final locked = _isCurrentWeekLocked || completed;
+    final damaged = station['damaged'] as int? ?? 0;
+    final needsEvidence = _hasFAWPresence(station);
+    final assessmentError = _isDamageAssessmentIncomplete(index);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Weekly crop inspection', style: GoogleFonts.inter(color: kTextGrey)),
+        const SizedBox(height: 20),
+        if (widget.cycleSelector != null) widget.cycleSelector!(() async {
+          _autoSaveTimer?.cancel();
+          return _saveCurrentWeekData();
+        }),
+        const SizedBox(height: 16),
+        _buildWeekSelector(),
+        const SizedBox(height: 16),
+        _quickFormCard(DropdownButtonFormField<int>(
+          initialValue: index,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Station Selection', border: InputBorder.none),
+          items: List.generate(_stationData.length, (i) => DropdownMenuItem(
+            value: i,
+            child: Text('Station ${i + 1}${_stationData[i]['completed'] == true ? ' - Completed' : ''}'),
+          )),
+          onChanged: (value) {
+            if (value != null) setState(() => _quickStationIndex = value);
+          },
+        )),
+        const SizedBox(height: 12),
+        Text('$_completedCount of ${_stationData.length} stations completed this week',
+          style: GoogleFonts.inter(color: kPrimaryGreen, fontWeight: FontWeight.w600)),
+        if (_isCurrentWeekLocked) _buildLockedBanner('week'),
+        const SizedBox(height: 20),
+        AbsorbPointer(absorbing: locked, child: Opacity(opacity: locked ? 0.6 : 1,
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            _quickFormCard(Column(children: [
+              _buildPlantsInspectedSection(plantsInspected: 10),
+              const SizedBox(height: 16),
+              _buildDamagedPlantSection(
+                damagedCount: damaged,
+                onDecrement: () => _decrement(index, 'damaged'),
+                onIncrement: () => _increment(index, 'damaged'),
+              ),
+            ])),
+            const SizedBox(height: 20),
+            Text('PEST OBSERVATIONS', style: GoogleFonts.inter(fontWeight: FontWeight.w700, color: kPrimaryGreen)),
+            const SizedBox(height: 8),
+            _quickFormCard(Column(children: [
+              for (final entry in {'eggMasses': 'Egg Masses', 'larvae': 'Larvae', 'pupae': 'Pupae', 'moths': 'Moths'}.entries)
+                Row(children: [
+                  Expanded(child: Text(entry.value)),
+                  IconButton(tooltip: 'Remove ${entry.value}', onPressed: () => _decrement(index, entry.key), icon: const Icon(Icons.remove_circle_outline)),
+                  Text('${station[entry.key] ?? 0}'),
+                  IconButton(tooltip: 'Add ${entry.value}', onPressed: () => _increment(index, entry.key), icon: const Icon(Icons.add_circle_outline)),
+                ]),
+            ])),
+            if (damaged > 0) ...[
+              const SizedBox(height: 20),
+              _buildDamageAssessmentSection(index, station),
+            ],
+            const SizedBox(height: 20),
+            _quickFormCard(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('PHOTOS & VERIFICATION', style: GoogleFonts.inter(fontWeight: FontWeight.w700, color: kPrimaryGreen)),
+              const SizedBox(height: 8),
+              Text(needsEvidence
+                ? 'Upload evidence for observed pests and at least one damage photo per damaged plant.'
+                : 'Record pests or damaged plants to add verification photos.'),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: needsEvidence ? () => _verifyPestObservations(index, station) : null,
+                icon: const Icon(Icons.add_a_photo_outlined),
+                label: Text(station['verificationCompleted'] == true ? 'Review verified photos' : 'Upload photos & verify'),
+              ),
+              if (station['verificationCompleted'] == true)
+                const Text('Evidence verified', style: TextStyle(color: kActionGreen)),
+            ])),
+            const SizedBox(height: 20),
+            _quickFormCard(_buildEditableNotesBox(
+              key: ValueKey('quick-notes-${widget.cycleId}-$_selectedWeek-$index'),
+              notes: station['notes'] as String? ?? '',
+              onChanged: (value) => _updateNotes(index, value),
+            )),
+          ]),
+        )),
+        const SizedBox(height: 16),
+        if (!locked && assessmentError != null)
+          Text(assessmentError, style: const TextStyle(color: kAccentRed)),
+        const SizedBox(height: 12),
+        SizedBox(width: double.infinity, child: FilledButton.icon(
+          onPressed: locked ? null : () => _completeStation(index),
+          icon: Icon(completed ? Icons.check_circle_outline : Icons.save_outlined),
+          label: Text(completed ? 'Station completed' : 'Save & complete station'),
+          style: FilledButton.styleFrom(backgroundColor: kPrimaryGreen, minimumSize: const Size(48, 52)),
+        )),
+        const SizedBox(height: 8),
+        const Text('Drafts save automatically. The weekly report is generated after all 5 stations are complete.'),
+        const SizedBox(height: 24),
+      ]),
     );
   }
 
@@ -2519,6 +2678,10 @@ Widget _buildGrowthStageCard() {
               return GestureDetector(
                 onTap: () async {
                   final weekFirstDay = index * 7;
+                  if (widget.quickLog && _loadedWeekIndex == _selectedWeek) {
+                    _autoSaveTimer?.cancel();
+                    if (!await _saveCurrentWeekData() || !mounted) return;
+                  }
                   final weekLastDay =
                       (weekFirstDay + 6).clamp(0, _totalDays - 1);
                   final defaultDay =
@@ -4697,6 +4860,7 @@ Widget _buildCompactScoringGuide(String title, List<Map<String, String>> scale) 
   }
 
   Widget _buildEditableNotesBox({
+    Key? key,
     required String notes,
     required ValueChanged<String> onChanged,
   }) {
@@ -4716,7 +4880,7 @@ Widget _buildCompactScoringGuide(String title, List<Map<String, String>> scale) 
                   fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
           TextFormField(
-            key: ValueKey<String>(notes),
+            key: key ?? ValueKey<String>(notes),
             initialValue: notes,
             onChanged: onChanged,
             style: GoogleFonts.inter(fontSize: 13, color: kTextDark),

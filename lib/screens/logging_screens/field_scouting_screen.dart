@@ -25,22 +25,32 @@ class FieldScoutingFormScreen extends StatefulWidget {
 
 class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen> {
   late Future<List<Map<String, dynamic>>> _cycles;
+  String? _selectedCycleId;
+  List<Map<String, dynamic>> _loadedCycles = [];
 
   @override
   void initState() {
     super.initState();
+    _selectedCycleId = widget.cycleId?.trim();
     _cycles = _fetchCycles();
+    _cycles.then(
+      (_) {
+        if (mounted) setState(() {});
+      },
+      onError: (Object error) {
+        // FutureBuilder displays fetch errors when selecting a cycle.
+      },
+    );
   }
 
   Future<List<Map<String, dynamic>>> _fetchCycles() async {
-    if (widget.cycleId?.trim().isNotEmpty == true) return [];
     final snapshot = await FirebaseFirestore.instance
         .collection('users')
         .doc(widget.userId)
         .collection('cycles')
         .orderBy('createdAt', descending: true)
         .safeGet();
-    return snapshot.docs
+    _loadedCycles = snapshot.docs
         .where(
           (doc) =>
               doc.data()['isCompleted'] != true &&
@@ -49,10 +59,14 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen> {
         )
         .map((doc) => <String, dynamic>{...doc.data(), 'id': doc.id})
         .toList();
+    return _loadedCycles;
   }
 
   MonitoringScreen _scouting(String cycleId) => MonitoringScreen(
+    key: ValueKey(cycleId),
     cycleId: cycleId,
+    quickLog: true,
+    cycleSelector: (saveDraft) => _cycleSelector(cycleId, saveDraft: saveDraft),
     userId: widget.userId,
     initialWeekIndex: widget.weekIndex,
     initialStationIndex: widget.stationId == null
@@ -60,9 +74,47 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen> {
         : (int.tryParse(widget.stationId!.split(' ').last) ?? 1) - 1,
   );
 
+  Widget _cycleSelector(
+    String? selected, {
+    Future<bool> Function()? saveDraft,
+  }) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: DropdownButtonFormField<String>(
+        initialValue: selected,
+        isExpanded: true,
+        decoration: const InputDecoration(
+          labelText: 'Growth Cycle',
+          border: InputBorder.none,
+        ),
+        items: [
+          for (final cycle in _loadedCycles)
+            DropdownMenuItem(
+              value: cycle['id'] as String,
+              child: Text(
+                '${cycle['cycleName'] ?? 'Unnamed Cycle'} - ${cycle['fieldName'] ?? 'Unknown Field'}',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          if (selected != null &&
+              !_loadedCycles.any((cycle) => cycle['id'] == selected))
+            DropdownMenuItem(
+              value: selected,
+              child: const Text('Selected growth cycle'),
+            ),
+        ],
+        onChanged: (value) async {
+          if (value == null || value == _selectedCycleId) return;
+          if (saveDraft != null && !await saveDraft()) return;
+          if (mounted) setState(() => _selectedCycleId = value);
+        },
+      ),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
-    final cycleId = widget.cycleId?.trim();
+    final cycleId = _selectedCycleId;
     if (cycleId != null && cycleId.isNotEmpty) return _scouting(cycleId);
 
     return Scaffold(
@@ -103,35 +155,23 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen> {
               );
             }
             return ListView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(20),
               children: [
                 Text(
-                  'Select Growth Cycle',
-                  style: Theme.of(context).textTheme.titleLarge,
+                  'Weekly crop inspection',
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Inspect 5 stations with 10 plants each, verify observations, and submit your weekly scouting report.',
-                ),
-                const SizedBox(height: 16),
-                for (final cycle in cycles)
-                  Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.grass_rounded),
-                      title: Text(
-                        cycle['cycleName'] as String? ?? 'Unnamed Cycle',
-                      ),
-                      subtitle: Text(
-                        cycle['fieldName'] as String? ?? 'Unknown Field',
-                      ),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => _scouting(cycle['id'] as String),
-                        ),
-                      ),
+                const SizedBox(height: 20),
+                _cycleSelector(null),
+                const SizedBox(height: 20),
+                const Card(
+                  child: Padding(
+                    padding: EdgeInsets.all(20),
+                    child: Text(
+                      'Select a growth cycle to choose a week and station, record observations, and assess damaged plants.',
                     ),
                   ),
+                ),
               ],
             );
           },

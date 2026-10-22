@@ -384,8 +384,8 @@ class _HomeDashboardState extends State<HomeDashboard> {
 
                       return _buildMetricCard(
                         title: "NET INCOME",
-                        unit: "₱",
-                        value: total.toStringAsFixed(0),
+                        prefix: '\u20b1',
+                        value: _formatNetIncome(total),
                         icon: Icons.payments_outlined,
                         bgColor: darkGreen,
                         textColor: Colors.white,
@@ -564,8 +564,8 @@ class _HomeDashboardState extends State<HomeDashboard> {
     final barangayCount = report.findings.length;
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      padding: const EdgeInsets.all(18),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(24),
@@ -584,8 +584,8 @@ class _HomeDashboardState extends State<HomeDashboard> {
           Row(
             children: [
               Container(
-                width: 46,
-                height: 46,
+                width: 40,
+                height: 40,
                 decoration: BoxDecoration(
                   color: accent.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(14),
@@ -642,37 +642,8 @@ class _HomeDashboardState extends State<HomeDashboard> {
               ),
             ],
           ),
-          if (report.growthStages.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: report.growthStages
-                  .map(
-                    (stage) => Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF3F6F1),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        stage,
-                        style: GoogleFonts.manrope(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: textGray,
-                        ),
-                      ),
-                    ),
-                  )
-                  .toList(),
-            ),
-          ],
           if (report.findings.isNotEmpty) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 4),
             Material(
               color: Colors.transparent,
               child: ExpansionTile(
@@ -882,9 +853,31 @@ class _HomeDashboardState extends State<HomeDashboard> {
 
   // ----- Your existing UI components (unchanged, just pasted) -----
 
+  String _formatNetIncome(double amount) {
+    const suffixes = ['', 'k', 'm', 'b', 't'];
+    var scaled = amount;
+    var suffixIndex = 0;
+    while (scaled.abs() >= 1000 && suffixIndex < suffixes.length - 1) {
+      scaled /= 1000;
+      suffixIndex++;
+    }
+    // Promote values that round to the next unit, e.g. 999.999k -> 1m.
+    if (double.parse(scaled.toStringAsFixed(2)).abs() >= 1000 &&
+        suffixIndex < suffixes.length - 1) {
+      scaled /= 1000;
+      suffixIndex++;
+    }
+    final number = scaled.toStringAsFixed(2).replaceFirst(
+          RegExp(r'\.?0+$'),
+          '',
+        );
+    return '$number${suffixes[suffixIndex]}';
+  }
+
   Widget _buildMetricCard({
     required String title,
     required String value,
+    String prefix = '',
     String? unit,
     required IconData icon,
     required Color bgColor,
@@ -918,11 +911,17 @@ class _HomeDashboardState extends State<HomeDashboard> {
             crossAxisAlignment: CrossAxisAlignment.baseline,
             textBaseline: TextBaseline.alphabetic,
             children: [
-              Text(value,
-                  style: GoogleFonts.manrope(
-                      color: textColor,
-                      fontSize: 32,
-                      fontWeight: FontWeight.w800)),
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text('$prefix$value',
+                      style: GoogleFonts.manrope(
+                          color: textColor,
+                          fontSize: prefix.isEmpty ? 32 : 36,
+                          fontWeight: FontWeight.w800)),
+                ),
+              ),
               if (unit != null) ...[
                 const SizedBox(width: 4),
                 Text(unit,
