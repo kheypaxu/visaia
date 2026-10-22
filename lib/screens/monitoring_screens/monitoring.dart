@@ -110,7 +110,16 @@ class MonitoringScreen extends StatefulWidget {
   final String cycleId;
   final String? userId;
 
-  const MonitoringScreen({super.key, required this.cycleId, this.userId});
+  final int? initialWeekIndex;
+  final int? initialStationIndex;
+
+  const MonitoringScreen({
+    super.key,
+    required this.cycleId,
+    this.userId,
+    this.initialWeekIndex,
+    this.initialStationIndex,
+  });
 
   @override
   State<MonitoringScreen> createState() => _MonitoringScreenState();
@@ -1108,7 +1117,8 @@ Future<void> _loadCycleData() async {
       _farmName = cycle['farmName'] ?? '';
       _farmerId = farmerId;
       _farmerName = farmerName;
-      _selectedWeek = (_currentWeekFromPlanting - 1).clamp(0, _totalWeeks - 1);
+      _selectedWeek = (widget.initialWeekIndex ?? (_currentWeekFromPlanting - 1))
+          .clamp(0, _totalWeeks - 1);
       _dailySelectedDay = _currentDayFromPlanting.clamp(
         _selectedWeek * 7,
         ((_selectedWeek * 7 + 6).clamp(0, _totalDays - 1)),
@@ -1123,6 +1133,11 @@ Future<void> _loadCycleData() async {
 
     await _loadAllWeeksStatus();
     await _loadWeekData(_selectedWeek);
+    final initialStation = widget.initialStationIndex;
+    if (mounted && initialStation != null &&
+        initialStation >= 0 && initialStation < _stationData.length) {
+      setState(() => _expandedStationIndex = initialStation);
+    }
     await _loadDailyLogData(_dailySelectedDay);
     await _updateCycleGrowthStage();
   } on TimeoutException {

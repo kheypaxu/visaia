@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:visaia/services/auth_cache_service.dart';
+import 'package:visaia/utils/daily_log_week_policy.dart';
 
 import 'package:visaia/services/firestore_safe_ext.dart';
 
@@ -66,7 +67,7 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
     if (plantingDate != null && harvestDate != null) {
       final days = harvestDate.difference(plantingDate).inDays;
       final weeks = (days / 7).ceil();
-      return weeks.clamp(1, 24);
+      return weeks.clamp(1, 52);
     }
     return 12;
   }
@@ -76,9 +77,11 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
     if (cycle == null || cycle.isEmpty) return 1;
     final plantingDate = cycle['plantingDate'] as DateTime?;
     if (plantingDate != null) {
-      final days = DateTime.now().difference(plantingDate).inDays;
-      final week = (days / 7).floor() + 1;
-      return week.clamp(1, _cycleTotalWeeks);
+      return currentDailyLogWeek(
+        plantingDate: plantingDate,
+        now: DateTime.now(),
+        harvestDate: cycle['harvestDate'] as DateTime?,
+      );
     }
     return 1;
   }
@@ -178,7 +181,9 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
           final isCurrent = weekNum == currentWeek;
 
           return GestureDetector(
-            onTap: () => setState(() => _selectedWeek = weekNum),
+            onTap: isCurrent
+                ? () => setState(() => _selectedWeek = weekNum)
+                : null,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 180),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -202,9 +207,13 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
                       style: GoogleFonts.inter(
                         fontSize: 13,
                         fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
-                        color: isSelected ? Colors.white : _darkGreen,
+                        color: isSelected ? Colors.white : (isCurrent ? _darkGreen : _textGray),
                       ),
                     ),
+                    if (!isCurrent) ...[
+                      const SizedBox(width: 5),
+                      const Icon(Icons.lock_outline_rounded, size: 14, color: _textGray),
+                    ],
                     if (isCurrent) ...[
                       const SizedBox(width: 5),
                       Container(
@@ -440,7 +449,7 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                            'TARGET SCOUTING WEEK',
+                            'DAILY LOG WEEK',
                             style: GoogleFonts.inter(
                               fontSize: 11,
                               fontWeight: FontWeight.w700,
@@ -460,6 +469,11 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
                       ),
                       const SizedBox(height: 10),
                       _buildWeekSelector(),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Daily logs can only be applied to the current week.',
+                        style: GoogleFonts.inter(fontSize: 12, color: _textGray),
+                      ),
                     ],
                     const SizedBox(height: 20),
                   ],
@@ -474,8 +488,9 @@ class _AssignLogSheetContentState extends State<AssignLogSheetContent> {
               width: double.infinity,
               height: 52,
               child: ElevatedButton.icon(
-                onPressed: _selectedCycleId != null
+                onPressed: _selectedCycleId != null && _selectedWeek == _cycleCurrentWeek
                     ? () {
+                        if (_selectedWeek != _cycleCurrentWeek) return;
                         widget.onCycleSelected(_selectedCycleId!, _selectedWeek);
                         Navigator.pop(context);
                       }

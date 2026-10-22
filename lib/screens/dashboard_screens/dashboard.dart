@@ -384,6 +384,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
 
                       return _buildMetricCard(
                         title: "NET INCOME",
+                        unit: "₱",
                         value: total.toStringAsFixed(0),
                         icon: Icons.payments_outlined,
                         bgColor: darkGreen,
@@ -589,7 +590,11 @@ class _HomeDashboardState extends State<HomeDashboard> {
                   color: accent.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: Icon(_fawStageIcon(report.stage), color: accent, size: 24),
+                child: Icon(
+                  _fawStageIcon(report.stage),
+                  color: accent,
+                  size: 24,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -607,7 +612,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '${report.total} found across $barangayCount barangy${barangayCount == 1 ? '' : 's'}',
+                      '${report.total} found across $barangayCount barangay${barangayCount == 1 ? '' : 's'}',
                       style: GoogleFonts.manrope(
                         fontSize: 13,
                         color: textGray,
@@ -618,8 +623,10 @@ class _HomeDashboardState extends State<HomeDashboard> {
                 ),
               ),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: accent.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(20),
@@ -641,29 +648,84 @@ class _HomeDashboardState extends State<HomeDashboard> {
               spacing: 6,
               runSpacing: 6,
               children: report.growthStages
-                  .map((stage) => Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF3F6F1),
-                          borderRadius: BorderRadius.circular(20),
+                  .map(
+                    (stage) => Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF3F6F1),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        stage,
+                        style: GoogleFonts.manrope(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: textGray,
                         ),
-                        child: Text(
-                          stage,
-                          style: GoogleFonts.manrope(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: textGray,
-                          ),
-                        ),
-                      ))
+                      ),
+                    ),
+                  )
                   .toList(),
             ),
           ],
-          const SizedBox(height: 14),
-          ...report.findings.map(
-            (finding) => _buildFawFindingRow(finding, accent),
-          ),
+          if (report.findings.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Material(
+              color: Colors.transparent,
+              child: ExpansionTile(
+                key: PageStorageKey('faw-barangays-${report.stage.name}'),
+                tilePadding: const EdgeInsets.symmetric(horizontal: 4),
+                childrenPadding: const EdgeInsets.only(top: 4),
+                shape: const Border(),
+                collapsedShape: const Border(),
+                iconColor: darkGreen,
+                collapsedIconColor: darkGreen,
+                expansionAnimationStyle:
+                    MediaQuery.of(context).disableAnimations
+                    ? AnimationStyle.noAnimation
+                    : null,
+                title: Text(
+                  'Barangays ($barangayCount)',
+                  style: GoogleFonts.manrope(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: darkGreen,
+                  ),
+                ),
+                children: [
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final minColumnWidth = MediaQuery.textScalerOf(
+                        context,
+                      ).scale(140);
+                      final columns =
+                          constraints.maxWidth >= minColumnWidth * 2 + 8
+                          ? 2
+                          : 1;
+                      final itemWidth =
+                          (constraints.maxWidth - (columns - 1) * 8) / columns;
+
+                      return Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: report.findings
+                            .map(
+                              (finding) => SizedBox(
+                                width: itemWidth,
+                                child: _buildFawFindingRow(finding, accent),
+                              ),
+                            )
+                            .toList(),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -671,41 +733,58 @@ class _HomeDashboardState extends State<HomeDashboard> {
 
   Widget _buildFawFindingRow(FawBarangayFinding finding, Color accent) {
     return Container(
-      margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
       decoration: BoxDecoration(
         color: const Color(0xFFF7F9F6),
         borderRadius: BorderRadius.circular(14),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.location_on_outlined, size: 16, color: accent),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              finding.barangay,
-              style: GoogleFonts.manrope(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: headingBlack,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ExcludeSemantics(
+                child: Icon(
+                  Icons.location_on_outlined,
+                  size: 16,
+                  color: accent,
+                ),
               ),
-            ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  finding.barangay,
+                  style: GoogleFonts.manrope(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: headingBlack,
+                  ),
+                ),
+              ),
+            ],
           ),
-          Text(
-            '${finding.count}',
-            style: GoogleFonts.manrope(
-              fontSize: 16,
-              fontWeight: FontWeight.w900,
-              color: accent,
-            ),
-          ),
-          const SizedBox(width: 4),
-          Text(
-            'found',
-            style: GoogleFonts.manrope(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey.shade500,
+          const SizedBox(height: 6),
+          Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: '${finding.count}',
+                  style: GoogleFonts.manrope(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    color: headingBlack,
+                  ),
+                ),
+                TextSpan(
+                  text: ' found',
+                  style: GoogleFonts.manrope(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: textGray,
+                  ),
+                ),
+              ],
             ),
           ),
         ],

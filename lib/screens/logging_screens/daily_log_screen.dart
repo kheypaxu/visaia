@@ -11,6 +11,7 @@ import 'package:visaia/screens/logging_screens/assign_log_modal.dart';
 import 'package:visaia/services/auth_cache_service.dart';
 import 'package:visaia/services/firestore_image_service.dart';
 import 'package:visaia/services/firestore_safe_ext.dart';
+import 'package:visaia/utils/daily_log_week_policy.dart';
 
 // ─── Activity Type Model ──────────────────────────────────────────────────────
 
@@ -370,11 +371,6 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
 
     final imageUrls = <String>[];
 
-    for (final image in _pickedImages) {
-      final url = await _uploadImage(image, cycleId);
-      if (url != null) imageUrls.add(url);
-    }
-
     DocumentSnapshot<Map<String, dynamic>>? cycleDoc;
     try {
       cycleDoc = await FirebaseFirestore.instance
@@ -396,6 +392,36 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
       }
     }
     plantingDate ??= widget.plantingDate;
+
+    // Quick Log must respect the same week locks as Monitoring, even if
+    // a stale selection or an activity date bypasses the assignment sheet.
+    if (selectedWeek != null) {
+      if (plantingDate == null) {
+        throw Exception('Cannot determine the current week without a planting date');
+      }
+      final now = DateTime.now();
+      final currentWeek = currentDailyLogWeek(
+        plantingDate: plantingDate,
+        now: now,
+        harvestDate: (cycleDoc?.data()?['harvestDate'] as Timestamp?)?.toDate(),
+      );
+      final today = DateTime(now.year, now.month, now.day);
+      final activityDate = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day);
+      final activityWeek = currentDailyLogWeek(
+        plantingDate: plantingDate,
+        now: _selectedDate,
+        harvestDate: (cycleDoc?.data()?['harvestDate'] as Timestamp?)?.toDate(),
+      );
+      if (selectedWeek != currentWeek || activityWeek != currentWeek ||
+          activityDate.isAfter(today) || now.isBefore(plantingDate)) {
+        throw Exception('Daily logs can only be applied to the current week and cannot use a future activity date');
+      }
+    }
+
+    for (final image in _pickedImages) {
+      final url = await _uploadImage(image, cycleId);
+      if (url != null) imageUrls.add(url);
+    }
 
     int dayNumber = 1;
     if (plantingDate != null) {
