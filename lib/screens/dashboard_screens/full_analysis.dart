@@ -43,6 +43,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
   double _avgMarketPrice = 0;
   double _netIncome = 0;
   Map<String, double> _financialBreakdown = {};
+  List<_OngoingCycleInfo> _ongoingCycles = [];
   List<_CropItemInfo> _pendingAuditCrops = [];
   List<_CropItemInfo> _completedCrops = [];
   List<_MonthlyRevenue> _monthlyRevenues = [];
@@ -120,12 +121,36 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
 
       final Map<String, double> monthlyIncome = {};
       final List<String> completedCycleIds = [];
+      final ongoingCycles = <_OngoingCycleInfo>[];
       final List<_CropItemInfo> pendingAuditCrops = [];
       final List<_CropItemInfo> completedCrops = [];
 
       for (final doc in querySnap.docs) {
         final data = doc.data();
-        if (!hasRecordedHarvest(data)) continue;
+        if (!hasRecordedHarvest(data)) {
+          ongoingCycles.add(
+            _OngoingCycleInfo(
+              name:
+                  (data['cycleName'] ??
+                          data['cropVariety'] ??
+                          data['cropType'] ??
+                          'Unnamed cycle')
+                      .toString(),
+              field: (data['fieldName'] ?? 'Unknown Field').toString(),
+              plantingDate: data['plantingDate'] is Timestamp
+                  ? (data['plantingDate'] as Timestamp).toDate()
+                  : null,
+              harvestDate:
+                  (data['expectedHarvestDate'] ?? data['harvestDate'])
+                      is Timestamp
+                  ? ((data['expectedHarvestDate'] ?? data['harvestDate'])
+                            as Timestamp)
+                        .toDate()
+                  : null,
+            ),
+          );
+          continue;
+        }
 
         final isAuditCompleted = hasCompletedHarvestAudit(data);
         final cropVariety =
@@ -192,6 +217,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
         _avgMarketPrice = pricedYield > 0 ? pricedValue / pricedYield : 0;
         _netIncome = netTotal;
         _financialBreakdown = breakdown;
+        _ongoingCycles = ongoingCycles;
         _pendingAuditCrops = pendingAuditCrops;
         _completedCrops = completedCrops;
         _completedCycleIds = completedCycleIds;
@@ -354,6 +380,10 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                           ),
 
                           const SizedBox(height: 20),
+                          if (_completedCrops.isEmpty) ...[
+                            _buildAuditNotice(),
+                            const SizedBox(height: 16),
+                          ],
                           _buildRevenueChart(),
 
                           const SizedBox(height: 32),
@@ -364,6 +394,10 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                           _buildNetIncomeCard(),
                         ]),
                         _tabBody('audit', [
+                          _buildAuditNotice(),
+                          const SizedBox(height: 16),
+                          _buildOngoingCycles(),
+                          const SizedBox(height: 24),
                           // ─── 1. PENDING AUDIT SECTION ─────────────────────────
                           Row(
                             children: [
@@ -435,12 +469,16 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                                       size: 18,
                                     ),
                                     const SizedBox(width: 8),
-                                    Text(
-                                      'All harvested crops have been audited',
-                                      style: GoogleFonts.manrope(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600,
-                                        color: textGray,
+                                    Expanded(
+                                      child: Text(
+                                        _completedCrops.isEmpty
+                                            ? 'No harvested cycles awaiting audit'
+                                            : 'All harvested crops have been audited',
+                                        style: GoogleFonts.manrope(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: textGray,
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -535,6 +573,107 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
             ),
     );
   }
+
+  Widget _buildAuditNotice() => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF3F5EE),
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: const Color(0xFFDDE5D6)),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Icon(Icons.info_outline_rounded, color: darkGreen, size: 22),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Harvest first, then complete the audit',
+                style: GoogleFonts.manrope(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
+                  color: darkGreen,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Record the harvest for a cycle to unlock its financial audit. After you complete the audit, its verified figures will appear in the income summary and monthly income projection. Ongoing cycles and pending audits are excluded from these calculations.',
+                style: GoogleFonts.manrope(
+                  fontSize: 13,
+                  color: textGray,
+                  height: 1.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _buildOngoingCycles() => Container(
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: const Color(0xFFE8EAE6)),
+    ),
+    clipBehavior: Clip.antiAlias,
+    child: ExpansionTile(
+      key: PageStorageKey('ongoing-cycles-${widget.activeFarmId}'),
+      leading: const Icon(Icons.grass_rounded, color: darkGreen),
+      tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      title: Text(
+        'Ongoing / Not Harvested (${_ongoingCycles.length})',
+        style: GoogleFonts.manrope(
+          fontWeight: FontWeight.w700,
+          fontSize: 14,
+          color: darkGreen,
+        ),
+      ),
+      subtitle: Text(
+        'View cycles awaiting a recorded harvest',
+        style: GoogleFonts.manrope(fontSize: 12, color: textGray),
+      ),
+      children: [
+        if (_ongoingCycles.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(20),
+            child: Text('No ongoing cycles in this farm.'),
+          ),
+        for (final cycle in _ongoingCycles)
+          ListTile(
+            contentPadding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+            title: Text(
+              cycle.name,
+              style: GoogleFonts.manrope(
+                fontWeight: FontWeight.w700,
+                fontSize: 14,
+              ),
+            ),
+            subtitle: Text(
+              [
+                cycle.field,
+                if (cycle.plantingDate != null)
+                  'Planted ${DateFormat('MMM d, yyyy').format(cycle.plantingDate!)}',
+                if (cycle.harvestDate != null)
+                  'Expected harvest ${DateFormat('MMM d, yyyy').format(cycle.harvestDate!)}',
+                'Not harvested - audit locked',
+              ].join('\n'),
+              style: GoogleFonts.manrope(
+                fontSize: 12,
+                color: textGray,
+                height: 1.5,
+              ),
+            ),
+            isThreeLine: true,
+          ),
+      ],
+    ),
+  );
 
   Widget _tabBody(String name, List<Widget> children) => SingleChildScrollView(
     key: PageStorageKey('${widget.activeFarmId}-$name'),
@@ -1431,6 +1570,20 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
       }
     }
   }
+}
+
+class _OngoingCycleInfo {
+  final String name;
+  final String field;
+  final DateTime? plantingDate;
+  final DateTime? harvestDate;
+
+  const _OngoingCycleInfo({
+    required this.name,
+    required this.field,
+    this.plantingDate,
+    this.harvestDate,
+  });
 }
 
 class _CropItemInfo {
