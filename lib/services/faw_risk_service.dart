@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:visaia/services/detection_weather_service.dart';
+import 'package:visaia/services/report_map_location_resolver.dart';
 
 /// The five level risk gradient shared by the web dashboard risk map and
 /// this mobile risk map.
@@ -319,6 +320,7 @@ class FawRiskService {
       }
     }
 
+    final reportLocations = ReportMapLocationResolver(db: _db);
     try {
       final reports = await _db
           .collection('reports')
@@ -326,7 +328,7 @@ class FawRiskService {
           .limit(_maxDocs)
           .get();
       for (final doc in reports.docs) {
-        final threat = _parseReport(doc);
+        final threat = await _parseReport(doc, reportLocations);
         if (threat != null) threats.add(threat);
       }
     } catch (e) {
@@ -334,7 +336,7 @@ class FawRiskService {
       try {
         final all = await _db.collection('reports').limit(_maxDocs).get();
         for (final doc in all.docs) {
-          final threat = _parseReport(doc);
+          final threat = await _parseReport(doc, reportLocations);
           if (threat != null) threats.add(threat);
         }
       } catch (e2) {
@@ -475,15 +477,17 @@ class FawRiskService {
     );
   }
 
-  FawThreat? _parseReport(
-      QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+  Future<FawThreat?> _parseReport(
+      QueryDocumentSnapshot<Map<String, dynamic>> doc,
+      ReportMapLocationResolver locations) async {
     final data = doc.data();
-    final location = _extractLocation(data);
-    if (location == null) return null;
 
     final stage = FawStageKey.fromText(
         data['lifeStage'] ?? data['stage'] ?? data['finalValidatedLifeStage']);
     if (stage != FawStageKey.moth) return null;
+
+    final location = await locations.resolve(data);
+    if (location == null) return null;
 
     final dap = _asInt(data['dap']);
     final growthStage = MatrixGrowthStage.fromDap(dap);

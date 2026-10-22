@@ -9,6 +9,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:visaia/services/auth_cache_service.dart';
 import 'package:visaia/services/faw_risk_service.dart';
+import 'package:visaia/services/report_map_location_resolver.dart';
 
 enum PestLifeStage {
   all,
@@ -114,27 +115,12 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       }
 
       List<ReportData> loadedReports = [];
+      final locations = ReportMapLocationResolver();
 
       for (var doc in reportsQuery.docs) {
         final data = doc.data();
-        debugPrint("REPORT DATA: $data");
-
-        // ----- Extract location (nested) -----
-        double lat = 0, lng = 0;
-        final locationField = data['location'];
-        if (locationField is Map) {
-          lat = _safeToDouble(locationField['lat']);
-          lng = _safeToDouble(locationField['lng']);
-        } else if (locationField is GeoPoint) {
-          lat = locationField.latitude;
-          lng = locationField.longitude;
-        } else {
-          // Fallback to top-level lat/lng if they exist
-          lat = _safeToDouble(data['lat']);
-          lng = _safeToDouble(data['lng']);
-        }
-
-        if (lat == 0 || lng == 0) continue;
+        final reportLocation = await locations.resolve(data, fallbackOwnerId: userId);
+        if (reportLocation == null) continue;
 
         // ----- Extract risk level (5 level gradient) -----
         RiskLevel riskLevel = RiskLevel.normalize(
@@ -147,7 +133,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
 
         loadedReports.add(ReportData(
           id: doc.id,
-          location: LatLng(lat, lng),
+          location: reportLocation,
           pestType: data['pestType']?.toString() ?? 'Fall Army Worm',
           riskLevel: riskLevel,
           stage: stage,

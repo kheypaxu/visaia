@@ -118,7 +118,9 @@ class ScoutingFormSession {
   int get currentWeek => _state._currentWeekFromPlanting;
   DateTime weekStart(int index) => _state._getWeekStartDate(index);
   Future<bool> selectWeek(int index) => _state._selectQuickLogWeek(index);
-  bool get locked => _state._isCurrentWeekLocked;
+  bool isWeekCompleted(int index) => _state._completedWeeks.contains(index + 1);
+  bool canSelectWeek(int index) => index < currentWeek && !isWeekCompleted(index);
+  bool get locked => _state._isCurrentWeekLocked || isWeekCompleted(weekIndex);
   Map<String, dynamic>? station(int index) =>
       index >= 0 && index < _state._stationData.length
           ? _state._stationData[index] : null;
@@ -144,7 +146,7 @@ class ScoutingFormSession {
   }
 
   Future<bool> complete(int index) async {
-    if (loading || error != null || station(index) == null) return false;
+    if (loading || locked || error != null || station(index) == null) return false;
     await _state._completeStationItem(index);
     return station(index)?['completed'] == true;
   }
@@ -1211,6 +1213,17 @@ Future<void> _loadCycleData() async {
     });
 
     await _loadAllWeeksStatus();
+    if (widget.quickLog && _completedWeeks.contains(_selectedWeek + 1)) {
+      final available = List.generate(_currentWeekFromPlanting, (index) => index)
+          .where((index) => !_completedWeeks.contains(index + 1)).toList();
+      if (available.isNotEmpty && mounted) {
+        setState(() {
+          _selectedWeek = available.last;
+          _dailySelectedDay = _currentDayFromPlanting.clamp(
+            _selectedWeek * 7, (_selectedWeek * 7 + 6).clamp(0, _totalDays - 1));
+        });
+      }
+    }
     await _loadWeekData(_selectedWeek);
     final initialStation = widget.initialStationIndex;
     if (mounted && initialStation != null &&
@@ -1283,7 +1296,8 @@ Future<void> _loadCycleData() async {
 
   Future<bool> _selectQuickLogWeek(int index) async {
     if (_isInitialLoading || _isWeekLoading || _isSwitchingQuickLogWeek ||
-        index < 0 || index >= _totalWeeks || index >= _currentWeekFromPlanting) {
+        index < 0 || index >= _totalWeeks || index >= _currentWeekFromPlanting ||
+        _completedWeeks.contains(index + 1)) {
       return false;
     }
     if (index == _selectedWeek) return true;

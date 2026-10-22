@@ -36,6 +36,7 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
   String? _selectedCycleId;
   String _selectedCycleName = '';
   String _selectedFieldName = '';
+  DateTime? _selectedPlantingDate;
   int _selectedCycleWeekIndex = 0;
   int _totalWeeks = 0;
   // REMOVED unused field: DateTime? _plantingDate;
@@ -199,6 +200,7 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
           setState(() {
             _selectedCycleName = data?['cycleName'] ?? 'Unknown Cycle';
             _selectedFieldName = data?['fieldName'] ?? 'Unknown Field';
+            _selectedPlantingDate = plantingDate;
             // _plantingDate = plantingDate; // REMOVED
 
             if (plantingDate != null && harvestDate != null) {
@@ -246,6 +248,7 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
             'id': doc.id,
             'cycleName': data['cycleName'] ?? 'Unnamed Cycle',
             'fieldName': data['fieldName'] ?? 'Unknown Field',
+            'farmName': data['farmName'] ?? '',
             'plantingDate': data['plantingDate'],
             'harvestDate': data['harvestDate'],
           });
@@ -316,103 +319,146 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
                 ),
               ),
               const Divider(height: 1, color: _borderColor),
-              if (cycles.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.all(40),
+              Flexible(
+                child: SingleChildScrollView(
                   child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(
-                        Icons.inbox_outlined,
-                        size: 48,
-                        color: _mutedText,
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'No active cycles found',
-                        style: GoogleFonts.inter(
-                          color: _mutedText,
-                          fontSize: 14,
-                        ),
-                      ),
+                      if (cycles.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.all(40),
+                          child: Column(
+                            children: [
+                              const Icon(
+                                Icons.inbox_outlined,
+                                size: 48,
+                                color: _mutedText,
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                'No active cycles found',
+                                style: GoogleFonts.inter(
+                                  color: _mutedText,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      else
+                        ...cycles.map((cycle) {
+                          final isSelected = cycle['id'] == _selectedCycleId;
+                          return GestureDetector(
+                            onTap: () async {
+                              if (_session != null &&
+                                  !await _session!.saveDraft()) {
+                                return;
+                              }
+                              if (!mounted || !ctx.mounted) return;
+                              setState(() {
+                                _session = null;
+                                _hydratedSelection = null;
+                                _selectedCycleId = cycle['id'] as String;
+                                _selectedCycleName =
+                                    cycle['cycleName'] as String;
+                                _selectedFieldName =
+                                    cycle['fieldName'] as String;
+                                _selectedPlantingDate =
+                                    (cycle['plantingDate'] as Timestamp)
+                                        .toDate();
+                              });
+                              await _loadCycleData();
+                              if (ctx.mounted) Navigator.pop(ctx);
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 20,
+                                vertical: 16,
+                              ),
+                              color: isSelected
+                                  ? _green.withValues(alpha: 0.08)
+                                  : Colors.transparent,
+                              child: Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: _green.withValues(alpha: 0.1),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: const Icon(
+                                      Icons.agriculture,
+                                      color: _green,
+                                      size: 20,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 14),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          cycle['cycleName'],
+                                          style: GoogleFonts.inter(
+                                            color: isSelected
+                                                ? _green
+                                                : _darkGreen,
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 15,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          [
+                                                cycle['farmName'],
+                                                cycle['fieldName'],
+                                              ]
+                                              .where(
+                                                (value) =>
+                                                    value != null &&
+                                                    value.toString().isNotEmpty,
+                                              )
+                                              .join(' / '),
+                                          style: GoogleFonts.inter(
+                                            color: _mutedText,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Planted ${DateFormat('MMM d, yyyy').format((cycle['plantingDate'] as Timestamp).toDate())}',
+                                          style: GoogleFonts.inter(
+                                            color: _green,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'Cycle ref: ${cycle['id']}',
+                                          style: GoogleFonts.inter(
+                                            color: _mutedText,
+                                            fontSize: 11,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  if (isSelected)
+                                    const Icon(
+                                      Icons.check_circle_rounded,
+                                      color: _green,
+                                      size: 22,
+                                    ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }),
                     ],
                   ),
-                )
-              else
-                ...cycles.map((cycle) {
-                  final isSelected = cycle['id'] == _selectedCycleId;
-                  return GestureDetector(
-                    onTap: () async {
-                      if (_session != null && !await _session!.saveDraft()) {
-                        return;
-                      }
-                      if (!mounted || !ctx.mounted) return;
-                      setState(() {
-                        _session = null;
-                        _hydratedSelection = null;
-                        _selectedCycleId = cycle['id'] as String;
-                        _selectedCycleName = cycle['cycleName'] as String;
-                        _selectedFieldName = cycle['fieldName'] as String;
-                      });
-                      await _loadCycleData();
-                      if (ctx.mounted) Navigator.pop(ctx);
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 16,
-                      ),
-                      color: isSelected
-                          ? _green.withValues(alpha: 0.08)
-                          : Colors.transparent,
-                      child: Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              color: _green.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: const Icon(
-                              Icons.agriculture,
-                              color: _green,
-                              size: 20,
-                            ),
-                          ),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  cycle['cycleName'],
-                                  style: GoogleFonts.inter(
-                                    color: isSelected ? _green : _darkGreen,
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 15,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  cycle['fieldName'],
-                                  style: GoogleFonts.inter(
-                                    color: _mutedText,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          if (isSelected)
-                            const Icon(
-                              Icons.check_circle_rounded,
-                              color: _green,
-                              size: 22,
-                            ),
-                        ],
-                      ),
-                    ),
-                  );
-                }),
+                ),
+              ),
               const SizedBox(height: 20),
             ],
           ),
@@ -636,6 +682,22 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
                                     ),
                                     if (_selectedCycleId != null) ...[
                                       const SizedBox(height: 4),
+                                      if (_selectedPlantingDate != null)
+                                        Text(
+                                          'Planted ${DateFormat('MMM d, yyyy').format(_selectedPlantingDate!)}',
+                                          style: GoogleFonts.inter(
+                                            color: _green,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      Text(
+                                        'Cycle ref: $_selectedCycleId',
+                                        style: GoogleFonts.inter(
+                                          color: _mutedText,
+                                          fontSize: 11,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
                                       Text(
                                         'Week ${(_session?.weekIndex ?? _selectedCycleWeekIndex) + 1} of $_totalWeeks',
                                         style: GoogleFonts.inter(
@@ -695,11 +757,15 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
                                   )
                                     DropdownMenuItem(
                                       value: index,
-                                      enabled: index < _session!.currentWeek,
+                                      enabled: _session!.canSelectWeek(index),
                                       child: Text(
-                                        'Week ${index + 1} - ${DateFormat('MMM d').format(_session!.weekStart(index))}${index >= _session!.currentWeek ? ' (Upcoming)' : ''}',
+                                        'Week ${index + 1} - ${DateFormat('MMM d').format(_session!.weekStart(index))}${_session!.isWeekCompleted(index)
+                                            ? ' (Completed)'
+                                            : index >= _session!.currentWeek
+                                            ? ' (Upcoming)'
+                                            : ''}',
                                         style: GoogleFonts.inter(
-                                          color: index < _session!.currentWeek
+                                          color: _session!.canSelectWeek(index)
                                               ? _darkGreen
                                               : _mutedText,
                                           fontWeight: FontWeight.w600,
