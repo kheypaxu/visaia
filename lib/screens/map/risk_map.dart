@@ -27,6 +27,28 @@ class RiskMapScreen extends StatefulWidget {
 }
 
 class _RiskMapScreenState extends State<RiskMapScreen> {
+  // Keep map messages on this route so they cannot follow users off the map.
+  final _snackBarMessengerKey = GlobalKey<ScaffoldMessengerState>();
+
+  void _showMapSnackBar(SnackBar snackBar) {
+    final messenger = _snackBarMessengerKey.currentState;
+    if (!mounted || messenger == null) return;
+    messenger
+      ..clearSnackBars()
+      ..removeCurrentSnackBar()
+      ..showSnackBar(snackBar);
+  }
+
+  Widget _snackBarCloseButton() {
+    return IconButton(
+      tooltip: 'Close report details',
+      icon: const Icon(Icons.close_rounded),
+      color: Colors.white,
+      constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+      onPressed: () => _snackBarMessengerKey.currentState?.removeCurrentSnackBar(),
+    );
+  }
+
   // Data
   List<FieldData> _fields = [];
   FarmData? _farm;
@@ -40,6 +62,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
   List<RiskPoint> _riskPoints = [];
   List<RiskZone> _riskZones = [];
   List<ReportData> _reports = [];
+  bool _showSourceReports = false;
 
   // Nearby moth threats from other farmers (and own scouting records)
   final List<FawThreat> _threats = [];
@@ -162,7 +185,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
           _isLoading = false;
         });
 
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showMapSnackBar(
           const SnackBar(
             content: Text(
               'Loading timeout. Please check your connection and try again.',
@@ -183,7 +206,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
           setState(() {
             _isLoading = false;
           });
-          ScaffoldMessenger.of(context).showSnackBar(
+          _showMapSnackBar(
             const SnackBar(
               content: Text('User not authenticated. Please log in again.'),
               backgroundColor: Colors.red,
@@ -306,7 +329,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
           _isLoading = false;
         });
         
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showMapSnackBar(
           SnackBar(
             content: Text('Failed to load farm data: ${e.toString()}'),
             backgroundColor: Colors.red,
@@ -586,27 +609,12 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       );
     }
 
-    // Highlight high-risk areas for larvae
-    if (_selectedStage == PestLifeStage.larva) {
-      for (var field in _fields) {
-        if (field.boundaries.isNotEmpty && field.boundaries.length >= 3) {
-          _cachedPolygons.add(
-            Polygon(
-              points: field.boundaries,
-              color: const Color(0xFFF44336).withValues(alpha: 0.4),
-              borderColor: const Color(0xFFF44336),
-              borderStrokeWidth: 3,
-            ),
-          );
-        }
-      }
-    }
-
   // Build risk markers (limit to MAX_RISK_POINTS_RENDER)
   int markerCount = 0;
   for (var point in _riskPoints) {
     if (markerCount >= maxRiskPointsRender) break;
     if (_selectedStage == PestLifeStage.all || point.stage == _selectedStage) {
+      if (_showSourceReports) {
       _cachedMarkers.add(
         Marker(
           point: point.location,
@@ -615,6 +623,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
           child: _buildRiskMarker(point),
         ),
       );
+    }
       final radius = _getSpreadRadiusMeters(point.stage, point.riskLevel);
       if (radius > 0) {
         _cachedCircles.add(
@@ -657,13 +666,15 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
     }
 
       for (var report in _reports) {
+      if (_hasThreatSource(report.id)) continue;
 
       if (_selectedStage != PestLifeStage.all &&
           report.stage != _selectedStage) {
         continue;
       }
 
-    _cachedMarkers.add(
+    if (_showSourceReports) {
+      _cachedMarkers.add(
       Marker(
         point: report.location,
         width: 45,
@@ -704,6 +715,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
         ),
       ),
     );
+    }
 
     _cachedCircles.add(
       CircleMarker(
@@ -736,7 +748,8 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       ),
     );
 
-    _cachedMarkers.add(
+    if (_showSourceReports) {
+      _cachedMarkers.add(
       Marker(
         point: threat.location,
         width: 48,
@@ -745,6 +758,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
         child: _buildThreatMarker(threat),
       ),
     );
+    }
   }
   }
 
@@ -930,10 +944,91 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
     }
   }
 
+  bool _hasThreatSource(String reportId) =>
+      _threats.any((threat) => !threat.isClustered && threat.id == reportId);
+
+  bool _matchesStage(PestLifeStage stage) =>
+      _selectedStage == PestLifeStage.all || _selectedStage == stage;
+
+  void _showFarmRiskSources({LatLng? at}) {
+    final distance = const Distance();
+    final threats = _threats.where((threat) =>
+      _matchesStage(PestLifeStage.moth) &&
+      (at == null || distance.as(LengthUnit.Meter, at, threat.location) <= threat.radiusM)).toList();
+    final reports = _reports.where((report) =>
+      !_hasThreatSource(report.id) && _matchesStage(report.stage) &&
+      (at == null || distance.as(LengthUnit.Meter, at, report.location) <=
+        _getSpreadRadiusMeters(report.stage, report.riskLevel))).toList();
+    final points = _riskPoints.where((point) => _matchesStage(point.stage) &&
+      (at == null || distance.as(LengthUnit.Meter, at, point.location) <=
+        _getSpreadRadiusMeters(point.stage, point.riskLevel))).toList();
+    final zones = _riskZones.where((zone) => _matchesStage(zone.stage) && zone.radius > 0 &&
+      (at == null || distance.as(LengthUnit.Meter, at, zone.center) <= zone.radius.clamp(100, 5000))).toList();
+    if (at != null && threats.isEmpty && reports.isEmpty && points.isEmpty && zones.isEmpty) return;
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(child: SizedBox(
+        height: MediaQuery.sizeOf(sheetContext).height * 0.6,
+        child: ListView(padding: const EdgeInsets.fromLTRB(20, 0, 20, 24), children: [
+          Text('Detections & monitoring zones', style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 8),
+          const Text('Sources matching the selected pest stage. Monitoring zones indicate proximity, not confirmed infestation of your farm.'),
+          const SizedBox(height: 12),
+          if (threats.isEmpty && reports.isEmpty && points.isEmpty && zones.isEmpty)
+            const Padding(padding: EdgeInsets.symmetric(vertical: 24),
+              child: Text('No matching detections or monitoring zones found.')),
+          for (final threat in threats)
+            ListTile(
+              leading: Icon(Icons.radar, color: threat.riskLevel.color),
+              title: Text('${threat.riskLevel.label} risk - adult moths'),
+              subtitle: Text('${threat.isClustered ? 'Weekly scouting' : 'Pest report'} - ${formatKm(threat.distanceKm)} from your farm\n${threat.farmName.isEmpty ? threat.areaName : threat.farmName}'),
+              isThreeLine: true,
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _showThreatMitigation(threat);
+              },
+            ),
+          for (final report in reports)
+            ListTile(
+              leading: Icon(_getStageIcon(report.stage), color: report.riskLevel.color),
+              title: Text('${report.pestType} - ${report.riskLevel.label} risk'),
+              subtitle: Text('On your farm - ${report.stage.name}'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _showReportDetails(report);
+              },
+            ),
+          for (final zone in zones)
+            ListTile(
+              leading: Icon(Icons.radar, color: zone.riskLevel.color),
+              title: Text('${zone.riskLevel.label} risk - ${zone.stage.name} zone'),
+              subtitle: Text('Saved farm monitoring area - ${(zone.radius.clamp(100, 5000) / 1000).toStringAsFixed(1)} km radius'),
+            ),
+          for (final point in points)
+            ListTile(
+              leading: Icon(_getStageIcon(point.stage), color: point.riskLevel.color),
+              title: Text('${point.stage.name} - ${point.riskLevel.label} risk'),
+              subtitle: const Text('Farm risk observation'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _showRiskDetails(point);
+              },
+            ),
+        ]),
+      )),
+    );
+  }
+
   void _showReportDetails(ReportData report) {
-    ScaffoldMessenger.of(context).showSnackBar(
+    _showMapSnackBar(
       SnackBar(
         backgroundColor: Colors.black87,
+        showCloseIcon: true,
+        closeIconColor: Colors.white,
+        dismissDirection: DismissDirection.down,
 
         content: Text(
           "Report: ${report.pestType} • "
@@ -949,11 +1044,10 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
     final accent = threat.riskLevel.color;
     final steps = threat.mitigationSteps;
 
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
+    _showMapSnackBar(
         SnackBar(
           behavior: SnackBarBehavior.floating,
+          dismissDirection: DismissDirection.down,
           backgroundColor: Colors.transparent,
           elevation: 0,
           duration: const Duration(seconds: 10),
@@ -1029,6 +1123,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                         ],
                       ),
                     ),
+                    _snackBarCloseButton(),
                   ],
                 ),
                 const SizedBox(height: 16),
@@ -1547,6 +1642,13 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return ScaffoldMessenger(
+      key: _snackBarMessengerKey,
+      child: _buildMap(context),
+    );
+  }
+
+  Widget _buildMap(BuildContext context) {
     if (_isLoading) {
       return const Scaffold(
         body: Center(
@@ -1609,6 +1711,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
             options: MapOptions(
               initialCenter: _initialCenter ?? const LatLng(10.7648, 122.5560),
               initialZoom: _initialZoom ?? 15,
+              onTap: (_, point) => _showFarmRiskSources(at: point),
             ),
             children: [
               TileLayer(
@@ -1709,8 +1812,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
               child: Center(
                 child: GestureDetector(
                   onTap: () {
-                    final worst = _threats.first;
-                    _showThreatDetails(worst);
+                    _showFarmRiskSources();
                   },
                   child: Container(
                     padding: const EdgeInsets.symmetric(
@@ -1729,7 +1831,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                             size: 14, color: Color(0xFFA855F7)),
                         const SizedBox(width: 6),
                         Text(
-                          '${_threats.length} nearby moth threat${_threats.length == 1 ? '' : 's'}',
+                          '${_threats.length} moth monitoring zone${_threats.length == 1 ? '' : 's'}',
                           style: GoogleFonts.inter(
                             color: Colors.white,
                             fontSize: 11,
@@ -1789,6 +1891,31 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                   ],
                 ),
               ),
+            ),
+          ),
+
+          Positioned(
+            top: 184, left: 15, right: 15,
+            child: Material(
+              color: Colors.black.withValues(alpha: 0.78),
+              borderRadius: BorderRadius.circular(16),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                SwitchListTile.adaptive(
+                  dense: true,
+                  title: const Text('Show source reports', style: TextStyle(color: Colors.white, fontSize: 13)),
+                  value: _showSourceReports,
+                  onChanged: (value) => setState(() {
+                    _showSourceReports = value;
+                    _needsCacheRebuild = true;
+                  }),
+                ),
+                TextButton.icon(
+                  onPressed: () => _showFarmRiskSources(),
+                  icon: const Icon(Icons.radar, color: Colors.white, size: 18),
+                  label: const Text('View detections & zones affecting my farm',
+                    style: TextStyle(color: Colors.white, fontSize: 12)),
+                ),
+              ]),
             ),
           ),
 
@@ -1983,9 +2110,10 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
 
     final radius = _getSpreadRadiusMeters(point.stage, point.riskLevel);
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    _showMapSnackBar(
       SnackBar(
         behavior: SnackBarBehavior.floating,
+        dismissDirection: DismissDirection.down,
         backgroundColor: Colors.transparent,
         elevation: 0,
         duration: const Duration(seconds: 5),
@@ -2049,6 +2177,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                       ],
                     ),
                   ),
+                  _snackBarCloseButton(),
                 ],
               ),
               const SizedBox(height: 18),

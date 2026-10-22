@@ -344,9 +344,8 @@ class FawRiskService {
       }
     }
 
-    // Own regular reports are already drawn by the risk map report layer.
-    threats.removeWhere(
-        (t) => !t.isClustered && t.ownerId == currentUserId && t.ownerId.isNotEmpty);
+    // Own detections remain part of farm risk even when source pins are hidden.
+    if (anchors.isEmpty) return [];
 
     // Proximity filter against the user's own fields.
     final distance = const Distance();
