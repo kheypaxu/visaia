@@ -384,7 +384,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
 
                       return _buildMetricCard(
                         title: "NET INCOME",
-                        unit: "₱ ",
+                        unit: "₱",
                         value: total.toStringAsFixed(0),
                         icon: Icons.payments_outlined,
                         bgColor: darkGreen,
