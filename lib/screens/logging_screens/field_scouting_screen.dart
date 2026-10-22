@@ -735,99 +735,134 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
                           'This station is completed.',
                           style: TextStyle(color: _green),
                         ),
-                      const _SectionLabel(label: 'Inspection Counters'),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _CounterCard(
-                              enabled: false,
-                              label: 'Plants Inspected',
-                              controller: _plantsInspectedController,
-                              icon: Icons.grain_rounded,
+                      _FormCard(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.grain_rounded,
+                              color: _green,
+                              size: 20,
                             ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'Plants inspected',
+                                style: GoogleFonts.inter(
+                                  color: _darkGreen,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            Text(
+                              '10 per station',
+                              style: GoogleFonts.inter(
+                                color: _green,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      const _SectionLabel(label: 'Pest Observations'),
+                      const SizedBox(height: 8),
+                      Column(
+                        children: [
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: _CounterCard(
+                                  enabled: !_formLocked,
+                                  label: 'Egg Masses',
+                                  controller: _eggMassesController,
+                                  icon: Icons.circle_outlined,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: _CounterCard(
+                                  enabled: !_formLocked,
+                                  label: 'Larvae',
+                                  controller: _larvaeController,
+                                  icon: Icons.bug_report_outlined,
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _CounterCard(
+                          const SizedBox(height: 12),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: _CounterCard(
+                                  enabled: !_formLocked,
+                                  label: 'Pupae',
+                                  controller: _pupaeController,
+                                  icon: Icons.shield_outlined,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: _CounterCard(
+                                  enabled: !_formLocked,
+                                  label: 'Moths',
+                                  controller: _mothsController,
+                                  icon: Icons.bug_report_outlined,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      const _SectionLabel(label: 'Plant Damage'),
+                      const SizedBox(height: 8),
+                      _FormCard(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _CounterCard(
                               enabled: !_formLocked,
                               maxValue: 10,
                               label: 'Damaged Plants',
                               controller: _damagedPlantsController,
                               icon: Icons.warning_amber_rounded,
                               isDamaged: true,
+                              embedded: true,
                             ),
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 20),
-
-                      // ── Pest Observations ──────────────────────────────────
-                      const _SectionLabel(label: 'Pest Observations'),
-                      const SizedBox(height: 8),
-                      _FormCard(
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        child: Column(
-                          children: [
-                            _PestObservationRow(
-                              icon: Icons.circle_outlined,
-                              enabled: !_formLocked,
-                              label: 'Egg Masses',
-                              controller: _eggMassesController,
-                              color: Colors.brown.shade400,
+                            const SizedBox(height: 8),
+                            Text(
+                              'Out of 10 plants. Rate each damaged plant below.',
+                              style: GoogleFonts.inter(
+                                color: _mutedText,
+                                fontSize: 12,
+                              ),
                             ),
-                            const Padding(
-                              padding: EdgeInsets.symmetric(horizontal: 16),
-                              child: Divider(height: 24, color: _borderColor),
-                            ),
-                            _PestObservationRow(
-                              icon: Icons.bug_report_outlined,
-                              enabled: !_formLocked,
-                              label: 'Larvae',
-                              controller: _larvaeController,
-                              color: Colors.orange.shade400,
-                            ),
-                            const Padding(
-                              padding: EdgeInsets.symmetric(horizontal: 16),
-                              child: Divider(height: 24, color: _borderColor),
-                            ),
-                            _PestObservationRow(
-                              icon: Icons.shield_outlined,
-                              enabled: !_formLocked,
-                              label: 'Pupae',
-                              controller: _pupaeController,
-                              color: Colors.purple.shade300,
-                            ),
-                            const Padding(
-                              padding: EdgeInsets.symmetric(horizontal: 16),
-                              child: Divider(height: 24, color: _borderColor),
-                            ),
-                            _PestObservationRow(
-                              enabled: !_formLocked,
-                              icon: Icons.bug_report_outlined,
-                              label: 'Moths',
-                              controller: _mothsController,
-                              color: Colors.blue.shade400,
-                            ),
+                            if ((int.tryParse(_damagedPlantsController.text) ??
+                                        0) >
+                                    0 &&
+                                _session != null) ...[
+                              const Divider(height: 28, color: _borderColor),
+                              const _SectionLabel(
+                                label: 'Plant Damage Ratings',
+                              ),
+                              const SizedBox(height: 8),
+                              AbsorbPointer(
+                                absorbing: _formLocked,
+                                child: _session!.damageAssessment(
+                                  _stationIndex,
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ),
-
                       const SizedBox(height: 20),
-
-                      // ── Upload Field Photo ─────────────────────────────────
-                      if ((int.tryParse(_damagedPlantsController.text) ?? 0) >
-                              0 &&
-                          _session != null) ...[
-                        const _SectionLabel(label: 'Plant Damage Ratings'),
-                        const SizedBox(height: 8),
-                        AbsorbPointer(
-                          absorbing: _formLocked,
-                          child: _session!.damageAssessment(_stationIndex),
-                        ),
-                        const SizedBox(height: 20),
-                      ],
                       const _SectionLabel(label: 'Field Photo'),
                       const SizedBox(height: 4),
                       Text(
@@ -1154,13 +1189,14 @@ class _FormCard extends StatelessWidget {
 
 // ── Counter Card ──────────────────────────────────────────────────────────────
 
-class _CounterCard extends StatefulWidget {
+class _CounterCard extends StatelessWidget {
   final String label;
   final TextEditingController controller;
   final IconData icon;
   final bool isDamaged;
   final bool enabled;
   final int? maxValue;
+  final bool embedded;
 
   const _CounterCard({
     required this.label,
@@ -1169,209 +1205,125 @@ class _CounterCard extends StatefulWidget {
     this.isDamaged = false,
     this.enabled = true,
     this.maxValue,
+    this.embedded = false,
   });
 
-  @override
-  State<_CounterCard> createState() => _CounterCardState();
-}
-
-class _CounterCardState extends State<_CounterCard> {
-  void _updateCount(bool increment) {
-    if (!widget.enabled) return;
-    final current = int.tryParse(widget.controller.text) ?? 0;
-    final newVal = increment ? current + 1 : (current > 0 ? current - 1 : 0);
-    if (widget.maxValue != null && newVal > widget.maxValue!) return;
-    widget.controller.text = newVal.toString();
-    setState(() {}); // Trigger UI update if needed for visual changes
+  void _change(int amount) {
+    final next = ((int.tryParse(controller.text) ?? 0) + amount).clamp(
+      0,
+      maxValue ?? 2147483647,
+    );
+    controller.value = TextEditingValue(
+      text: '$next',
+      selection: TextSelection.collapsed(offset: '$next'.length),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color:
-              widget.isDamaged &&
-                  (int.tryParse(widget.controller.text) ?? 0) > 0
-              ? Colors.orange.shade300
-              : const Color(0xFFDDEEE4),
-          width: 1.2,
-        ),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x08000000),
-            blurRadius: 6,
-            offset: Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(widget.icon, color: const Color(0xFF1A5C30), size: 16),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  widget.label,
-                  style: GoogleFonts.inter(
-                    color: const Color(0xFF9E9E9E),
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _CounterButton(
-                icon: Icons.remove_rounded,
-                onTap: () => _updateCount(false),
-              ),
-              Container(
-                width: 48,
-                alignment: Alignment.center,
-                child: Text(
-                  widget.controller.text,
-                  style: GoogleFonts.inter(
-                    color: const Color(0xFF0C503C),
-                    fontWeight: FontWeight.w800,
-                    fontSize: 24,
+    final content = ValueListenableBuilder<TextEditingValue>(
+      valueListenable: controller,
+      builder: (context, value, _) {
+        final count = int.tryParse(value.text) ?? 0;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, color: const Color(0xFF1A5C30), size: 18),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: GoogleFonts.inter(
+                      color: const Color(0xFF0C503C),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-              ),
-              _CounterButton(
-                icon: Icons.add_rounded,
-                onTap: () => _updateCount(true),
-              ),
-            ],
-          ),
-        ],
-      ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                _CounterButton(
+                  icon: Icons.remove_rounded,
+                  tooltip: 'Decrease $label',
+                  onTap: enabled && count > 0 ? () => _change(-1) : null,
+                ),
+                Expanded(
+                  child: TextField(
+                    key: ValueKey('count-$label'),
+                    enabled: enabled,
+                    controller: controller,
+                    textAlign: TextAlign.center,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                      if (maxValue != null)
+                        TextInputFormatter.withFunction((oldValue, newValue) {
+                          if (newValue.text.isEmpty) return newValue;
+                          final parsed = int.tryParse(newValue.text);
+                          return parsed != null && parsed <= maxValue!
+                              ? newValue
+                              : oldValue;
+                        }),
+                    ],
+                    onTapOutside: (_) =>
+                        FocusManager.instance.primaryFocus?.unfocus(),
+                    style: GoogleFonts.inter(
+                      color: const Color(0xFF0C503C),
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                    ),
+                    decoration: InputDecoration(
+                      semanticCounterText: '$label count',
+                      hintText: '0',
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                        vertical: 10,
+                        horizontal: 2,
+                      ),
+                      border: InputBorder.none,
+                    ),
+                  ),
+                ),
+                _CounterButton(
+                  icon: Icons.add_rounded,
+                  tooltip: 'Increase $label',
+                  onTap: enabled && (maxValue == null || count < maxValue!)
+                      ? () => _change(1)
+                      : null,
+                ),
+              ],
+            ),
+          ],
+        );
+      },
     );
+    if (embedded) return content;
+    return _FormCard(padding: const EdgeInsets.all(10), child: content);
   }
 }
 
 class _CounterButton extends StatelessWidget {
   final IconData icon;
-  final VoidCallback onTap;
+  final String tooltip;
+  final VoidCallback? onTap;
 
-  const _CounterButton({required this.icon, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 32,
-        height: 32,
-        decoration: BoxDecoration(
-          color: const Color(0xFF1A5C30).withValues(alpha: 0.09),
-          shape: BoxShape.circle,
-        ),
-        child: Icon(icon, color: const Color(0xFF1A5C30), size: 18),
-      ),
-    );
-  }
-}
-
-// ── Pest Observation Row ──────────────────────────────────────────────────────
-
-class _PestObservationRow extends StatelessWidget {
-  final bool enabled;
-  final IconData icon;
-  final String label;
-  final TextEditingController controller;
-  final Color color;
-
-  const _PestObservationRow({
-    this.enabled = true,
-    required this.icon,
-    required this.label,
-    required this.controller,
-    required this.color,
-  });
+  const _CounterButton({required this.icon, required this.tooltip, this.onTap});
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-      child: Row(
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, color: color, size: 18),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Text(
-              label,
-              style: GoogleFonts.inter(
-                color: const Color(0xFF0C503C),
-                fontWeight: FontWeight.w600,
-                fontSize: 14,
-              ),
-            ),
-          ),
-          SizedBox(
-            width: 72,
-            height: 36,
-            child: TextField(
-              enabled: enabled,
-              controller: controller,
-              textAlign: TextAlign.center,
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              style: GoogleFonts.inter(
-                color: const Color(0xFF0C503C),
-                fontWeight: FontWeight.w700,
-                fontSize: 16,
-              ),
-              decoration: InputDecoration(
-                contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                filled: true,
-                fillColor: const Color(0xFFF4F8F5),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(
-                    color: Color(0xFFDDEEE4),
-                    width: 1.2,
-                  ),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(
-                    color: Color(0xFFDDEEE4),
-                    width: 1.2,
-                  ),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(
-                    color: Color(0xFF1A5C30),
-                    width: 1.5,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => IconButton(
+    tooltip: tooltip,
+    onPressed: onTap,
+    icon: Icon(icon, size: 18),
+    style: IconButton.styleFrom(
+      minimumSize: const Size(48, 48),
+      padding: EdgeInsets.zero,
+      foregroundColor: const Color(0xFF1A5C30),
+      backgroundColor: const Color(0x171A5C30),
+    ),
+  );
 }
-
-// ── Image Picker Section ──────────────────────────────────────────────────────
