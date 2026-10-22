@@ -111,9 +111,13 @@ class ScoutingFormSession {
   final _MonitoringScreenState _state;
   ScoutingFormSession._(this._state);
 
-  bool get loading => _state._isInitialLoading || _state._isWeekLoading;
+  bool get loading => _state._isInitialLoading || _state._isWeekLoading || _state._isSwitchingQuickLogWeek;
   String? get error => _state._error;
   int get weekIndex => _state._selectedWeek;
+  int get totalWeeks => _state._totalWeeks;
+  int get currentWeek => _state._currentWeekFromPlanting;
+  DateTime weekStart(int index) => _state._getWeekStartDate(index);
+  Future<bool> selectWeek(int index) => _state._selectQuickLogWeek(index);
   bool get locked => _state._isCurrentWeekLocked;
   Map<String, dynamic>? station(int index) =>
       index >= 0 && index < _state._stationData.length
@@ -207,6 +211,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   // Loading & Error
   bool _isInitialLoading = true;
   bool _isWeekLoading = false;
+  bool _isSwitchingQuickLogWeek = false;
   String? _error;
 
   // Cycle metadata
@@ -1273,6 +1278,32 @@ Future<void> _loadCycleData() async {
       }
     } catch (e) {
       debugPrint('Error loading all weeks status: $e');
+    }
+  }
+
+  Future<bool> _selectQuickLogWeek(int index) async {
+    if (_isInitialLoading || _isWeekLoading || _isSwitchingQuickLogWeek ||
+        index < 0 || index >= _totalWeeks || index >= _currentWeekFromPlanting) {
+      return false;
+    }
+    if (index == _selectedWeek) return true;
+    setState(() => _isSwitchingQuickLogWeek = true);
+    try {
+      _autoSaveTimer?.cancel();
+      if (_loadedWeekIndex == _selectedWeek && !await _saveCurrentWeekData()) return false;
+      if (!mounted) return false;
+      final firstDay = index * 7;
+      final lastDay = (firstDay + 6).clamp(0, _totalDays - 1);
+      final day = _currentDayFromPlanting.clamp(firstDay, lastDay);
+      setState(() {
+        _selectedWeek = index;
+        _dailySelectedDay = day;
+        _expandedStationIndex = -1;
+      });
+      await Future.wait([_loadWeekData(index), _loadDailyLogData(day)]);
+      return mounted && _loadedWeekIndex == index;
+    } finally {
+      if (mounted) setState(() => _isSwitchingQuickLogWeek = false);
     }
   }
 

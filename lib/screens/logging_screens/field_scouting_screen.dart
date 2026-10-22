@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
 import 'package:visaia/widgets/success_modal.dart';
 import 'package:visaia/screens/monitoring_screens/monitoring.dart';
 import 'package:visaia/widgets/database_image.dart';
@@ -660,6 +661,63 @@ class _FieldScoutingFormScreenState extends State<FieldScoutingFormScreen>
                       const SizedBox(height: 20),
 
                       // ── Station Selection ──────────────────────────────────────
+                      const _SectionLabel(label: 'Scouting Week'),
+                      const SizedBox(height: 8),
+                      _FormCard(
+                        child: DropdownButtonFormField<int>(
+                          key: ValueKey(
+                            'scouting-week-$_selectedCycleId-${_session?.weekIndex}',
+                          ),
+                          initialValue: _session != null && !_session!.loading
+                              ? _session!.weekIndex
+                              : null,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            prefixIcon: Icon(
+                              Icons.date_range_outlined,
+                              color: _green,
+                            ),
+                            border: InputBorder.none,
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                          hint: Text(
+                            _selectedCycleId == null
+                                ? 'Select a growth cycle first'
+                                : 'Loading scouting weeks...',
+                          ),
+                          items: _session == null || _session!.loading
+                              ? []
+                              : [
+                                  for (
+                                    int index = 0;
+                                    index < _session!.totalWeeks;
+                                    index++
+                                  )
+                                    DropdownMenuItem(
+                                      value: index,
+                                      enabled: index < _session!.currentWeek,
+                                      child: Text(
+                                        'Week ${index + 1} - ${DateFormat('MMM d').format(_session!.weekStart(index))}${index >= _session!.currentWeek ? ' (Upcoming)' : ''}',
+                                        style: GoogleFonts.inter(
+                                          color: index < _session!.currentWeek
+                                              ? _darkGreen
+                                              : _mutedText,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                          onChanged:
+                              _session == null || _session!.loading || _isSaving
+                              ? null
+                              : (index) async {
+                                  if (index == null) return;
+                                  await _session!.selectWeek(index);
+                                  if (mounted) setState(() {});
+                                },
+                        ),
+                      ),
+                      const SizedBox(height: 20),
                       const _SectionLabel(label: 'Station Selection'),
                       const SizedBox(height: 8),
                       _FormCard(
