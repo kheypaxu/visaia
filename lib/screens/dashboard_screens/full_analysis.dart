@@ -1,3 +1,4 @@
+import 'package:visaia/core/models/cycle_audit_policy.dart';
 import 'package:visaia/services/pdf_theme_service.dart';
 import 'package:visaia/core/models/cycle_metrics.dart';
 import 'dart:io';
@@ -124,15 +125,9 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
 
       for (final doc in querySnap.docs) {
         final data = doc.data();
-        final isCompleted =
-            data['isCompleted'] == true ||
-            data['status'] == 'completed' ||
-            data['status'] == 'harvested';
+        if (!hasRecordedHarvest(data)) continue;
 
-        // Only process harvested / completed crops
-        if (!isCompleted) continue;
-
-        final isAuditCompleted = data['isAuditCompleted'] == true;
+        final isAuditCompleted = hasCompletedHarvestAudit(data);
         final cropVariety =
             data['cropVariety'] ?? data['cropType'] ?? 'Unknown Crop';
         final fieldName = data['fieldName'] ?? 'Unknown Field';
@@ -142,6 +137,22 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
         final yieldKg = recordedYield(data) ?? 0;
         final marketPrice = cycleNumber(data['marketPrice']) ?? 0;
         final netIncome = finance.net;
+
+        final cropItem = _CropItemInfo(
+          cycleId: doc.id,
+          name: cropVariety,
+          plot: fieldName,
+          isAuditCompleted: isAuditCompleted,
+          grossIncome: totalValue,
+          netIncome: netIncome,
+        );
+
+        if (isAuditCompleted) {
+          completedCrops.add(cropItem);
+        } else {
+          pendingAuditCrops.add(cropItem);
+          continue;
+        }
 
         grossIncome += totalValue;
         totalYield += yieldKg;
@@ -162,29 +173,14 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
         completedCycleIds.add(doc.id);
 
         final harvestTs =
-            data['expectedHarvestDate'] ??
-            data['harvestDate'] ??
+            data['harvestCompletedAt'] ??
             data['actualHarvestDate'] ??
+            data['harvestDate'] ??
             data['completedAt'] ??
             data['auditCompletedAt'];
         if (harvestTs is Timestamp) {
           final monthKey = DateFormat('yyyy-MM').format(harvestTs.toDate());
           monthlyIncome[monthKey] = (monthlyIncome[monthKey] ?? 0) + totalValue;
-        }
-
-        final cropItem = _CropItemInfo(
-          cycleId: doc.id,
-          name: cropVariety,
-          plot: fieldName,
-          isAuditCompleted: isAuditCompleted,
-          grossIncome: totalValue,
-          netIncome: netIncome,
-        );
-
-        if (isAuditCompleted) {
-          completedCrops.add(cropItem);
-        } else {
-          pendingAuditCrops.add(cropItem);
         }
       }
 
@@ -322,7 +318,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            'Based on harvest schedules and forward contracts',
+                            'Based on recorded income from completed financial audits',
                             style: GoogleFonts.manrope(
                               color: textGray,
                               fontSize: 14,
@@ -650,7 +646,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
           ),
           if (_completedCycleIds.isNotEmpty)
             Text(
-              'Based on ${_completedCycleIds.length} completed cycle(s)',
+              'Based on ${_completedCycleIds.length} completed audit(s)',
               style: GoogleFonts.manrope(
                 fontSize: 14,
                 color: Colors.green[700],
@@ -678,7 +674,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
             'Gross income is the sum of financial-report harvest income. '
             'Yield is recorded in kg; the price is weighted by harvest weight '
             'for cycles with a recorded price. Their product is not the income formula. '
-            'Pending audits are included and may change.',
+            'Only completed financial audits are included.',
             style: GoogleFonts.manrope(fontSize: 12, color: textGray),
           ),
         ],
@@ -1008,7 +1004,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 30),
               child: Text(
-                'No completed cycles yet',
+                'No completed audits yet',
                 style: GoogleFonts.manrope(
                   fontSize: 14,
                   color: textGray.withValues(alpha: 0.6),
@@ -1174,7 +1170,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                   ),
                   pw.SizedBox(height: 4),
                   pw.Text(
-                    'Based on ${_completedCycleIds.length} completed cycle(s)',
+                    'Based on ${_completedCycleIds.length} completed audit(s)',
                     style: const pw.TextStyle(
                       fontSize: 12,
                       color: PdfColors.green800,
@@ -1290,7 +1286,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
                       ? '\u20B1${_avgMarketPrice.toStringAsFixed(2)}/kg'
                       : 'N/A',
                 ],
-                ['Completed Cycles', '${_completedCycleIds.length}'],
+                ['Completed Audits', '${_completedCycleIds.length}'],
                 ['Completed Crops', '${_completedCrops.length}'],
               ],
             ),
@@ -1330,7 +1326,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
             ),
             pw.SizedBox(height: 16),
             pw.Text(
-              'Net = gross harvest income - damage costs - cycle expenses + saved net adjustment. Pending audits are included. Yield is in kg; weighted price is informational, not the income formula.',
+              'Net = gross harvest income - damage costs - cycle expenses + saved net adjustment. Only completed financial audits are included. Yield is in kg; weighted price is informational, not the income formula.',
             ),
             pw.SizedBox(height: 20),
             pw.Text(
@@ -1398,7 +1394,7 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
             pw.Divider(),
             pw.SizedBox(height: 8),
             pw.Text(
-              'This report was generated automatically. Values are estimates based on completed cycles.',
+              'This report was generated automatically. Values are based on completed financial audits.',
               style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey500),
             ),
           ],

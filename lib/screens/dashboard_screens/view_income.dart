@@ -1,3 +1,4 @@
+import 'package:visaia/core/models/cycle_audit_policy.dart';
 import 'package:visaia/services/pdf_theme_service.dart';
 import 'package:visaia/core/models/cycle_metrics.dart';
 import 'dart:io';
@@ -36,6 +37,9 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
   bool _isLoading = true;
   bool _isSaving = false;
   bool _isAuditCompleted = false;
+  bool _hasRecordedHarvest = false;
+  bool get _canEditAudit =>
+      _hasRecordedHarvest && !_isAuditCompleted && !_isLoading && !_isSaving;
   bool _isExportingPdf = false;
   String? _errorMessage;
   String _cropName = '';
@@ -112,6 +116,7 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
   }
 
   String _getUserFriendlyError(dynamic error) {
+    if (error is StateError) return error.message;
     if (error is FirebaseException) {
       switch (error.code) {
         case 'permission-denied':
@@ -146,6 +151,7 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
       }
       final data = cycleDoc.data()!;
       _isAuditCompleted = data['isAuditCompleted'] == true;
+      _hasRecordedHarvest = hasRecordedHarvest(data);
       _cropName = data['cropVariety'] ?? data['cropType'] ?? 'Unknown Crop';
 
       final finance = CycleFinance(data);
@@ -198,6 +204,7 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
   }
 
   Future<void> _confirmAndSubmitAudit() async {
+    if (!_canEditAudit) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -256,6 +263,7 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
   }
 
   Future<void> _saveAndFinalizeAudit() async {
+    if (!_canEditAudit) return;
     setState(() => _isSaving = true);
 
     try {
@@ -270,28 +278,41 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
           controlCost + fertilizerCost + seedsCost + otherExpenses;
       final netIncome = harvestIncome - totalCycleCost - damageCost;
 
-      await FirebaseFirestore.instance
+      final db = FirebaseFirestore.instance;
+      final cycleRef = db
           .collection('users')
           .doc(widget.userId)
           .collection('cycles')
-          .doc(widget.cycleId)
-          .update({
-            'grossIncome': harvestIncome,
-            'totalValue': harvestIncome,
-            'income': netIncome,
-            'netIncome': netIncome,
-            'controlMethodCost': controlCost,
-            'fertilizerCost': fertilizerCost,
-            'seedsCost': seedsCost,
-            'otherExpenses': otherExpenses,
-            'totalCycleCost': totalCycleCost,
-            'damageCost': damageCost,
-            'pestLoss': damageCost,
-            'isAuditCompleted': true,
-            'isCompleted': true,
-            'status': 'completed',
-            'auditCompletedAt': FieldValue.serverTimestamp(),
-          });
+          .doc(widget.cycleId);
+      await db.runTransaction((transaction) async {
+        final latest = await transaction.get(cycleRef);
+        final cycle = latest.data();
+        if (cycle == null || !hasRecordedHarvest(cycle)) {
+          throw StateError(
+            'Record the harvest before completing this financial audit.',
+          );
+        }
+        if (!canEditFinancialAudit(cycle)) {
+          throw StateError(
+            'This financial audit has already been completed and is locked.',
+          );
+        }
+        transaction.update(cycleRef, {
+          'grossIncome': harvestIncome,
+          'totalValue': harvestIncome,
+          'income': netIncome,
+          'netIncome': netIncome,
+          'controlMethodCost': controlCost,
+          'fertilizerCost': fertilizerCost,
+          'seedsCost': seedsCost,
+          'otherExpenses': otherExpenses,
+          'totalCycleCost': totalCycleCost,
+          'damageCost': damageCost,
+          'pestLoss': damageCost,
+          'isAuditCompleted': true,
+          'auditCompletedAt': FieldValue.serverTimestamp(),
+        });
+      });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -323,7 +344,7 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
         setState(() => _isSaving = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to save audit: $e'),
+            content: Text('Failed to save audit: ${_getUserFriendlyError(e)}'),
             backgroundColor: errorRed,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
@@ -411,6 +432,8 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
                   Text(
                     _isAuditCompleted
                         ? 'Read-only finalized financial audit from this completed cycle.'
+                        : !_hasRecordedHarvest
+                        ? 'Record the harvest before editing or completing this financial audit.'
                         : 'Review and input all cycle revenue, expenses, and damages to finalize this crop.',
                     style: GoogleFonts.manrope(
                       fontSize: 13,
@@ -454,6 +477,8 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
                               Text(
                                 _isAuditCompleted
                                     ? 'Financial Audit Completed & Locked'
+                                    : !_hasRecordedHarvest
+                                    ? 'Awaiting Harvest'
                                     : 'Pending Financial Audit',
                                 style: GoogleFonts.manrope(
                                   fontSize: 13,
@@ -467,6 +492,8 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
                               Text(
                                 _isAuditCompleted
                                     ? 'All expense and income figures have been audited and finalized. Values cannot be modified.'
+                                    : !_hasRecordedHarvest
+                                    ? 'This cycle has not been harvested. Financial audit fields are read-only until a harvest is recorded.'
                                     : 'Please fill in or verify your harvest income, cycle expenses, and damage costs below. Once submitted, records will be permanently locked.',
                                 style: GoogleFonts.manrope(
                                   fontSize: 12,
@@ -565,7 +592,9 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
                       width: double.infinity,
                       height: 52,
                       child: ElevatedButton.icon(
-                        onPressed: _isSaving ? null : _confirmAndSubmitAudit,
+                        onPressed: _canEditAudit
+                            ? _confirmAndSubmitAudit
+                            : null,
                         icon: _isSaving
                             ? const SizedBox(
                                 width: 20,
@@ -583,6 +612,8 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
                         label: Text(
                           _isSaving
                               ? 'Saving & Finalizing...'
+                              : !_hasRecordedHarvest
+                              ? 'Harvest required before audit'
                               : 'Submit & Complete Audit',
                           style: GoogleFonts.manrope(
                             fontSize: 15,
@@ -662,7 +693,7 @@ class _CropFinanceScreenState extends State<CropFinanceScreen> {
     TextEditingController controller,
     IconData icon,
   ) {
-    final isReadOnly = _isAuditCompleted;
+    final isReadOnly = !_canEditAudit;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
