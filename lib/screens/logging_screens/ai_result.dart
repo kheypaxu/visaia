@@ -1406,10 +1406,10 @@ class _AIResultScreenState extends State<AIResultScreen>
       lifeStageDescription = 'Pupae are the transitional stage before adults emerge. They are usually found in soil or debris and indicate a new generation is developing.';
       riskType = 'Future Generation Risk';
     } else {
-      lifeStageName = 'Unknown';
+      lifeStageName = 'NOT FAW';
       lifeStageIcon = Icons.help_outline_rounded;
       lifeStageDescription = 'The detected stage could not be clearly identified.';
-      riskType = 'Unknown';
+      riskType = 'Risk Level not Applicable';
     }
 
     return SingleChildScrollView(
