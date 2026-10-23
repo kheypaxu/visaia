@@ -2,6 +2,26 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:visaia/core/models/cycle_audit_policy.dart';
 
 void main() {
+  test('Harvest save moves an ongoing cycle to pending audit, then finalized', () {
+    final cycle = <String, dynamic>{'status': 'active', 'isCompleted': false};
+    expect(hasRecordedHarvest(cycle), isFalse);
+
+    // Fields written by HarvestRecordingScreen when the harvest is saved.
+    cycle.addAll({
+      'status': 'harvested',
+      'isCompleted': true,
+      'harvestCompletedAt': DateTime(2026, 10, 23),
+      'actualHarvestDate': DateTime(2026, 10, 23),
+    });
+    expect(hasRecordedHarvest(cycle), isTrue);
+    expect(canEditFinancialAudit(cycle), isTrue);
+    expect(hasCompletedHarvestAudit(cycle), isFalse);
+
+    cycle['isAuditCompleted'] = true;
+    expect(hasCompletedHarvestAudit(cycle), isTrue);
+    expect(canEditFinancialAudit(cycle), isFalse);
+  });
+
   test('Scheduled and manually completed cycles cannot be audited', () {
     for (final cycle in <Map<String, dynamic>>[
       {'status': 'active', 'harvestDate': DateTime(2026, 1, 1)},

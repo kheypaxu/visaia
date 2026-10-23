@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:visaia/core/models/cycle_audit_policy.dart';
 import 'package:visaia/services/pdf_theme_service.dart';
 import 'package:visaia/core/models/cycle_metrics.dart';
@@ -34,6 +35,9 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
   static const Color softRed = Color(0xFFFFDADA);
   static const Color deepRed = Color(0xFFBA1A1A);
 
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _cyclesSubscription;
+  int _cyclesLoadVersion = 0;
+
   bool _isLoading = true;
   bool _isExportingPdf = false;
   String? _errorMessage;
@@ -66,6 +70,13 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
     }
   }
 
+  @override
+  void dispose() {
+    _cyclesLoadVersion++;
+    _cyclesSubscription?.cancel();
+    super.dispose();
+  }
+
   String _getUserFriendlyError(dynamic error) {
     if (error is FirebaseException) {
       switch (error.code) {
@@ -93,6 +104,9 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
   }
 
   Future<void> _loadData() async {
+    final loadVersion = ++_cyclesLoadVersion;
+    await _cyclesSubscription?.cancel();
+    if (!mounted || loadVersion != _cyclesLoadVersion) return;
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -104,136 +118,161 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
           .doc(widget.userId)
           .collection('cycles');
 
-      final querySnap = await cyclesRef
+      _cyclesSubscription = cyclesRef
           .where('farmId', isEqualTo: widget.activeFarmId)
-          .get();
-
-      double grossIncome = 0;
-      double totalYield = 0;
-      double totalLosses = 0;
-      double pricedYield = 0;
-      double pricedValue = 0;
-      double netTotal = 0;
-      final breakdown = <String, double>{};
-      void addAmount(String label, double amount) {
-        breakdown[label] = (breakdown[label] ?? 0) + amount;
-      }
-
-      final Map<String, double> monthlyIncome = {};
-      final List<String> completedCycleIds = [];
-      final ongoingCycles = <_OngoingCycleInfo>[];
-      final List<_CropItemInfo> pendingAuditCrops = [];
-      final List<_CropItemInfo> completedCrops = [];
-
-      for (final doc in querySnap.docs) {
-        final data = doc.data();
-        if (!hasRecordedHarvest(data)) {
-          ongoingCycles.add(
-            _OngoingCycleInfo(
-              name:
-                  (data['cycleName'] ??
-                          data['cropVariety'] ??
-                          data['cropType'] ??
-                          'Unnamed cycle')
-                      .toString(),
-              field: (data['fieldName'] ?? 'Unknown Field').toString(),
-              plantingDate: data['plantingDate'] is Timestamp
-                  ? (data['plantingDate'] as Timestamp).toDate()
-                  : null,
-              harvestDate:
-                  (data['expectedHarvestDate'] ?? data['harvestDate'])
-                      is Timestamp
-                  ? ((data['expectedHarvestDate'] ?? data['harvestDate'])
-                            as Timestamp)
-                        .toDate()
-                  : null,
-            ),
+          .snapshots()
+          .listen(
+            (snapshot) {
+              if (!mounted || loadVersion != _cyclesLoadVersion) return;
+              try {
+                _applyCycleSnapshot(snapshot);
+              } catch (error) {
+                _handleCycleLoadError(error);
+              }
+            },
+            onError: (Object error) {
+              if (mounted && loadVersion == _cyclesLoadVersion) {
+                _handleCycleLoadError(error);
+              }
+            },
           );
-          continue;
-        }
+    } catch (error) {
+      if (mounted && loadVersion == _cyclesLoadVersion) {
+        _handleCycleLoadError(error);
+      }
+    }
+  }
 
-        final isAuditCompleted = hasCompletedHarvestAudit(data);
-        final cropVariety =
-            data['cropVariety'] ?? data['cropType'] ?? 'Unknown Crop';
-        final fieldName = data['fieldName'] ?? 'Unknown Field';
+  // Keep harvest and audit transitions current while this screen is mounted.
+  void _applyCycleSnapshot(QuerySnapshot<Map<String, dynamic>> querySnap) {
+    double grossIncome = 0;
+    double totalYield = 0;
+    double totalLosses = 0;
+    double pricedYield = 0;
+    double pricedValue = 0;
+    double netTotal = 0;
+    final breakdown = <String, double>{};
+    void addAmount(String label, double amount) {
+      breakdown[label] = (breakdown[label] ?? 0) + amount;
+    }
 
-        final finance = CycleFinance(data);
-        final totalValue = finance.gross;
-        final yieldKg = recordedYield(data) ?? 0;
-        final marketPrice = cycleNumber(data['marketPrice']) ?? 0;
-        final netIncome = finance.net;
+    final Map<String, double> monthlyIncome = {};
+    final List<String> completedCycleIds = [];
+    final ongoingCycles = <_OngoingCycleInfo>[];
+    final List<_CropItemInfo> pendingAuditCrops = [];
+    final List<_CropItemInfo> completedCrops = [];
 
-        final cropItem = _CropItemInfo(
-          cycleId: doc.id,
-          name: cropVariety,
-          plot: fieldName,
-          isAuditCompleted: isAuditCompleted,
-          grossIncome: totalValue,
-          netIncome: netIncome,
+    for (final doc in querySnap.docs) {
+      final data = doc.data();
+      if (!hasRecordedHarvest(data)) {
+        ongoingCycles.add(
+          _OngoingCycleInfo(
+            name:
+                (data['cycleName'] ??
+                        data['cropVariety'] ??
+                        data['cropType'] ??
+                        'Unnamed cycle')
+                    .toString(),
+            field: (data['fieldName'] ?? 'Unknown Field').toString(),
+            plantingDate: data['plantingDate'] is Timestamp
+                ? (data['plantingDate'] as Timestamp).toDate()
+                : null,
+            harvestDate:
+                (data['expectedHarvestDate'] ?? data['harvestDate'])
+                    is Timestamp
+                ? ((data['expectedHarvestDate'] ?? data['harvestDate'])
+                          as Timestamp)
+                      .toDate()
+                : null,
+          ),
         );
-
-        if (isAuditCompleted) {
-          completedCrops.add(cropItem);
-        } else {
-          pendingAuditCrops.add(cropItem);
-          continue;
-        }
-
-        grossIncome += totalValue;
-        totalYield += yieldKg;
-        totalLosses += finance.damage + finance.costs;
-        netTotal += netIncome;
-        addAmount('Damage costs', -finance.damage);
-        addAmount('Control methods', -finance.control);
-        addAmount('Fertilizer', -finance.fertilizer);
-        addAmount('Seeds', -finance.seeds);
-        addAmount('Other expenses', -finance.other);
-        addAmount('Saved cycle cost adjustment', -finance.costAdjustment);
-        addAmount('Saved net income adjustment', finance.netAdjustment);
-        if (marketPrice > 0 && yieldKg > 0) {
-          pricedValue += marketPrice * yieldKg;
-          pricedYield += yieldKg;
-        }
-
-        completedCycleIds.add(doc.id);
-
-        final harvestTs =
-            data['harvestCompletedAt'] ??
-            data['actualHarvestDate'] ??
-            data['harvestDate'] ??
-            data['completedAt'] ??
-            data['auditCompletedAt'];
-        if (harvestTs is Timestamp) {
-          final monthKey = DateFormat('yyyy-MM').format(harvestTs.toDate());
-          monthlyIncome[monthKey] = (monthlyIncome[monthKey] ?? 0) + totalValue;
-        }
+        continue;
       }
 
-      if (!mounted) return;
-      setState(() {
-        _grossIncome = grossIncome;
-        _totalYield = totalYield;
-        _totalLosses = totalLosses;
-        _avgMarketPrice = pricedYield > 0 ? pricedValue / pricedYield : 0;
-        _netIncome = netTotal;
-        _financialBreakdown = breakdown;
-        _ongoingCycles = ongoingCycles;
-        _pendingAuditCrops = pendingAuditCrops;
-        _completedCrops = completedCrops;
-        _completedCycleIds = completedCycleIds;
-        _rawMonthlyIncome = monthlyIncome;
-        _isLoading = false;
-      });
+      final isAuditCompleted = hasCompletedHarvestAudit(data);
+      final cropVariety =
+          data['cropVariety'] ?? data['cropType'] ?? 'Unknown Crop';
+      final fieldName = data['fieldName'] ?? 'Unknown Field';
 
-      _updateMonthlyRevenues();
-    } catch (e) {
-      debugPrint('Error loading income data: $e');
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false;
-        _errorMessage = _getUserFriendlyError(e);
-      });
+      final finance = CycleFinance(data);
+      final totalValue = finance.gross;
+      final yieldKg = recordedYield(data) ?? 0;
+      final marketPrice = cycleNumber(data['marketPrice']) ?? 0;
+      final netIncome = finance.net;
+
+      final cropItem = _CropItemInfo(
+        cycleId: doc.id,
+        name: cropVariety,
+        plot: fieldName,
+        isAuditCompleted: isAuditCompleted,
+        grossIncome: totalValue,
+        netIncome: netIncome,
+      );
+
+      if (isAuditCompleted) {
+        completedCrops.add(cropItem);
+      } else {
+        pendingAuditCrops.add(cropItem);
+        continue;
+      }
+
+      grossIncome += totalValue;
+      totalYield += yieldKg;
+      totalLosses += finance.damage + finance.costs;
+      netTotal += netIncome;
+      addAmount('Damage costs', -finance.damage);
+      addAmount('Control methods', -finance.control);
+      addAmount('Fertilizer', -finance.fertilizer);
+      addAmount('Seeds', -finance.seeds);
+      addAmount('Other expenses', -finance.other);
+      addAmount('Saved cycle cost adjustment', -finance.costAdjustment);
+      addAmount('Saved net income adjustment', finance.netAdjustment);
+      if (marketPrice > 0 && yieldKg > 0) {
+        pricedValue += marketPrice * yieldKg;
+        pricedYield += yieldKg;
+      }
+
+      completedCycleIds.add(doc.id);
+
+      final harvestTs =
+          data['harvestCompletedAt'] ??
+          data['actualHarvestDate'] ??
+          data['harvestDate'] ??
+          data['completedAt'] ??
+          data['auditCompletedAt'];
+      if (harvestTs is Timestamp) {
+        final monthKey = DateFormat('yyyy-MM').format(harvestTs.toDate());
+        monthlyIncome[monthKey] = (monthlyIncome[monthKey] ?? 0) + totalValue;
+      }
     }
+
+    if (!mounted) return;
+    setState(() {
+      _grossIncome = grossIncome;
+      _totalYield = totalYield;
+      _totalLosses = totalLosses;
+      _avgMarketPrice = pricedYield > 0 ? pricedValue / pricedYield : 0;
+      _netIncome = netTotal;
+      _financialBreakdown = breakdown;
+      _ongoingCycles = ongoingCycles;
+      _pendingAuditCrops = pendingAuditCrops;
+      _completedCrops = completedCrops;
+      _completedCycleIds = completedCycleIds;
+      _rawMonthlyIncome = monthlyIncome;
+      _isLoading = false;
+      _errorMessage = null;
+    });
+
+    _updateMonthlyRevenues();
+  }
+
+  void _handleCycleLoadError(Object error) {
+    debugPrint('Error loading income data: $error');
+    if (!mounted) return;
+    setState(() {
+      _isLoading = false;
+      _errorMessage = _getUserFriendlyError(error);
+    });
   }
 
   void _updateMonthlyRevenues() {
