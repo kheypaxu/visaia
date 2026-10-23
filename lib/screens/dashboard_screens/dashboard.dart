@@ -263,7 +263,7 @@ class MonitoringFirestoreService {
     });
   }
 
-  // ----- Total Yield (sum of income from completed cycles) -----
+  // ----- Total Yield (kilograms harvested from completed cycles) -----
   Stream<double> getTotalYield() {
     if (_userId.isEmpty) return Stream.value(0.0);
     Query<Map<String, dynamic>> ref = _db
@@ -280,7 +280,7 @@ class MonitoringFirestoreService {
         .snapshots()
         .map((snap) => snap.docs.fold<double>(0.0, (sum, doc) {
               final data = doc.data();
-              final yield = (data['totalYield'] as num?)?.toDouble() ?? 0.0;
+              final yield = recordedYield(data) ?? 0.0;
               return sum + yield;
             }))
         .handleError((e) {
@@ -402,7 +402,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                       return _buildMetricCard(
                         title: "TOTAL YIELD",
                         value: totalYield.toStringAsFixed(1),
-                        unit: "kilo",
+                        unit: "kg",
                         icon: Icons.agriculture_rounded,
                         bgColor: const Color(0xFFC5E1A5),
                         textColor: darkGreen,
@@ -486,7 +486,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                   fontSize: 28, fontWeight: FontWeight.w800, color: headingBlack),
             ),
             Text(
-              "Validated FAW Life Stages in ${LocationConstants.defaultMunicipality}",
+              "Validated FAW life stages in ${LocationConstants.defaultMunicipality}",
               style: GoogleFonts.manrope(
                 fontSize: 16, color: textGray, fontWeight: FontWeight.w500),
             ),
