@@ -9,15 +9,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:visaia/services/auth_cache_service.dart';
 import 'package:visaia/services/faw_risk_service.dart';
-import 'package:visaia/services/report_map_location_resolver.dart';
 
-enum PestLifeStage {
-  all,
-  egg,
-  larva,
-  pupa,
-  moth,
-}
+enum PestLifeStage { all, egg, larva, pupa, moth }
 
 class RiskMapScreen extends StatefulWidget {
   const RiskMapScreen({super.key});
@@ -45,7 +38,8 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       icon: const Icon(Icons.close_rounded),
       color: Colors.white,
       constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-      onPressed: () => _snackBarMessengerKey.currentState?.removeCurrentSnackBar(),
+      onPressed: () =>
+          _snackBarMessengerKey.currentState?.removeCurrentSnackBar(),
     );
   }
 
@@ -56,15 +50,15 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
   LatLng? _initialCenter;
   double? _initialZoom;
   final MapController _mapController = MapController();
-  
+
   // Risk data
   PestLifeStage _selectedStage = PestLifeStage.all;
-  List<RiskPoint> _riskPoints = [];
-  List<RiskZone> _riskZones = [];
-  List<ReportData> _reports = [];
-  bool _showSourceReports = false;
+  final List<RiskPoint> _riskPoints = [];
+  final List<RiskZone> _riskZones = [];
+  final List<ReportData> _reports = [];
+  bool _showSourceReports = true;
 
-  // Nearby moth threats from other farmers (and own scouting records)
+  // External reports whose proximity zones overlap this farm
   final List<FawThreat> _threats = [];
   final FawRiskService _riskService = FawRiskService();
   bool _isLoadingThreats = false;
@@ -75,23 +69,20 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
   final List<Marker> _cachedMarkers = [];
   final List<CircleMarker> _cachedCircles = [];
   final List<Polyline> _cachedPolylines = [];
-  
+
   // Track if cache needs rebuilding
   bool _needsCacheRebuild = true;
-  
+
   // Debounce timer for rebuilds
   Timer? _rebuildTimer;
 
   // Rendering limits
   static const int maxFieldsRender = 25;
-  static const int maxRiskPointsRender = 200;
 
   @override
   void initState() {
     super.initState();
     _fetchFarmAndFields();
-    _loadRiskData();
-    _loadReports();
   }
 
   @override
@@ -114,65 +105,6 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
     if (value is num) return value.toDouble();
     if (value is String) return double.tryParse(value) ?? 0.0;
     return 0.0;
-  }
-
-  Future<void> _loadReports() async {
-    try {
-      final userId = FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid;
-      if (userId == null) return;
-
-      // Use farmerId if your documents have that field
-      QuerySnapshot<Map<String, dynamic>> reportsQuery;
-      try {
-        reportsQuery = await FirebaseFirestore.instance
-            .collection('reports')
-            .where('farmerId', isEqualTo: userId)
-            .limit(200)
-            .get();
-      } catch (_) {
-        reportsQuery = await FirebaseFirestore.instance
-            .collection('reports')
-            .where('farmerId', isEqualTo: userId)
-            .limit(200)
-            .get(const GetOptions(source: Source.cache));
-      }
-
-      List<ReportData> loadedReports = [];
-      final locations = ReportMapLocationResolver();
-
-      for (var doc in reportsQuery.docs) {
-        final data = doc.data();
-        final reportLocation = await locations.resolve(data, fallbackOwnerId: userId);
-        if (reportLocation == null) continue;
-
-        // ----- Extract risk level (5 level gradient) -----
-        RiskLevel riskLevel = RiskLevel.normalize(
-            data['risk'] ?? data['riskLevel'] ?? data['severity']);
-
-        // ----- Extract life stage -----
-        final stageKey = FawStageKey.fromText(
-            data['lifeStage'] ?? data['stage'] ?? data['pestStage']);
-        final stage = _toPestLifeStage(stageKey);
-
-        loadedReports.add(ReportData(
-          id: doc.id,
-          location: reportLocation,
-          pestType: data['pestType']?.toString() ?? 'Fall Army Worm',
-          riskLevel: riskLevel,
-          stage: stage,
-          createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-        ));
-      }
-
-      if (mounted) {
-        setState(() {
-          _reports = loadedReports;
-          _needsCacheRebuild = true;
-        });
-      }
-    } catch (e) {
-      debugPrint("Error loading reports: $e");
-    }
   }
 
   Future<void> _fetchFarmAndFields() async {
@@ -198,9 +130,11 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
     });
 
     try {
-      final userId = FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid;
+      final userId =
+          FirebaseAuth.instance.currentUser?.uid ??
+          AuthCacheService().cachedUid;
       debugPrint("CURRENT USER ID: $userId");
-      
+
       if (userId == null) {
         if (mounted) {
           setState(() {
@@ -234,26 +168,31 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       }
 
       FarmData? loadedFarm;
-      
+
       if (farmsQuery.docs.isNotEmpty) {
         final farmDoc = farmsQuery.docs.first;
         final farmData = farmDoc.data();
-        
+
         List<LatLng> farmBoundaries = [];
         if (farmData['boundaries'] != null && farmData['boundaries'] is List) {
           final boundaries = farmData['boundaries'] as List;
           farmBoundaries = boundaries
-              .where((point) => point is Map && point.containsKey('lat') && point.containsKey('lng'))
+              .where(
+                (point) =>
+                    point is Map &&
+                    point.containsKey('lat') &&
+                    point.containsKey('lng'),
+              )
               .map((point) {
-            try {
-              final lat = _safeToDouble(point['lat']);
-              final lng = _safeToDouble(point['lng']);
-              return LatLng(lat, lng);
-            } catch (e) {
-              debugPrint('Error parsing farm boundary point: $e');
-              return null;
-            }
-          })
+                try {
+                  final lat = _safeToDouble(point['lat']);
+                  final lng = _safeToDouble(point['lng']);
+                  return LatLng(lat, lng);
+                } catch (e) {
+                  debugPrint('Error parsing farm boundary point: $e');
+                  return null;
+                }
+              })
               .whereType<LatLng>()
               .toList();
         }
@@ -279,33 +218,43 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       for (var doc in fieldsQuery.docs) {
         final fieldData = doc.data();
         List<LatLng> boundaries = [];
-        
-        if (fieldData['boundaries'] != null && fieldData['boundaries'] is List) {
+
+        if (fieldData['boundaries'] != null &&
+            fieldData['boundaries'] is List) {
           final boundariesList = fieldData['boundaries'] as List;
           boundaries = boundariesList
-              .where((point) => point is Map && point.containsKey('lat') && point.containsKey('lng'))
+              .where(
+                (point) =>
+                    point is Map &&
+                    point.containsKey('lat') &&
+                    point.containsKey('lng'),
+              )
               .map((point) {
-            try {
-              final lat = _safeToDouble(point['lat']);
-              final lng = _safeToDouble(point['lng']);
-              return LatLng(lat, lng);
-            } catch (e) {
-              debugPrint('Error parsing field boundary point for ${doc.id}: $e');
-              return null;
-            }
-          })
+                try {
+                  final lat = _safeToDouble(point['lat']);
+                  final lng = _safeToDouble(point['lng']);
+                  return LatLng(lat, lng);
+                } catch (e) {
+                  debugPrint(
+                    'Error parsing field boundary point for ${doc.id}: $e',
+                  );
+                  return null;
+                }
+              })
               .whereType<LatLng>()
               .toList();
         }
 
-        loadedFields.add(FieldData(
-          id: doc.id,
-          name: fieldData['name']?.toString() ?? 'Unnamed Field',
-          acres: _safeToDouble(fieldData['acres']),
-          boundaries: boundaries,
-          crop: fieldData['crop']?.toString(),
-          createdAt: (fieldData['createdAt'] as Timestamp?)?.toDate(),
-        ));
+        loadedFields.add(
+          FieldData(
+            id: doc.id,
+            name: fieldData['name']?.toString() ?? 'Unnamed Field',
+            acres: _safeToDouble(fieldData['acres']),
+            boundaries: boundaries,
+            crop: fieldData['crop']?.toString(),
+            createdAt: (fieldData['createdAt'] as Timestamp?)?.toDate(),
+          ),
+        );
       }
 
       if (mounted && !isTimeout) {
@@ -319,16 +268,15 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
         _calculateInitialMapView();
         await _loadThreats();
       }
-      
     } catch (e, stackTrace) {
       debugPrint('Error fetching data: $e');
       debugPrint('Stack trace: $stackTrace');
-      
+
       if (mounted && !isTimeout) {
         setState(() {
           _isLoading = false;
         });
-        
+
         _showMapSnackBar(
           SnackBar(
             content: Text('Failed to load farm data: ${e.toString()}'),
@@ -346,8 +294,8 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
   /// weekly scouting record inside the 5 km flight radius of one of the
   /// user's fields is a live threat for this farm.
   Future<void> _loadThreats() async {
-    final userId = FirebaseAuth.instance.currentUser?.uid ??
-        AuthCacheService().cachedUid;
+    final userId =
+        FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid;
     if (userId == null) return;
 
     setState(() => _isLoadingThreats = true);
@@ -366,6 +314,11 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       final threats = await _riskService.loadMothThreats(
         currentUserId: userId,
         anchors: anchors,
+        boundaries: [
+          if (_farm != null && _farm!.boundaries.length >= 3) _farm!.boundaries,
+          for (final field in _fields)
+            if (field.boundaries.length >= 3) field.boundaries,
+        ],
       );
 
       if (!mounted) return;
@@ -385,11 +338,11 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
   void _calculateInitialMapView() {
     try {
       List<LatLng> allPoints = [];
-      
+
       if (_farm != null && _farm!.boundaries.isNotEmpty) {
         allPoints.addAll(_farm!.boundaries);
       }
-      
+
       for (var field in _fields) {
         allPoints.addAll(field.boundaries);
       }
@@ -397,7 +350,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       if (allPoints.isEmpty) {
         _initialCenter = const LatLng(10.7648, 122.5560);
         _initialZoom = 15.0;
-        
+
         if (mounted) {
           setState(() {});
         }
@@ -409,7 +362,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       double maxLat = allPoints[0].latitude;
       double minLng = allPoints[0].longitude;
       double maxLng = allPoints[0].longitude;
-      
+
       for (var point in allPoints) {
         if (point.latitude < minLat) minLat = point.latitude;
         if (point.latitude > maxLat) maxLat = point.latitude;
@@ -417,15 +370,12 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
         if (point.longitude > maxLng) maxLng = point.longitude;
       }
 
-      _initialCenter = LatLng(
-        (minLat + maxLat) / 2,
-        (minLng + maxLng) / 2,
-      );
+      _initialCenter = LatLng((minLat + maxLat) / 2, (minLng + maxLng) / 2);
 
       double latDiff = maxLat - minLat;
       double lngDiff = maxLng - minLng;
       double maxDiff = latDiff > lngDiff ? latDiff : lngDiff;
-      
+
       // Calculate zoom level
       if (maxDiff < 0.0005) {
         _initialZoom = 20.0;
@@ -444,7 +394,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       } else {
         _initialZoom = 13.0;
       }
-      
+
       if (mounted) {
         setState(() {});
       }
@@ -458,107 +408,12 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
     }
   }
 
-  Future<void> _loadRiskData() async {
-    try {
-      final userId = FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid;
-      if (userId == null) return;
-
-      // Fetch risk points with limit
-      QuerySnapshot<Map<String, dynamic>> riskQuery;
-      try {
-        riskQuery = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(userId)
-            .collection('risk_points')
-            .limit(maxRiskPointsRender)
-            .get()
-            .timeout(const Duration(seconds: 10));
-      } catch (_) {
-        riskQuery = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(userId)
-            .collection('risk_points')
-            .limit(maxRiskPointsRender)
-            .get(const GetOptions(source: Source.cache));
-      }
-
-      List<RiskPoint> loadedPoints = [];
-      for (var doc in riskQuery.docs) {
-        final data = doc.data();
-        try {
-          final stageString = data['stage']?.toString() ?? 'egg';
-          final stage = _toPestLifeStage(
-              FawStageKey.fromText(stageString == 'egg' ? 'egg' : stageString));
-
-          final riskLevel = RiskLevel.normalize(
-              data['riskLevel'] ?? data['risk'] ?? 'low');
-
-          loadedPoints.add(RiskPoint(
-            id: doc.id,
-            location: LatLng(
-              _safeToDouble(data['lat']),
-              _safeToDouble(data['lng']),
-            ),
-            stage: stage,
-            riskLevel: riskLevel,
-            detectedAt: (data['detectedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-          ));
-        } catch (e) {
-          debugPrint('Error parsing risk point ${doc.id}: $e');
-        }
-      }
-
-      // Fetch risk zones
-      final zonesQuery = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(userId)
-          .collection('risk_zones')
-          .get()
-          .timeout(const Duration(seconds: 10));
-
-      List<RiskZone> loadedZones = [];
-      for (var doc in zonesQuery.docs) {
-        final data = doc.data();
-        try {
-          final stageString = data['stage']?.toString() ?? 'moth';
-          PestLifeStage stage = PestLifeStage.moth;
-          if (stageString.toLowerCase() == 'moth') {
-            stage = PestLifeStage.moth;
-          }
-
-          loadedZones.add(RiskZone(
-            id: doc.id,
-            center: LatLng(
-              _safeToDouble(data['lat']),
-              _safeToDouble(data['lng']),
-            ),
-            radius: _safeToDouble(data['radius']),
-            stage: stage,
-            riskLevel: RiskLevel.high,
-          ));
-        } catch (e) {
-          debugPrint('Error parsing risk zone ${doc.id}: $e');
-        }
-      }
-
-      if (mounted) {
-        setState(() {
-          if (loadedPoints.isNotEmpty) _riskPoints = loadedPoints;
-          if (loadedZones.isNotEmpty) _riskZones = loadedZones;
-          _needsCacheRebuild = true; // Mark cache as dirty
-        });
-      }
-    } catch (e) {
-      debugPrint('Error loading risk data: $e');
-    }
-  }
-
   // ========== OPTIMIZED LAYER BUILDING ==========
-  
+
   /// Rebuild cached map layers only when needed (debounced)
   void _rebuildMapLayersIfNeeded() {
     if (!_needsCacheRebuild) return;
-    
+
     // Debounce rebuilds to prevent multiple rapid recalculations
     _rebuildTimer?.cancel();
     _rebuildTimer = Timer(const Duration(milliseconds: 100), () {
@@ -609,112 +464,48 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       );
     }
 
-  // Build risk markers (limit to MAX_RISK_POINTS_RENDER)
-  int markerCount = 0;
-  for (var point in _riskPoints) {
-    if (markerCount >= maxRiskPointsRender) break;
-    if (_selectedStage == PestLifeStage.all || point.stage == _selectedStage) {
-      final radius = _getSpreadRadiusMeters(point.stage, point.riskLevel);
-      if (radius > 0) {
-        _cachedCircles.add(
-          CircleMarker(
-            point: point.location,
-            radius: radius,
-            useRadiusInMeter: true,
-            color: _getRiskColor(point.riskLevel).withValues(alpha: 0.15),
-            borderColor: _getRiskColor(point.riskLevel),
-            borderStrokeWidth: 2,
-          ),
-        );
-      }
-      markerCount++;
-    }
-  }
-
-    // Build risk zones
-    if (_selectedStage == PestLifeStage.moth ||
-        _selectedStage == PestLifeStage.all) {
-      for (var zone in _riskZones) {
-        if ((_selectedStage == PestLifeStage.all ||
-              zone.stage == _selectedStage) &&
-          zone.radius > 0) {
-          // Limit radius to reasonable size (max 5km)
-          _cachedCircles.add(
-            CircleMarker(
-              point: zone.center,
-              radius: _getSpreadRadiusMeters(
-                zone.stage,
-                zone.riskLevel,
-              ),
-              color: _getRiskColor(zone.riskLevel).withValues(alpha: 0.3),
-              borderColor: _getRiskColor(zone.riskLevel),
-              borderStrokeWidth: 2,
-            ),
-          );
-        }
-      }
-    }
-
-      for (var report in _reports) {
-      if (_hasThreatSource(report.id)) continue;
-
+    // External reports whose proximity zones overlap this farm.
+    for (final threat in _threats) {
       if (_selectedStage != PestLifeStage.all &&
-          report.stage != _selectedStage) {
+          _selectedStage != _toPestLifeStage(threat.stage)) {
         continue;
       }
 
-    _cachedCircles.add(
-      CircleMarker(
-        point: report.location,
-        radius: _getSpreadRadiusMeters(report.stage, report.riskLevel),
-        useRadiusInMeter: true,
-        color: _getRiskColor(report.riskLevel).withValues(alpha: 0.15),
-        borderColor: _getRiskColor(report.riskLevel),
-        borderStrokeWidth: 2,
-      ),
-    );
-  }
+      // Adult moth flight / monitoring zone (wind scaled).
+      _cachedCircles.add(
+        CircleMarker(
+          point: threat.location,
+          radius: threat.radiusM,
+          useRadiusInMeter: true,
+          color: _getMothZoneColor(threat.riskLevel).withValues(alpha: 0.10),
+          borderColor: _getMothZoneColor(threat.riskLevel),
+          borderStrokeWidth: 1.5,
+        ),
+      );
 
-  // Nearby moth threats from other farmers (and own scouting records).
-  for (final threat in _threats) {
-    if (_selectedStage != PestLifeStage.all &&
-        _selectedStage != PestLifeStage.moth) {
-      continue;
+      final currentUserId =
+          FirebaseAuth.instance.currentUser?.uid ??
+          AuthCacheService().cachedUid;
+      if (_showSourceReports &&
+          threat.ownerId.isNotEmpty &&
+          threat.ownerId != currentUserId) {
+        _cachedMarkers.add(
+          Marker(
+            point: threat.location,
+            width: 48,
+            height: 48,
+            alignment: Alignment.bottomCenter,
+            child: _buildThreatMarker(threat),
+          ),
+        );
+      }
     }
-
-    // Adult moth flight / monitoring zone (wind scaled).
-    _cachedCircles.add(
-      CircleMarker(
-        point: threat.location,
-        radius: threat.radiusM,
-        useRadiusInMeter: true,
-        color: _getMothZoneColor(threat.riskLevel).withValues(alpha: 0.10),
-        borderColor: _getMothZoneColor(threat.riskLevel),
-        borderStrokeWidth: 1.5,
-      ),
-    );
-
-    final currentUserId = FirebaseAuth.instance.currentUser?.uid ??
-        AuthCacheService().cachedUid;
-    if (_showSourceReports &&
-        threat.ownerId.isNotEmpty &&
-        threat.ownerId != currentUserId) {
-      _cachedMarkers.add(
-      Marker(
-        point: threat.location,
-        width: 48,
-        height: 48,
-        alignment: Alignment.bottomCenter,
-        child: _buildThreatMarker(threat),
-      ),
-    );
-    }
-  }
   }
 
   /// Nearby report pins show the detected pest rather than a warning triangle.
   Widget _buildThreatMarker(FawThreat threat) {
-    final label = '${threat.stage.label} report - ${threat.riskLevel.label} risk';
+    final label =
+        '${threat.stage.label} report - ${threat.riskLevel.label} risk';
     return Tooltip(
       message: label,
       child: Semantics(
@@ -778,18 +569,12 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
 
   void _zoomIn() {
     final camera = _mapController.camera;
-    _mapController.move(
-      camera.center,
-      camera.zoom + 1,
-    );
+    _mapController.move(camera.center, camera.zoom + 1);
   }
 
   void _zoomOut() {
     final camera = _mapController.camera;
-    _mapController.move(
-      camera.center,
-      camera.zoom - 1,
-    );
+    _mapController.move(camera.center, camera.zoom - 1);
   }
 
   void _centerOnFarm() {
@@ -810,73 +595,147 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
 
   void _showFarmRiskSources({LatLng? at}) {
     final distance = const Distance();
-    final threats = _threats.where((threat) =>
-      _matchesStage(PestLifeStage.moth) &&
-      (at == null || distance.as(LengthUnit.Meter, at, threat.location) <= threat.radiusM)).toList();
-    final reports = _reports.where((report) =>
-      !_hasThreatSource(report.id) && _matchesStage(report.stage) &&
-      (at == null || distance.as(LengthUnit.Meter, at, report.location) <=
-        _getSpreadRadiusMeters(report.stage, report.riskLevel))).toList();
-    final points = _riskPoints.where((point) => _matchesStage(point.stage) &&
-      (at == null || distance.as(LengthUnit.Meter, at, point.location) <=
-        _getSpreadRadiusMeters(point.stage, point.riskLevel))).toList();
-    final zones = _riskZones.where((zone) => _matchesStage(zone.stage) && zone.radius > 0 &&
-      (at == null || distance.as(LengthUnit.Meter, at, zone.center) <= zone.radius.clamp(100, 5000))).toList();
-    if (at != null && threats.isEmpty && reports.isEmpty && points.isEmpty && zones.isEmpty) return;
+    final threats = _threats
+        .where(
+          (threat) =>
+              _matchesStage(_toPestLifeStage(threat.stage)) &&
+              (at == null ||
+                  distance.as(LengthUnit.Meter, at, threat.location) <=
+                      threat.radiusM),
+        )
+        .toList();
+    final reports = _reports
+        .where(
+          (report) =>
+              !_hasThreatSource(report.id) &&
+              _matchesStage(report.stage) &&
+              (at == null ||
+                  distance.as(LengthUnit.Meter, at, report.location) <=
+                      _getSpreadRadiusMeters(report.stage, report.riskLevel)),
+        )
+        .toList();
+    final points = _riskPoints
+        .where(
+          (point) =>
+              _matchesStage(point.stage) &&
+              (at == null ||
+                  distance.as(LengthUnit.Meter, at, point.location) <=
+                      _getSpreadRadiusMeters(point.stage, point.riskLevel)),
+        )
+        .toList();
+    final zones = _riskZones
+        .where(
+          (zone) =>
+              _matchesStage(zone.stage) &&
+              zone.radius > 0 &&
+              (at == null ||
+                  distance.as(LengthUnit.Meter, at, zone.center) <=
+                      zone.radius.clamp(100, 5000)),
+        )
+        .toList();
+    if (at != null &&
+        threats.isEmpty &&
+        reports.isEmpty &&
+        points.isEmpty &&
+        zones.isEmpty) {
+      return;
+    }
+    if (at != null && threats.isNotEmpty) {
+      _showThreatDetails(threats.first);
+      return;
+    }
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(child: SizedBox(
-        height: MediaQuery.sizeOf(sheetContext).height * 0.6,
-        child: ListView(padding: const EdgeInsets.fromLTRB(20, 0, 20, 24), children: [
-          Text('Detections & monitoring zones', style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 8),
-          const Text('Sources matching the selected pest stage. Monitoring zones indicate proximity, not confirmed infestation of your farm.'),
-          const SizedBox(height: 12),
-          if (threats.isEmpty && reports.isEmpty && points.isEmpty && zones.isEmpty)
-            const Padding(padding: EdgeInsets.symmetric(vertical: 24),
-              child: Text('No matching detections or monitoring zones found.')),
-          for (final threat in threats)
-            ListTile(
-              leading: Icon(Icons.radar, color: threat.riskLevel.color),
-              title: Text('${threat.riskLevel.label} risk - adult moths'),
-              subtitle: Text('${threat.isClustered ? 'Weekly scouting' : 'Pest report'} - ${formatKm(threat.distanceKm)} from your farm\n${threat.farmName.isEmpty ? threat.areaName : threat.farmName}'),
-              isThreeLine: true,
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                _showThreatMitigation(threat);
-              },
-            ),
-          for (final report in reports)
-            ListTile(
-              leading: Icon(_getStageIcon(report.stage), color: report.riskLevel.color),
-              title: Text('${report.pestType} - ${report.riskLevel.label} risk'),
-              subtitle: Text('On your farm - ${report.stage.name}'),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                _showReportDetails(report);
-              },
-            ),
-          for (final zone in zones)
-            ListTile(
-              leading: Icon(Icons.radar, color: zone.riskLevel.color),
-              title: Text('${zone.riskLevel.label} risk - ${zone.stage.name} zone'),
-              subtitle: Text('Saved farm monitoring area - ${(zone.radius.clamp(100, 5000) / 1000).toStringAsFixed(1)} km radius'),
-            ),
-          for (final point in points)
-            ListTile(
-              leading: Icon(_getStageIcon(point.stage), color: point.riskLevel.color),
-              title: Text('${point.stage.name} - ${point.riskLevel.label} risk'),
-              subtitle: const Text('Farm risk observation'),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                _showRiskDetails(point);
-              },
-            ),
-        ]),
-      )),
+      builder: (sheetContext) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.sizeOf(sheetContext).height * 0.6,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+            children: [
+              Text(
+                'Detections & monitoring zones',
+                style: GoogleFonts.inter(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Sources matching the selected pest stage. Monitoring zones indicate proximity, not confirmed infestation of your farm.',
+              ),
+              const SizedBox(height: 12),
+              if (threats.isEmpty &&
+                  reports.isEmpty &&
+                  points.isEmpty &&
+                  zones.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Text(
+                    'No matching detections or monitoring zones found.',
+                  ),
+                ),
+              for (final threat in threats)
+                ListTile(
+                  leading: Icon(Icons.radar, color: threat.riskLevel.color),
+                  title: Text(
+                    '${threat.riskLevel.label} risk - ${threat.stage.label}',
+                  ),
+                  subtitle: Text(
+                    '${threat.isClustered ? 'Weekly scouting' : 'Pest report'} - ${formatKm(threat.distanceKm)} from your farm\n${threat.farmName.isEmpty ? threat.areaName : threat.farmName}',
+                  ),
+                  isThreeLine: true,
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _showThreatDetails(threat);
+                  },
+                ),
+              for (final report in reports)
+                ListTile(
+                  leading: Icon(
+                    _getStageIcon(report.stage),
+                    color: report.riskLevel.color,
+                  ),
+                  title: Text(
+                    '${report.pestType} - ${report.riskLevel.label} risk',
+                  ),
+                  subtitle: Text('On your farm - ${report.stage.name}'),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _showReportDetails(report);
+                  },
+                ),
+              for (final zone in zones)
+                ListTile(
+                  leading: Icon(Icons.radar, color: zone.riskLevel.color),
+                  title: Text(
+                    '${zone.riskLevel.label} risk - ${zone.stage.name} zone',
+                  ),
+                  subtitle: Text(
+                    'Saved farm monitoring area - ${(zone.radius.clamp(100, 5000) / 1000).toStringAsFixed(1)} km radius',
+                  ),
+                ),
+              for (final point in points)
+                ListTile(
+                  leading: Icon(
+                    _getStageIcon(point.stage),
+                    color: point.riskLevel.color,
+                  ),
+                  title: Text(
+                    '${point.stage.name} - ${point.riskLevel.label} risk',
+                  ),
+                  subtitle: const Text('Farm risk observation'),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _showRiskDetails(point);
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -903,171 +762,186 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
     final steps = threat.mitigationSteps;
 
     _showMapSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          dismissDirection: DismissDirection.down,
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          duration: const Duration(seconds: 10),
-          margin: const EdgeInsets.all(16),
-          content: Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(24),
-              gradient: LinearGradient(
-                colors: [
-                  Colors.black.withValues(alpha: 0.94),
-                  const Color(0xFF14532D),
-                ],
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.3),
-                  blurRadius: 20,
-                ),
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        dismissDirection: DismissDirection.down,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        duration: const Duration(seconds: 10),
+        margin: const EdgeInsets.all(16),
+        content: Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            gradient: LinearGradient(
+              colors: [
+                Colors.black.withValues(alpha: 0.94),
+                const Color(0xFF14532D),
               ],
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // ---------- HEADER ----------
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: accent,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.flutter_dash,
-                        color: Colors.white,
-                        size: 18,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            "MOTH ACTIVITY NEAR YOUR FARM",
-                            style: GoogleFonts.inter(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 15,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Row(
-                            children: [
-                              _riskBadge(threat.riskLevel),
-                              const SizedBox(width: 6),
-                              Flexible(
-                                child: Text(
-                                  threat.isClustered
-                                      ? "Weekly scouting"
-                                      : "Pest report",
-                                  style: GoogleFonts.inter(
-                                    color: Colors.white70,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    _snackBarCloseButton(),
-                  ],
-                ),
-                const SizedBox(height: 16),
-
-                // ---------- DETAILS ----------
-                _infoRow(
-                  Icons.radar,
-                  "Distance from your farm",
-                  formatKm(threat.distanceKm),
-                ),
-                _infoRow(
-                  Icons.my_location,
-                  "Monitoring zone",
-                  '${(threat.radiusM / 1000).toStringAsFixed(1)} km'
-                      '${threat.windSpeedKmh != null ? ' (wind ${threat.windSpeedKmh!.toStringAsFixed(0)} km/h)' : ''}',
-                ),
-                _infoRow(
-                  Icons.location_on,
-                  "Reported at",
-                  threat.areaName.isNotEmpty
-                      ? threat.areaName
-                      : (threat.barangay.isNotEmpty
-                          ? threat.barangay
-                          : 'Unknown area'),
-                ),
-                _infoRow(
-                  Icons.agriculture,
-                  "Crop stage at detection",
-                  "${threat.growthStage.label} (DAP ${threat.dap})",
-                ),
-                _infoRow(
-                  Icons.bug_report,
-                  "Observed",
-                  _threatCountsLabel(threat),
-                ),
-
-                const SizedBox(height: 6),
-
-                // ---------- MITIGATION CTA ----------
-                GestureDetector(
-                  onTap: () => _showThreatMitigation(threat),
-                  child: Container(
-                    width: double.infinity,
-                    margin: const EdgeInsets.only(top: 10),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.3),
+                blurRadius: 20,
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ---------- HEADER ----------
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.25),
-                      ),
+                      color: accent,
+                      shape: BoxShape.circle,
                     ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                    child: const Icon(
+                      Icons.flutter_dash,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Icon(
-                          Icons.health_and_safety_outlined,
-                          color: Colors.white,
-                          size: 18,
-                        ),
-                        const SizedBox(width: 8),
                         Text(
-                          steps.isEmpty
-                              ? "VIEW DETAILS"
-                              : "VIEW MITIGATION STRATEGY",
+                          "RISK AREA REACHES YOUR FARM",
                           style: GoogleFonts.inter(
                             color: Colors.white,
-                            fontSize: 12,
                             fontWeight: FontWeight.w800,
-                            letterSpacing: 0.4,
+                            fontSize: 15,
                           ),
+                        ),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            _riskBadge(threat.riskLevel),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                threat.isClustered
+                                    ? "Weekly scouting"
+                                    : "Pest report",
+                                style: GoogleFonts.inter(
+                                  color: Colors.white70,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
                   ),
+                  _snackBarCloseButton(),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              if (threat.timestamp != null)
+                _infoRow(
+                  Icons.event,
+                  "Reported",
+                  MaterialLocalizations.of(
+                    context,
+                  ).formatMediumDate(threat.timestamp!),
                 ),
-              ],
-            ),
+              const Text(
+                "The report monitoring area overlaps your farm. Check your crops for signs of pests.",
+                style: TextStyle(color: Colors.white70),
+              ),
+              const SizedBox(height: 8),
+              // ---------- DETAILS ----------
+              _infoRow(
+                Icons.radar,
+                "Distance from your farm",
+                formatKm(threat.distanceKm),
+              ),
+              _infoRow(
+                Icons.my_location,
+                "Monitoring zone",
+                '${(threat.radiusM / 1000).toStringAsFixed(1)} km'
+                    '${threat.windSpeedKmh != null ? ' (wind ${threat.windSpeedKmh!.toStringAsFixed(0)} km/h)' : ''}',
+              ),
+              _infoRow(
+                Icons.location_on,
+                "Reported at",
+                threat.areaName.isNotEmpty
+                    ? threat.areaName
+                    : (threat.barangay.isNotEmpty
+                          ? threat.barangay
+                          : 'Unknown area'),
+              ),
+              _infoRow(
+                Icons.agriculture,
+                "Crop stage at detection",
+                "${threat.growthStage.label} (DAP ${threat.dap})",
+              ),
+              _infoRow(
+                Icons.bug_report,
+                "Observed",
+                _threatCountsLabel(threat),
+              ),
+
+              const SizedBox(height: 6),
+
+              // ---------- MITIGATION CTA ----------
+              GestureDetector(
+                onTap: () => _showThreatMitigation(threat),
+                child: Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(top: 10),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.25),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(
+                        Icons.health_and_safety_outlined,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        steps.isEmpty
+                            ? "VIEW DETAILS"
+                            : "VIEW MITIGATION STRATEGY",
+                        style: GoogleFonts.inter(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
-      );
+      ),
+    );
   }
 
   String _threatCountsLabel(FawThreat threat) {
     final parts = <String>[];
-    if (threat.moths > 0) parts.add('${threat.moths} moth${threat.moths == 1 ? '' : 's'}');
+    if (threat.moths > 0) {
+      parts.add('${threat.moths} moth${threat.moths == 1 ? '' : 's'}');
+    }
     if (threat.larvae > 0) parts.add('${threat.larvae} larvae');
     if (threat.eggs > 0) parts.add('${threat.eggs} egg masses');
     if (threat.pupae > 0) parts.add('${threat.pupae} pupae');
@@ -1186,8 +1060,11 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                             children: [
                               Row(
                                 children: [
-                                  Icon(Icons.info_outline,
-                                      size: 16, color: accent),
+                                  Icon(
+                                    Icons.info_outline,
+                                    size: 16,
+                                    color: accent,
+                                  ),
                                   const SizedBox(width: 6),
                                   Text(
                                     'WHY THIS AFFECTS YOUR FARM',
@@ -1219,24 +1096,43 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                         const SizedBox(height: 18),
 
                         // ---------- FACTS ----------
-                        _factRow(Icons.agriculture, 'Crop growth stage',
-                            '${threat.growthStage.label} (DAP ${threat.dap})'),
-                        _factRow(Icons.bug_report, 'Observed',
-                            _threatCountsLabel(threat)),
-                        _factRow(Icons.radar, 'Monitoring zone',
-                            '${(threat.radiusM / 1000).toStringAsFixed(1)} km'
-                            '${threat.windSpeedKmh != null ? ' (wind ${threat.windSpeedKmh!.toStringAsFixed(0)} km/h)' : ''}'),
-                        _factRow(Icons.grass, 'Barangay',
-                            threat.barangay.isNotEmpty ? threat.barangay : '—'),
-                        _factRow(Icons.person_outline, 'Reported by',
-                            threat.farmerName.isNotEmpty ? threat.farmerName : '—'),
+                        _factRow(
+                          Icons.agriculture,
+                          'Crop growth stage',
+                          '${threat.growthStage.label} (DAP ${threat.dap})',
+                        ),
+                        _factRow(
+                          Icons.bug_report,
+                          'Observed',
+                          _threatCountsLabel(threat),
+                        ),
+                        _factRow(
+                          Icons.radar,
+                          'Monitoring zone',
+                          '${(threat.radiusM / 1000).toStringAsFixed(1)} km'
+                              '${threat.windSpeedKmh != null ? ' (wind ${threat.windSpeedKmh!.toStringAsFixed(0)} km/h)' : ''}',
+                        ),
+                        _factRow(
+                          Icons.grass,
+                          'Barangay',
+                          threat.barangay.isNotEmpty ? threat.barangay : '—',
+                        ),
+                        _factRow(
+                          Icons.person_outline,
+                          'Reported by',
+                          threat.farmerName.isNotEmpty
+                              ? threat.farmerName
+                              : '—',
+                        ),
                         if (threat.fieldName.isNotEmpty)
-                          _factRow(Icons.landscape, 'Field',
-                              threat.fieldName),
+                          _factRow(Icons.landscape, 'Field', threat.fieldName),
                         if (threat.damagePercentage > 0)
-                          _factRow(Icons.trending_down, 'Plant damage',
-                              '${threat.damagePercentage.toStringAsFixed(1)}%'
-                              '${threat.thresholdReached ? ' • threshold exceeded' : ''}'),
+                          _factRow(
+                            Icons.trending_down,
+                            'Plant damage',
+                            '${threat.damagePercentage.toStringAsFixed(1)}%'
+                                '${threat.thresholdReached ? ' • threshold exceeded' : ''}',
+                          ),
 
                         const SizedBox(height: 18),
 
@@ -1264,13 +1160,13 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                           )
                         else
                           ...steps.asMap().entries.map(
-                                (entry) => _buildMitigationStep(
-                                  entry.key + 1,
-                                  entry.value.title,
-                                  entry.value.body,
-                                  accent,
-                                ),
-                              ),
+                            (entry) => _buildMitigationStep(
+                              entry.key + 1,
+                              entry.value.title,
+                              entry.value.body,
+                              accent,
+                            ),
+                          ),
 
                         const SizedBox(height: 18),
                         Container(
@@ -1279,7 +1175,9 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                             color: const Color(0xFFF1F8F4),
                             borderRadius: BorderRadius.circular(16),
                             border: Border.all(
-                              color: const Color(0xFF81C784).withValues(alpha: 0.6),
+                              color: const Color(
+                                0xFF81C784,
+                              ).withValues(alpha: 0.6),
                             ),
                           ),
                           child: Column(
@@ -1287,8 +1185,11 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                             children: [
                               Row(
                                 children: [
-                                  const Icon(Icons.shield_moon_outlined,
-                                      color: Color(0xFF1B5E37), size: 16),
+                                  const Icon(
+                                    Icons.shield_moon_outlined,
+                                    color: Color(0xFF1B5E37),
+                                    size: 16,
+                                  ),
                                   const SizedBox(width: 6),
                                   Text(
                                     'LOCAL ACTION CHECKLIST',
@@ -1311,12 +1212,16 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                                 (line) => Padding(
                                   padding: const EdgeInsets.only(bottom: 5),
                                   child: Row(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
-                                      const Text('• ',
-                                          style: TextStyle(
-                                              color: Color(0xFF1B5E37),
-                                              fontSize: 13)),
+                                      const Text(
+                                        '• ',
+                                        style: TextStyle(
+                                          color: Color(0xFF1B5E37),
+                                          fontSize: 13,
+                                        ),
+                                      ),
                                       Expanded(
                                         child: Text(
                                           line,
@@ -1380,7 +1285,12 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
     );
   }
 
-  Widget _buildMitigationStep(int index, String title, String body, Color accent) {
+  Widget _buildMitigationStep(
+    int index,
+    String title,
+    String body,
+    Color accent,
+  ) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
@@ -1397,7 +1307,10 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
               Container(
                 width: 22,
                 height: 22,
-                decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+                decoration: BoxDecoration(
+                  color: accent,
+                  shape: BoxShape.circle,
+                ),
                 alignment: Alignment.center,
                 child: Text(
                   '$index',
@@ -1449,7 +1362,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
 
   Color _getRiskColor(RiskLevel level) => level.color;
 
-  /// The dashboard's moth monitoring zone colours (violet family).
+  /// The dashboard's monitoring zone colours (violet family).
   Color _getMothZoneColor(RiskLevel level) {
     switch (level) {
       case RiskLevel.veryHigh:
@@ -1480,7 +1393,6 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
 
   IconData _getStageIcon(PestLifeStage stage) {
     switch (stage) {
-
       case PestLifeStage.all:
         return Icons.public;
 
@@ -1541,10 +1453,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
               const SizedBox(height: 8),
               Text(
                 "Please create a farm first",
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  color: Colors.grey[500],
-                ),
+                style: GoogleFonts.inter(fontSize: 14, color: Colors.grey[500]),
               ),
               const SizedBox(height: 16),
               ElevatedButton(
@@ -1573,17 +1482,18 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
             ),
             children: [
               TileLayer(
-                urlTemplate: 'https://mt1.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}',
+                urlTemplate:
+                    'https://mt1.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}',
                 userAgentPackageName: 'com.visaia.app',
               ),
               // Use cached layers
-              if (_cachedPolygons.isNotEmpty) 
+              if (_cachedPolygons.isNotEmpty)
                 PolygonLayer(polygons: _cachedPolygons),
-              if (_cachedPolylines.isNotEmpty) 
+              if (_cachedPolylines.isNotEmpty)
                 PolylineLayer(polylines: _cachedPolylines),
-              if (_cachedCircles.isNotEmpty) 
+              if (_cachedCircles.isNotEmpty)
                 CircleLayer(circles: _cachedCircles),
-              if (_cachedMarkers.isNotEmpty) 
+              if (_cachedMarkers.isNotEmpty)
                 MarkerLayer(markers: _cachedMarkers),
             ],
           ),
@@ -1617,7 +1527,9 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                   color: Colors.white,
                   fontSize: 20,
                   fontWeight: FontWeight.w600,
-                  shadows: const [Shadow(blurRadius: 10, color: Colors.black45)],
+                  shadows: const [
+                    Shadow(blurRadius: 10, color: Colors.black45),
+                  ],
                 ),
               ),
             ),
@@ -1632,7 +1544,9 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
               child: Center(
                 child: Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 6),
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.black.withValues(alpha: 0.7),
                     borderRadius: BorderRadius.circular(30),
@@ -1650,7 +1564,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        'Scanning nearby farms for moth activity...',
+                        'Checking reports that can reach your farm...',
                         style: GoogleFonts.inter(
                           color: Colors.white,
                           fontSize: 11,
@@ -1674,7 +1588,9 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                   },
                   child: Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 6),
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.black.withValues(alpha: 0.7),
                       borderRadius: BorderRadius.circular(30),
@@ -1685,11 +1601,14 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.flutter_dash,
-                            size: 14, color: Color(0xFFA855F7)),
+                        const Icon(
+                          Icons.flutter_dash,
+                          size: 14,
+                          color: Color(0xFFA855F7),
+                        ),
                         const SizedBox(width: 6),
                         Text(
-                          '${_threats.length} moth monitoring zone${_threats.length == 1 ? '' : 's'}',
+                          '${_threats.length} monitoring zone${_threats.length == 1 ? '' : 's'}',
                           style: GoogleFonts.inter(
                             color: Colors.white,
                             fontSize: 11,
@@ -1699,7 +1618,9 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                         const SizedBox(width: 6),
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: _threats.first.riskLevel.color,
                             borderRadius: BorderRadius.circular(6),
@@ -1741,11 +1662,23 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                     const SizedBox(width: 8),
                     _stageButton(PestLifeStage.egg, "Eggs", Icons.circle),
                     const SizedBox(width: 8),
-                    _stageButton(PestLifeStage.larva, "Larvae", Icons.bug_report),
+                    _stageButton(
+                      PestLifeStage.larva,
+                      "Larvae",
+                      Icons.bug_report,
+                    ),
                     const SizedBox(width: 8),
-                    _stageButton(PestLifeStage.pupa, "Pupae", Icons.pest_control),
+                    _stageButton(
+                      PestLifeStage.pupa,
+                      "Pupae",
+                      Icons.pest_control,
+                    ),
                     const SizedBox(width: 8),
-                    _stageButton(PestLifeStage.moth, "Moths", Icons.flutter_dash),
+                    _stageButton(
+                      PestLifeStage.moth,
+                      "Moths",
+                      Icons.flutter_dash,
+                    ),
                   ],
                 ),
               ),
@@ -1753,38 +1686,50 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
           ),
 
           Positioned(
-            top: 184, left: 15, right: 15,
+            top: 184,
+            left: 15,
+            right: 15,
             child: Material(
               color: Colors.black.withValues(alpha: 0.78),
               borderRadius: BorderRadius.circular(16),
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                SwitchListTile.adaptive(
-                  dense: true,
-                  title: const Text('Show nearby report pins', style: TextStyle(color: Colors.white, fontSize: 13)),
-                  subtitle: const Text('Your own report pins stay hidden.',
-                    style: TextStyle(color: Colors.white70, fontSize: 11)),
-                  value: _showSourceReports,
-                  onChanged: (value) => setState(() {
-                    _showSourceReports = value;
-                    _needsCacheRebuild = true;
-                  }),
-                ),
-                TextButton.icon(
-                  onPressed: () => _showFarmRiskSources(),
-                  icon: const Icon(Icons.radar, color: Colors.white, size: 18),
-                  label: const Text('View detections & zones affecting my farm',
-                    style: TextStyle(color: Colors.white, fontSize: 12)),
-                ),
-              ]),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SwitchListTile.adaptive(
+                    dense: true,
+                    title: const Text(
+                      'Show nearby report pins',
+                      style: TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                    subtitle: const Text(
+                      'External reports reaching your farm.',
+                      style: TextStyle(color: Colors.white70, fontSize: 11),
+                    ),
+                    value: _showSourceReports,
+                    onChanged: (value) => setState(() {
+                      _showSourceReports = value;
+                      _needsCacheRebuild = true;
+                    }),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => _showFarmRiskSources(),
+                    icon: const Icon(
+                      Icons.radar,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                    label: const Text(
+                      'View detections & zones affecting my farm',
+                      style: TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
 
           /// RISK LEGEND
-          Positioned(
-            bottom: 120,
-            left: 15,
-            child: _buildRiskLegend(),
-          ),
+          Positioned(bottom: 120, left: 15, child: _buildRiskLegend()),
 
           /// CONTROLS
           Positioned(
@@ -1800,7 +1745,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                     const SizedBox(width: 10),
                     _roundButton(Icons.explore, onTap: _centerOnFarm),
                   ],
-                )
+                ),
               ],
             ),
           ),
@@ -1812,7 +1757,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
   Widget _stageButton(PestLifeStage stage, String label, IconData icon) {
     final isSelected = _selectedStage == stage;
     final Color stageColor = _getStageColor(stage);
-    
+
     return GestureDetector(
       onTap: () {
         setState(() {
@@ -1823,7 +1768,9 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: isSelected ? stageColor.withValues(alpha: 0.3) : Colors.transparent,
+          color: isSelected
+              ? stageColor.withValues(alpha: 0.3)
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
             color: isSelected ? stageColor : Colors.white54,
@@ -1833,7 +1780,11 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: isSelected ? stageColor : Colors.white54, size: 16),
+            Icon(
+              icon,
+              color: isSelected ? stageColor : Colors.white54,
+              size: 16,
+            ),
             const SizedBox(width: 6),
             Text(
               label,
@@ -1851,7 +1802,6 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
 
   Color _getStageColor(PestLifeStage stage) {
     switch (stage) {
-
       case PestLifeStage.all:
         return Colors.white;
 
@@ -1881,11 +1831,12 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text("RISK LEVELS",
+              const Text(
+                "RISK LEVELS",
                 style: TextStyle(
-                  color: Colors.white, 
-                  fontSize: 10, 
-                  fontWeight: FontWeight.bold
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
               const SizedBox(height: 6),
@@ -1897,8 +1848,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
               if (_threats.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 const Divider(color: Colors.white24, height: 12),
-                _legendItem(const Color(0xFF8B5CF6),
-                    "Moth zone (5-10 km)"),
+                _legendItem(const Color(0xFF8B5CF6), "Moth zone (5-10 km)"),
               ],
             ],
           ),
@@ -1907,33 +1857,24 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
     );
   }
 
-    Widget _legendItem(Color color, String text) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: Row(
-          children: [
-            Container(
-              width: 12, 
-              height: 12,
-              decoration: BoxDecoration(
-                color: color, 
-                shape: BoxShape.circle, 
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(text, 
-              style: const TextStyle(color: Colors.white, fontSize: 10)
-            ),
-          ],
-        ),
-      );
-    }
+  Widget _legendItem(Color color, String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 8),
+          Text(text, style: const TextStyle(color: Colors.white, fontSize: 10)),
+        ],
+      ),
+    );
+  }
 
-    Widget _infoRow(
-    IconData icon,
-    String label,
-    String value,
-  ) {
+  Widget _infoRow(IconData icon, String label, String value) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
@@ -1944,10 +1885,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
           Expanded(
             child: Text(
               label,
-              style: GoogleFonts.inter(
-                color: Colors.white70,
-                fontSize: 12,
-              ),
+              style: GoogleFonts.inter(color: Colors.white70, fontSize: 12),
             ),
           ),
 
@@ -2041,6 +1979,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                 ],
               ),
               const SizedBox(height: 18),
+
               /// DETAILS
               _infoRow(
                 Icons.radar,
@@ -2058,7 +1997,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                 Icons.location_on,
                 "Coordinates",
                 "${point.location.latitude.toStringAsFixed(5)}, "
-                "${point.location.longitude.toStringAsFixed(5)}",
+                    "${point.location.longitude.toStringAsFixed(5)}",
               ),
             ],
           ),
@@ -2069,15 +2008,15 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
 
   LatLng _calculatePolygonCenter(List<LatLng> points) {
     if (points.isEmpty) return const LatLng(0, 0);
-    
+
     double sumLat = 0;
     double sumLng = 0;
-    
+
     for (var point in points) {
       sumLat += point.latitude;
       sumLng += point.longitude;
     }
-    
+
     return LatLng(sumLat / points.length, sumLng / points.length);
   }
 
@@ -2085,7 +2024,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 45, 
+        width: 45,
         height: 45,
         decoration: BoxDecoration(
           color: Colors.white.withValues(alpha: 0.9),

@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
@@ -279,15 +280,17 @@ class FawRiskService {
   /// Maximum number of documents read per collection.
   static const int _maxDocs = 250;
 
-  FawRiskService({FirebaseFirestore? db, DetectionWeatherService? weatherService})
-      : _db = db ?? FirebaseFirestore.instance,
-        _weatherService = weatherService ?? DetectionWeatherService();
+  FawRiskService({
+    FirebaseFirestore? db,
+    DetectionWeatherService? weatherService,
+  }) : _db = db ?? FirebaseFirestore.instance,
+       _weatherService = weatherService ?? DetectionWeatherService();
 
-  /// Loads every moth bearing detection (own + neighbouring farms) and keeps
-  /// the ones that fall inside the moth proximity zone of [anchors].
+  /// Loads external reports whose monitoring radius reaches the farm footprint.
   Future<List<FawThreat>> loadMothThreats({
     required String currentUserId,
     required List<LatLng> anchors,
+    List<List<LatLng>> boundaries = const [],
     double radiusKm = mothRadiusKm,
   }) async {
     final threats = <FawThreat>[];
@@ -295,7 +298,6 @@ class FawRiskService {
     try {
       final clustered = await _db
           .collection('clustered_reports')
-          .where('totals.moths', isGreaterThan: 0)
           .limit(_maxDocs)
           .get();
       for (final doc in clustered.docs) {
@@ -322,11 +324,7 @@ class FawRiskService {
 
     final reportLocations = ReportMapLocationResolver(db: _db);
     try {
-      final reports = await _db
-          .collection('reports')
-          .where('lifeStage', isEqualTo: 'moth')
-          .limit(_maxDocs)
-          .get();
+      final reports = await _db.collection('reports').limit(_maxDocs).get();
       for (final doc in reports.docs) {
         final threat = await _parseReport(doc, reportLocations);
         if (threat != null) threats.add(threat);
@@ -344,37 +342,42 @@ class FawRiskService {
       }
     }
 
-    // Own detections remain part of farm risk even when source pins are hidden.
-    if (anchors.isEmpty) return [];
+    // Unknown ownership cannot establish that a detection is external.
+    if (anchors.isEmpty && boundaries.isEmpty) return [];
+    threats.removeWhere((t) => t.ownerId.isEmpty || t.ownerId == currentUserId);
 
     // Proximity filter against the user's own fields.
     final distance = const Distance();
     for (final threat in threats) {
-      if (anchors.isEmpty) continue;
       var closest = double.infinity;
       for (final anchor in anchors) {
         final km = distance.as(LengthUnit.Kilometer, anchor, threat.location);
         if (km < closest) closest = km;
       }
+      for (final boundary in boundaries) {
+        final km = distanceToFarmMeters(threat.location, boundary) / 1000;
+        if (km < closest) closest = km;
+      }
       threat.distanceKm = closest;
     }
 
-    if (anchors.isNotEmpty) {
+    if (anchors.isNotEmpty || boundaries.isNotEmpty) {
       // Keep the candidates that could still reach the farm once the zone is
       // scaled by the wind (5 km base, up to 10 km in strong wind).
-      final maxRadiusKm =
-          radiusKm * DetectionWeatherService.mothMaxMultiplier;
+      final maxRadiusKm = radiusKm * DetectionWeatherService.mothMaxMultiplier;
       threats.removeWhere((t) => t.distanceKm > maxRadiusKm);
 
       // Resolve the wind recorded at each detection point so the monitoring
       // zone matches the dashboard.
       final withDate = threats
           .where((t) => t.timestamp != null)
-          .map((t) => (
-                lat: t.location.latitude,
-                lng: t.location.longitude,
-                date: t.timestamp!,
-              ))
+          .map(
+            (t) => (
+              lat: t.location.latitude,
+              lng: t.location.longitude,
+              date: t.timestamp!,
+            ),
+          )
           .toList();
 
       if (withDate.isNotEmpty) {
@@ -392,6 +395,14 @@ class FawRiskService {
       }
 
       // Final filter: the detection must be inside its own monitoring zone.
+      for (final threat in threats) {
+        if (!threat.hasMoths) {
+          threat.radiusM = threat.riskLevel.weight >= RiskLevel.high.weight
+              ? 10
+              : (threat.riskLevel == RiskLevel.moderate ? 5 : 2);
+          threat.windSpeedKmh = null;
+        }
+      }
       threats.removeWhere((t) => t.distanceKm * 1000 > t.radiusM);
     }
 
@@ -408,24 +419,24 @@ class FawRiskService {
   // Parsing
   // ------------------------------------------------------------------
 
-  FawThreat? _parseClustered(
-      QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+  FawThreat? _parseClustered(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data();
     final location = _extractLocation(data);
     if (location == null) return null;
 
     final totals = _asMap(data['totals']);
     final moths = _asInt(totals?['moths']);
-    if (moths <= 0) return null;
 
     final eggs = _asInt(totals?['eggs']);
     final larvae = _asInt(totals?['larvae']);
     final pupae = _asInt(totals?['pupae']);
+    if (moths <= 0 && larvae <= 0) return null;
 
     final dap = _asInt(data['dap']);
     final growthStage = MatrixGrowthStage.fromDap(dap);
     final damagePercentage = _asDouble(data['damagePercentage']);
-    final thresholdReached = data['exceedsThreshold'] == true ||
+    final thresholdReached =
+        data['exceedsThreshold'] == true ||
         data['isHighLevel'] == true ||
         data['thresholdTriggered'] == true ||
         damagePercentage >= 10.0;
@@ -452,7 +463,7 @@ class FawRiskService {
       farmName: (data['farmName'] ?? '').toString(),
       fieldName: (data['fieldName'] ?? '').toString(),
       detection: (data['expertDiagnosis'] ?? 'Fall Army Worm').toString(),
-      stage: FawStageKey.moth,
+      stage: moths > 0 ? FawStageKey.moth : FawStageKey.larva,
       riskLevel: risk,
       dap: dap,
       growthStage: growthStage,
@@ -468,7 +479,8 @@ class FawRiskService {
       expertDiagnosis: _asString(data['expertDiagnosis']),
       analysis: _asString(data['analysis']),
       treatment: _asString(data['treatment']),
-      timestamp: _parseDateTime(data['timestamp']) ??
+      timestamp:
+          _parseDateTime(data['timestamp']) ??
           _parseDateTime(data['createdAt']) ??
           _parseDateTime(data['submittedAt']),
       ownerId: (data['userId'] ?? data['farmerId'] ?? '').toString(),
@@ -477,13 +489,15 @@ class FawRiskService {
   }
 
   Future<FawThreat?> _parseReport(
-      QueryDocumentSnapshot<Map<String, dynamic>> doc,
-      ReportMapLocationResolver locations) async {
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+    ReportMapLocationResolver locations,
+  ) async {
     final data = doc.data();
 
     final stage = FawStageKey.fromText(
-        data['lifeStage'] ?? data['stage'] ?? data['finalValidatedLifeStage']);
-    if (stage != FawStageKey.moth) return null;
+      data['lifeStage'] ?? data['stage'] ?? data['finalValidatedLifeStage'],
+    );
+    if (stage != FawStageKey.moth && stage != FawStageKey.larva) return null;
 
     final location = await locations.resolve(data);
     if (location == null) return null;
@@ -491,15 +505,16 @@ class FawRiskService {
     final dap = _asInt(data['dap']);
     final growthStage = MatrixGrowthStage.fromDap(dap);
     final damagePercentage = _asDouble(data['damagePercentage']);
-    final thresholdReached = data['exceedsThreshold'] == true ||
+    final thresholdReached =
+        data['exceedsThreshold'] == true ||
         data['isHighLevel'] == true ||
         damagePercentage >= 10.0;
 
     final risk = _compositeRisk(
       eggs: 0,
-      larvae: 0,
+      larvae: stage == FawStageKey.larva ? 1 : 0,
       pupae: 0,
-      moths: 1,
+      moths: stage == FawStageKey.moth ? 1 : 0,
       dap: dap,
       growthStage: growthStage,
       damagePercentage: damagePercentage,
@@ -523,9 +538,9 @@ class FawRiskService {
       dap: dap,
       growthStage: growthStage,
       eggs: 0,
-      larvae: 0,
+      larvae: stage == FawStageKey.larva ? 1 : 0,
       pupae: 0,
-      moths: 1,
+      moths: stage == FawStageKey.moth ? 1 : 0,
       damagePercentage: damagePercentage,
       thresholdReached: thresholdReached,
       mitigationAction: _asString(data['mitigationAction']),
@@ -534,7 +549,8 @@ class FawRiskService {
       expertDiagnosis: _asString(data['expertDiagnosis']),
       analysis: _asString(data['analysis']),
       treatment: _asString(data['treatment']),
-      timestamp: _parseDateTime(data['timestamp']) ??
+      timestamp:
+          _parseDateTime(data['timestamp']) ??
           _parseDateTime(data['createdAt']),
       ownerId: (data['farmerId'] ?? data['userId'] ?? '').toString(),
       distanceKm: double.infinity,
@@ -575,7 +591,8 @@ class FawRiskService {
 
     // 10% plant damage action threshold.
     if (thresholdReached) {
-      final isCriticalStage = growthStage == MatrixGrowthStage.lateWhorl ||
+      final isCriticalStage =
+          growthStage == MatrixGrowthStage.lateWhorl ||
           growthStage == MatrixGrowthStage.tasselingSilking;
       if (isCriticalStage || damagePercentage >= 20.0) {
         highest = RiskLevel.maxOf(highest, RiskLevel.veryHigh);
@@ -659,9 +676,9 @@ bool isPointInsidePolygon(LatLng point, List<LatLng> polygon) {
     final yi = polygon[i].longitude;
     final xj = polygon[j].latitude;
     final yj = polygon[j].longitude;
-    final intersect = ((yi > point.longitude) != (yj > point.longitude)) &&
-        (point.latitude <
-            (xj - xi) * (point.longitude - yi) / (yj - yi) + xi);
+    final intersect =
+        ((yi > point.longitude) != (yj > point.longitude)) &&
+        (point.latitude < (xj - xi) * (point.longitude - yi) / (yj - yi) + xi);
     if (intersect) inside = !inside;
   }
   return inside;
@@ -677,4 +694,34 @@ LatLng polygonCenter(List<LatLng> points) {
     lng += p.longitude;
   }
   return LatLng(lat / points.length, lng / points.length);
+}
+
+/// Minimum distance to a farm footprint, including its edges and interior.
+/// Local metre projection is appropriate for the monitoring zones (up to 10 km).
+double distanceToFarmMeters(LatLng point, List<LatLng> boundary) {
+  if (boundary.length < 3) return double.infinity;
+  if (isPointInsidePolygon(point, boundary)) return 0;
+  const metresPerDegree = 111195.08;
+  final longitudeScale = math.cos(point.latitude * math.pi / 180);
+  var closest = double.infinity;
+  for (var i = 0; i < boundary.length; i++) {
+    final a = boundary[i];
+    final b = boundary[(i + 1) % boundary.length];
+    final ax =
+        (a.longitude - point.longitude) * metresPerDegree * longitudeScale;
+    final ay = (a.latitude - point.latitude) * metresPerDegree;
+    final bx =
+        (b.longitude - point.longitude) * metresPerDegree * longitudeScale;
+    final by = (b.latitude - point.latitude) * metresPerDegree;
+    final dx = bx - ax;
+    final dy = by - ay;
+    final lengthSquared = dx * dx + dy * dy;
+    final t = lengthSquared == 0
+        ? 0.0
+        : (-(ax * dx + ay * dy) / lengthSquared).clamp(0.0, 1.0);
+    final x = ax + t * dx;
+    final y = ay + t * dy;
+    closest = math.min(closest, math.sqrt(x * x + y * y));
+  }
+  return closest;
 }
