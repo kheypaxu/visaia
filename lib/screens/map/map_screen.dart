@@ -26,6 +26,24 @@ class _MapViewScreenState extends State<MapViewScreen> {
   double? _initialZoom;
   late MapController _mapController;
 
+  void _centerOnFarm() {
+    final points = _farm?.boundaries.isNotEmpty == true
+        ? _farm!.boundaries
+        : _fields.expand((field) => field.boundaries).toList();
+    if (points.isEmpty) return;
+    if (points.length == 1) {
+      _mapController.move(points.first, 18);
+      return;
+    }
+    _mapController.fitCamera(
+      CameraFit.bounds(
+        bounds: LatLngBounds.fromPoints(points),
+        padding: const EdgeInsets.fromLTRB(48, 160, 110, 200),
+        maxZoom: 18,
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -45,7 +63,9 @@ class _MapViewScreenState extends State<MapViewScreen> {
 
   Future<void> _fetchFarmAndFields(String? farmId) async {
     try {
-      final userId = FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid;
+      final userId =
+          FirebaseAuth.instance.currentUser?.uid ??
+          AuthCacheService().cachedUid;
       if (userId == null) return;
 
       DocumentSnapshot<Map<String, dynamic>>? farmDoc;
@@ -99,10 +119,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
       List<LatLng> farmBoundaries = [];
       if (farmData['boundaries'] != null) {
         farmBoundaries = (farmData['boundaries'] as List).map((point) {
-          return LatLng(
-            (point['lat']).toDouble(),
-            (point['lng']).toDouble(),
-          );
+          return LatLng((point['lat']).toDouble(), (point['lng']).toDouble());
         }).toList();
       }
 
@@ -126,7 +143,9 @@ class _MapViewScreenState extends State<MapViewScreen> {
             : await fieldsQuery.get();
       } catch (_) {
         fieldsSnapshot = farmId != null
-            ? await fieldsQuery.where('farmId', isEqualTo: farmId).get(const GetOptions(source: Source.cache))
+            ? await fieldsQuery
+                  .where('farmId', isEqualTo: farmId)
+                  .get(const GetOptions(source: Source.cache))
             : await fieldsQuery.get(const GetOptions(source: Source.cache));
       }
 
@@ -136,23 +155,21 @@ class _MapViewScreenState extends State<MapViewScreen> {
         List<LatLng> boundaries = [];
 
         if (fieldData['boundaries'] != null) {
-          boundaries =
-              (fieldData['boundaries'] as List).map((point) {
-            return LatLng(
-              (point['lat']).toDouble(),
-              (point['lng']).toDouble(),
-            );
+          boundaries = (fieldData['boundaries'] as List).map((point) {
+            return LatLng((point['lat']).toDouble(), (point['lng']).toDouble());
           }).toList();
         }
 
-        loadedFields.add(FieldData(
-          id: doc.id,
-          name: fieldData['name'] ?? 'Unnamed Field',
-          acres: (fieldData['acres'] ?? 0).toDouble(),
-          boundaries: boundaries,
-          crop: fieldData['crop'],
-          createdAt: (fieldData['createdAt'] as Timestamp?)?.toDate(),
-        ));
+        loadedFields.add(
+          FieldData(
+            id: doc.id,
+            name: fieldData['name'] ?? 'Unnamed Field',
+            acres: (fieldData['acres'] ?? 0).toDouble(),
+            boundaries: boundaries,
+            crop: fieldData['crop'],
+            createdAt: (fieldData['createdAt'] as Timestamp?)?.toDate(),
+          ),
+        );
       }
 
       setState(() {
@@ -198,10 +215,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
         .map((p) => p.longitude)
         .reduce((a, b) => a > b ? a : b);
 
-    _initialCenter = LatLng(
-      (minLat + maxLat) / 2,
-      (minLng + maxLng) / 2,
-    );
+    _initialCenter = LatLng((minLat + maxLat) / 2, (minLng + maxLng) / 2);
 
     double latDiff = maxLat - minLat;
     double lngDiff = maxLng - minLng;
@@ -253,10 +267,11 @@ class _MapViewScreenState extends State<MapViewScreen> {
             ((j * (dashLength + gapLength)) + dashLength) / distance;
 
         dashedLines.add([
-          LatLng(start.latitude + dy * startStep,
-              start.longitude + dx * startStep),
-          LatLng(start.latitude + dy * endStep,
-              start.longitude + dx * endStep),
+          LatLng(
+            start.latitude + dy * startStep,
+            start.longitude + dx * startStep,
+          ),
+          LatLng(start.latitude + dy * endStep, start.longitude + dx * endStep),
         ]);
       }
     }
@@ -266,8 +281,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const Scaffold(
-          body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     if (_farm == null && _fields.isEmpty) {
@@ -278,15 +292,19 @@ class _MapViewScreenState extends State<MapViewScreen> {
             children: [
               const Icon(Icons.map, size: 80, color: Colors.grey),
               const SizedBox(height: 16),
-              Text("No farm data available",
-                  style: GoogleFonts.inter(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey[600])),
+              Text(
+                "No farm data available",
+                style: GoogleFonts.inter(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey[600],
+                ),
+              ),
               const SizedBox(height: 8),
-              Text("Please create a farm first",
-                  style: GoogleFonts.inter(
-                      fontSize: 14, color: Colors.grey[500])),
+              Text(
+                "Please create a farm first",
+                style: GoogleFonts.inter(fontSize: 14, color: Colors.grey[500]),
+              ),
             ],
           ),
         ),
@@ -309,7 +327,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
                   fontSize: 28,
                   fontWeight: FontWeight.w600,
                   shadows: const [
-                    Shadow(blurRadius: 10, color: Colors.black45)
+                    Shadow(blurRadius: 10, color: Colors.black45),
                   ],
                 ),
               ),
@@ -321,17 +339,18 @@ class _MapViewScreenState extends State<MapViewScreen> {
             child: Column(
               children: [
                 _weatherItem(Icons.wb_sunny_outlined, "14°"),
-                _weatherItem(Icons.device_thermostat, "12°",
-                    color: Colors.blue),
-                _weatherItem(Icons.device_thermostat, "19°",
-                    color: Colors.red),
+                _weatherItem(
+                  Icons.device_thermostat,
+                  "12°",
+                  color: Colors.blue,
+                ),
+                _weatherItem(Icons.device_thermostat, "19°", color: Colors.red),
                 _weatherItem(Icons.air, "1 km/h"),
                 _weatherItem(Icons.water_drop_outlined, "2 mm"),
               ],
             ),
           ),
-          Positioned(
-              bottom: 100, left: 15, child: _buildLegend()),
+          Positioned(bottom: 100, left: 15, child: _buildLegend()),
           Positioned(
             bottom: 100,
             right: 15,
@@ -340,33 +359,48 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 GestureDetector(
                   onTap: () => Navigator.push(
                     context,
-                    MaterialPageRoute(
-                        builder: (_) => const RiskMapScreen()),
+                    MaterialPageRoute(builder: (_) => const RiskMapScreen()),
                   ),
                   child: _actionButton(
-                    Text("Open Risk Map",
-                        style: GoogleFonts.inter(
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black87)),
+                    Text(
+                      "Open Risk Map",
+                      style: GoogleFonts.inter(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    ),
                     width: 140,
                   ),
                 ),
                 const SizedBox(height: 15),
                 Row(
                   children: [
-                    _roundButton(Icons.add, onTap: () {
-                      final zoom = _mapController.camera.zoom;
-                      _mapController.move(
-                          _mapController.camera.center, zoom + 1);
-                    }),
+                    _roundButton(
+                      Icons.add,
+                      onTap: () {
+                        final zoom = _mapController.camera.zoom;
+                        _mapController.move(
+                          _mapController.camera.center,
+                          zoom + 1,
+                        );
+                      },
+                    ),
                     const SizedBox(width: 10),
-                    _roundButton(Icons.remove, onTap: () {
-                      final zoom = _mapController.camera.zoom;
-                      _mapController.move(
-                          _mapController.camera.center, zoom - 1);
-                    }),
+                    _roundButton(
+                      Icons.remove,
+                      onTap: () {
+                        final zoom = _mapController.camera.zoom;
+                        _mapController.move(
+                          _mapController.camera.center,
+                          zoom - 1,
+                        );
+                      },
+                    ),
                     const SizedBox(width: 10),
-                    _roundButton(Icons.explore, isGreen: false),
+                    Tooltip(
+                      message: 'Return to your farm',
+                      child: _roundButton(Icons.explore, onTap: _centerOnFarm),
+                    ),
                   ],
                 ),
               ],
@@ -381,23 +415,27 @@ class _MapViewScreenState extends State<MapViewScreen> {
     List<Polygon> polygons = [];
 
     if (_farm != null && _farm!.boundaries.isNotEmpty) {
-      polygons.add(Polygon(
-        points: _farm!.boundaries,
-        color: const Color(0xFF8DBA60).withValues(alpha: 0.08),
-        borderColor: Colors.transparent,
-        borderStrokeWidth: 0,
-      ));
+      polygons.add(
+        Polygon(
+          points: _farm!.boundaries,
+          color: const Color(0xFF8DBA60).withValues(alpha: 0.08),
+          borderColor: Colors.transparent,
+          borderStrokeWidth: 0,
+        ),
+      );
     }
 
     for (int i = 0; i < _fields.length; i++) {
       final field = _fields[i];
       if (field.boundaries.isNotEmpty) {
-        polygons.add(Polygon(
-          points: field.boundaries,
-          color: const Color(0xFFFFBA27).withValues(alpha: 0.3),
-          borderColor: const Color(0xFFFFBA27),
-          borderStrokeWidth: 2,
-        ));
+        polygons.add(
+          Polygon(
+            points: field.boundaries,
+            color: const Color(0xFFFFBA27).withValues(alpha: 0.3),
+            borderColor: const Color(0xFFFFBA27),
+            borderStrokeWidth: 2,
+          ),
+        );
       }
     }
 
@@ -414,11 +452,13 @@ class _MapViewScreenState extends State<MapViewScreen> {
     if (_farm != null && _farm!.boundaries.isNotEmpty) {
       final dashedLines = _createDashedPolyline(_farm!.boundaries);
       for (final segment in dashedLines) {
-        polylines.add(Polyline(
-          points: segment,
-          color: const Color(0xFF8DBA60),
-          strokeWidth: 2,
-        ));
+        polylines.add(
+          Polyline(
+            points: segment,
+            color: const Color(0xFF8DBA60),
+            strokeWidth: 2,
+          ),
+        );
       }
     }
 
@@ -430,8 +470,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
       ),
       children: [
         TileLayer(
-          urlTemplate:
-              'https://mt1.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}',
+          urlTemplate: 'https://mt1.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}',
           userAgentPackageName: 'com.visaia.app',
         ),
         PolygonLayer(polygons: polygons),
@@ -451,9 +490,13 @@ class _MapViewScreenState extends State<MapViewScreen> {
     return LatLng(sumLat / points.length, sumLng / points.length);
   }
 
-  Widget _weatherItem(IconData icon, String value,
-      {Color color = Colors.white}) {
+  Widget _weatherItem(
+    IconData icon,
+    String value, {
+    Color color = Colors.white,
+  }) {
     return Container(
+      width: 100,
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
@@ -465,11 +508,14 @@ class _MapViewScreenState extends State<MapViewScreen> {
         children: [
           Icon(icon, color: color, size: 16),
           const SizedBox(width: 15),
-          Text(value,
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold)),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
         ],
       ),
     );
@@ -486,16 +532,21 @@ class _MapViewScreenState extends State<MapViewScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text("LEGEND",
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold)),
+              const Text(
+                "LEGEND",
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               const SizedBox(height: 8),
-              _legendItem(const Color(0xFF1B5E20), "Pheromone Traps"),
+              _buildTrapLegend(),
               _legendItem(const Color(0xFFFFBA27), "Active Fields"),
               _legendItem(
-                  const Color(0xFF8DBA60), "Farm Boundary (Broken Line)"),
+                const Color(0xFF8DBA60),
+                "Farm Boundary (Broken Line)",
+              ),
             ],
           ),
         ),
@@ -518,11 +569,35 @@ class _MapViewScreenState extends State<MapViewScreen> {
             ),
           ),
           const SizedBox(width: 8),
-          Text(text,
-              style:
-                  const TextStyle(color: Colors.white, fontSize: 11)),
+          Text(text, style: const TextStyle(color: Colors.white, fontSize: 11)),
         ],
       ),
+    );
+  }
+
+  Widget _buildTrapLegend() {
+    final userId =
+        FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid;
+    if (userId == null || _farm == null) return const SizedBox.shrink();
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .collection('cycles')
+          .where('farmId', isEqualTo: _farm!.id)
+          .snapshots(),
+      builder: (context, snapshot) {
+        final hasTraps =
+            snapshot.data?.docs.any(
+              (doc) =>
+                  doc.data()['trapsInstalled'] == true &&
+                  (doc.data()['traps'] as List?)?.isNotEmpty == true,
+            ) ??
+            false;
+        return hasTraps
+            ? _legendItem(const Color(0xFF1B5E20), 'Pheromone Traps')
+            : const SizedBox.shrink();
+      },
     );
   }
 
@@ -543,20 +618,19 @@ class _MapViewScreenState extends State<MapViewScreen> {
             ),
           ),
           Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.9),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                  color: const Color(0xFFFFBA27), width: 1.5),
+              border: Border.all(color: const Color(0xFFFFBA27), width: 1.5),
             ),
             child: Text(
               label,
               style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFFFFBA27)),
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFFFFBA27),
+              ),
             ),
           ),
         ],
@@ -564,8 +638,11 @@ class _MapViewScreenState extends State<MapViewScreen> {
     );
   }
 
-  Widget _roundButton(IconData icon,
-      {bool isGreen = false, VoidCallback? onTap}) {
+  Widget _roundButton(
+    IconData icon, {
+    bool isGreen = false,
+    VoidCallback? onTap,
+  }) {
     return GestureDetector(
       onTap: onTap,
       child: Container(

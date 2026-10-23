@@ -56,7 +56,6 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
   final List<RiskPoint> _riskPoints = [];
   final List<RiskZone> _riskZones = [];
   final List<ReportData> _reports = [];
-  bool _showSourceReports = true;
 
   // External reports whose proximity zones overlap this farm
   final List<FawThreat> _threats = [];
@@ -486,9 +485,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       final currentUserId =
           FirebaseAuth.instance.currentUser?.uid ??
           AuthCacheService().cachedUid;
-      if (_showSourceReports &&
-          threat.ownerId.isNotEmpty &&
-          threat.ownerId != currentUserId) {
+      if (threat.ownerId.isNotEmpty && threat.ownerId != currentUserId) {
         _cachedMarkers.add(
           Marker(
             point: threat.location,
@@ -578,13 +575,21 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
   }
 
   void _centerOnFarm() {
-    if (_farm != null && _farm!.boundaries.isNotEmpty) {
-      final center = _calculatePolygonCenter(_farm!.boundaries);
-      _mapController.move(center, 18);
-    } else if (_fields.isNotEmpty && _fields.first.boundaries.isNotEmpty) {
-      final center = _calculatePolygonCenter(_fields.first.boundaries);
-      _mapController.move(center, 18);
+    final points = _farm?.boundaries.isNotEmpty == true
+        ? _farm!.boundaries
+        : _fields.expand((field) => field.boundaries).toList();
+    if (points.isEmpty) return;
+    if (points.length == 1) {
+      _mapController.move(points.first, 18);
+      return;
     }
+    _mapController.fitCamera(
+      CameraFit.bounds(
+        bounds: LatLngBounds.fromPoints(points),
+        padding: const EdgeInsets.fromLTRB(48, 250, 48, 280),
+        maxZoom: 18,
+      ),
+    );
   }
 
   bool _hasThreatSource(String reportId) =>
@@ -1695,22 +1700,6 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  SwitchListTile.adaptive(
-                    dense: true,
-                    title: const Text(
-                      'Show nearby report pins',
-                      style: TextStyle(color: Colors.white, fontSize: 13),
-                    ),
-                    subtitle: const Text(
-                      'External reports reaching your farm.',
-                      style: TextStyle(color: Colors.white70, fontSize: 11),
-                    ),
-                    value: _showSourceReports,
-                    onChanged: (value) => setState(() {
-                      _showSourceReports = value;
-                      _needsCacheRebuild = true;
-                    }),
-                  ),
                   TextButton.icon(
                     onPressed: () => _showFarmRiskSources(),
                     icon: const Icon(
@@ -1743,7 +1732,10 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                     const SizedBox(width: 10),
                     _roundButton(Icons.remove, onTap: _zoomOut),
                     const SizedBox(width: 10),
-                    _roundButton(Icons.explore, onTap: _centerOnFarm),
+                    Tooltip(
+                      message: 'Return to your farm',
+                      child: _roundButton(Icons.explore, onTap: _centerOnFarm),
+                    ),
                   ],
                 ),
               ],
@@ -1826,20 +1818,20 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
         filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
         child: Container(
           padding: const EdgeInsets.all(12),
-          color: Colors.black.withValues(alpha: 0.6),
+          color: Colors.white.withValues(alpha: 0.2),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
               const Text(
-                "RISK LEVELS",
+                "LEGEND",
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 10,
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 8),
               _legendItem(RiskLevel.veryLow.color, "Very Low"),
               _legendItem(RiskLevel.low.color, "Low"),
               _legendItem(RiskLevel.moderate.color, "Moderate"),
@@ -1865,10 +1857,14 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
           Container(
             width: 12,
             height: 12,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 1.5),
+            ),
           ),
           const SizedBox(width: 8),
-          Text(text, style: const TextStyle(color: Colors.white, fontSize: 10)),
+          Text(text, style: const TextStyle(color: Colors.white, fontSize: 11)),
         ],
       ),
     );
@@ -2004,20 +2000,6 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
         ),
       ),
     );
-  }
-
-  LatLng _calculatePolygonCenter(List<LatLng> points) {
-    if (points.isEmpty) return const LatLng(0, 0);
-
-    double sumLat = 0;
-    double sumLng = 0;
-
-    for (var point in points) {
-      sumLat += point.latitude;
-      sumLng += point.longitude;
-    }
-
-    return LatLng(sumLat / points.length, sumLng / points.length);
   }
 
   Widget _roundButton(IconData icon, {VoidCallback? onTap}) {
