@@ -1,3 +1,5 @@
+import 'package:visaia/services/firestore_safe_ext.dart';
+import 'package:visaia/services/local_write_service.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -123,7 +125,7 @@ class _EditCropCycleScreenState extends State<EditCropCycleScreen> {
             .collection('users')
             .doc(uid)
             .collection('fields')
-            .get();
+            .safeGet();
       } catch (_) {
         snapshot = await _firestore
             .collection('users')
@@ -166,7 +168,7 @@ class _EditCropCycleScreenState extends State<EditCropCycleScreen> {
             .doc(uid)
             .collection('cycles')
             .doc(widget.cycleId)
-            .get();
+            .safeGet();
       } catch (_) {
         doc = await _firestore
             .collection('users')
@@ -237,7 +239,7 @@ class _EditCropCycleScreenState extends State<EditCropCycleScreen> {
             .doc(uid)
             .collection('fields')
             .doc(fieldId)
-            .get();
+            .safeGet();
       } catch (_) {
         doc = await _firestore
             .collection('users')
@@ -437,7 +439,7 @@ class _EditCropCycleScreenState extends State<EditCropCycleScreen> {
           .doc(uid)
           .collection('cycles')
           .doc(widget.cycleId)
-          .update({
+          .updateLocally({
         'cycleName': _cycleNameController.text.trim(),
         'fieldId': _selectedFarmField,
         'fieldName': fieldName,

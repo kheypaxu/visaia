@@ -1,3 +1,4 @@
+import 'package:visaia/services/local_write_service.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -370,7 +371,7 @@ class _AIResultScreenState extends State<AIResultScreen>
 
       final docRef = await FirebaseFirestore.instance
           .collection('reports')
-          .add(reportData);
+          .addLocally(reportData);
 
       Navigator.pop(context);
 

@@ -83,8 +83,8 @@ class ApiService {
       var request = http.MultipartRequest('POST', Uri.parse('$baseUrl/predict'));
       request.files.add(await http.MultipartFile.fromPath('image', imageFile.path));
 
-      var streamedResponse = await request.send().timeout(const Duration(seconds: 90));
-      var response = await http.Response.fromStream(streamedResponse).timeout(const Duration(seconds: 90));
+      var streamedResponse = await request.send().timeout(const Duration(seconds: 30));
+      var response = await http.Response.fromStream(streamedResponse).timeout(const Duration(seconds: 30));
 
       if (response.statusCode != 200) {
         throw Exception("Server error: ${response.statusCode}\n${response.body}");

@@ -1,3 +1,4 @@
+import 'package:visaia/services/local_write_service.dart';
 import 'package:visaia/core/models/cycle_audit_policy.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -159,7 +160,7 @@ class _HarvestRecordingScreenState extends State<HarvestRecordingScreen> {
           .doc(widget.userId)
           .collection('cycles')
           .doc(widget.cycleId)
-          .update(harvestData);
+          .updateLocally(harvestData);
       
       if (mounted) {
         _showSuccessDialog();

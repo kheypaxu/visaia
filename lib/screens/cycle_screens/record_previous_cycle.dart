@@ -1,3 +1,4 @@
+import 'package:visaia/services/local_write_service.dart';
 import 'package:visaia/services/cycle_naming_service.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -276,7 +277,7 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
           .collection('users')
           .doc(widget.userId)
           .collection('cycles')
-          .add(cycleData);
+          .addLocally(cycleData);
 
       await _createCompletedWeekData(docRef.id);
 
@@ -329,7 +330,7 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
             .doc(cycleId)
             .collection('weeks')
             .doc(weekId)
-            .set(weekData);
+            .setLocally(weekData);
       }
       
       debugPrint('Created $totalWeeks weeks of completed data for cycle');

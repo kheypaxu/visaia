@@ -1,3 +1,4 @@
+import 'package:visaia/services/local_write_service.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -30,7 +31,7 @@ class FirestoreImageService {
         .collection('images')
         .doc();
 
-    await imageRef.set({
+    await imageRef.setLocally({
       'data': encoded,
       'contentType': 'image/jpeg',
       'category': category,
@@ -62,6 +63,6 @@ class FirestoreImageService {
     if (!reference.startsWith(referencePrefix)) return;
     await FirebaseFirestore.instance
         .doc(reference.substring(referencePrefix.length))
-        .delete();
+        .deleteLocally();
   }
 }

@@ -246,10 +246,12 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
       );
 
       if (!mounted) return;
-      Navigator.pop(context); // close analyzing overlay
+      final navigator = Navigator.of(context);
+      final dialogContext = navigator.context;
+      navigator.pop(); // close analyzing overlay
 
       showDialog(
-        context: context,
+        context: dialogContext,
         builder: (ctx) => AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           title: Row(
@@ -299,8 +301,9 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
       );
     } catch (e) {
       if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         SnackBar(
           content: Text('Failed to queue offline report: $e'),
           backgroundColor: Colors.red.shade700,
@@ -433,7 +436,7 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
           final placemarks = await placemarkFromCoordinates(
             position.latitude,
             position.longitude,
-          );
+          ).timeout(const Duration(seconds: 3));
           if (placemarks.isNotEmpty) {
             final place = placemarks.first;
             List<String> locationParts = [];

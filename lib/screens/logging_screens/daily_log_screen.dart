@@ -1,3 +1,4 @@
+import 'package:visaia/services/local_write_service.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -278,11 +279,11 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
       );
     } catch (e) {
       debugPrint('Error converting image: $e');
-      return null;
+      rethrow;
     }
   }
 
-  Future<void> _createScheduledActivityNotification(String cycleId, String activityId) async {
+  Future<void> _createScheduledActivityNotification(String cycleId, String activityId, {WriteBatch? batch}) async {
     if (_scheduledDate == null || _scheduledTime == null) return;
     
     final scheduledDateTime = DateTime(
@@ -293,9 +294,7 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
       _scheduledTime!.minute,
     );
     
-    await FirebaseFirestore.instance
-        .collection('alerts')
-        .add({
+    final data = <String, dynamic>{
       'alertType': 'scheduled_activity',
       'title': 'Upcoming Activity: ${_selectedActivity!.label}',
       'message': 'You have a scheduled ${_selectedActivity!.label} activity for ${DateFormat('MMM d, yyyy').format(scheduledDateTime)} at ${_scheduledTime!.format(context)}.\n\nActivity: ${_notesController.text.isNotEmpty ? _notesController.text : 'No additional notes'}',
@@ -309,10 +308,18 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
       'scheduledFor': Timestamp.fromDate(scheduledDateTime),
       'activityType': _selectedActivity!.label,
       'severity': 'Scheduled',
-    });
+    };
+    final ref = FirebaseFirestore.instance.collection('alerts')
+        .doc('${_effectiveUid}_${cycleId}_$activityId');
+    if (batch != null) {
+      batch.set(ref, data);
+    } else {
+      await ref.setLocally(data);
+    }
   }
 
   Future<void> _saveActivityToFirestore() async {
+    if (_isSaving) return;
     if (_selectedActivity == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select an activity type')),
@@ -330,12 +337,9 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
     if (widget.cycleId.isNotEmpty && !widget.shouldAssignCycle) {
       setState(() => _isSaving = true);
       try {
-        final activityId = await _saveToCycle(widget.cycleId);
-        if (_status == DailyLogStatus.scheduled && activityId != null) {
-          await _createScheduledActivityNotification(widget.cycleId, activityId);
-        }
+        await _saveToCycle(widget.cycleId);
         if (mounted) {
-          String message = 'Activity saved successfully!';
+          String message = 'Activity saved on this device. Changes sync when connected.';
           if (_status == DailyLogStatus.scheduled) {
             message = 'Activity scheduled! You\'ll be notified when it\'s time.';
           } else if (_status == DailyLogStatus.inProgress) {
@@ -472,16 +476,16 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
           : null,
     };
 
-    await FirebaseFirestore.instance
-        .collection('users')
-        .doc(uid)
-        .collection('cycles')
-        .doc(cycleId)
-        .collection('dailyLogs')
-        .doc(dayId)
-        .collection('activities')
-        .add(activityData);
-        
+    final activityRef = FirebaseFirestore.instance
+        .collection('users').doc(uid).collection('cycles').doc(cycleId)
+        .collection('dailyLogs').doc(dayId).collection('activities').doc(activityId);
+    final batch = FirebaseFirestore.instance.batch();
+    batch.set(activityRef, activityData);
+    if (isScheduled) {
+      await _createScheduledActivityNotification(cycleId, activityId, batch: batch);
+    }
+    await LocalWriteService.run(activityRef, batch.commit);
+
     return activityId;
   }
 
@@ -491,6 +495,7 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
       userId: _effectiveUid,
       cycleId: widget.cycleId,
       onCycleSelected: (cycleId, selectedWeek) async {
+        if (_isSaving) return;
         if (cycleId.isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Please select a cycle')),
@@ -500,10 +505,7 @@ class _DailyLogFormScreenState extends State<DailyLogFormScreen>
         
         setState(() => _isSaving = true);
         try {
-          final activityId = await _saveToCycle(cycleId, selectedWeek);
-          if (_status == DailyLogStatus.scheduled && activityId != null) {
-            await _createScheduledActivityNotification(cycleId, activityId);
-          }
+          await _saveToCycle(cycleId, selectedWeek);
           if (mounted) {
             String message = 'Activity saved successfully to Week $selectedWeek!';
             if (_status == DailyLogStatus.scheduled) {

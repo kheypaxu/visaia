@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 
 /// Monitors network connectivity and broadcasts real-time online/offline state.
 class ConnectivityService {
@@ -20,6 +21,8 @@ class ConnectivityService {
   bool get isOnline => isOnlineNotifier.value;
   bool _lastStatus = true;
   bool _isInitialized = false;
+  Timer? _probeTimer;
+  int _probeGeneration = 0;
 
   Future<void> init() async {
     if (_isInitialized) return;
@@ -27,22 +30,40 @@ class ConnectivityService {
 
     try {
       final initialResults = await _connectivity.checkConnectivity();
-      _updateStatus(initialResults);
+      await _updateStatus(initialResults);
     } catch (e) {
       debugPrint('Error checking initial connectivity: $e');
     }
 
     _subscription = _connectivity.onConnectivityChanged.listen((results) {
-      _updateStatus(results);
+      unawaited(_updateStatus(results));
+    });
+    _probeTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      unawaited(checkConnection());
     });
   }
 
-  void _updateStatus(List<ConnectivityResult> results) {
-    final online = results.any((r) =>
-        r == ConnectivityResult.wifi ||
-        r == ConnectivityResult.mobile ||
-        r == ConnectivityResult.ethernet ||
-        r == ConnectivityResult.vpn);
+  Future<void> _updateStatus(List<ConnectivityResult> results) async {
+    final generation = ++_probeGeneration;
+    var online = results.any(
+      (r) =>
+          r == ConnectivityResult.wifi ||
+          r == ConnectivityResult.mobile ||
+          r == ConnectivityResult.ethernet ||
+          r == ConnectivityResult.vpn,
+    );
+
+    if (online) {
+      try {
+        final response = await http
+            .get(Uri.parse('https://www.gstatic.com/generate_204'))
+            .timeout(const Duration(seconds: 4));
+        online = response.statusCode == 204;
+      } catch (_) {
+        online = false;
+      }
+    }
+    if (generation != _probeGeneration) return;
 
     final wasOffline = !_lastStatus;
     _lastStatus = online;
@@ -59,7 +80,7 @@ class ConnectivityService {
   Future<bool> checkConnection() async {
     try {
       final results = await _connectivity.checkConnectivity();
-      _updateStatus(results);
+      await _updateStatus(results);
       return isOnline;
     } catch (e) {
       return false;
@@ -67,6 +88,7 @@ class ConnectivityService {
   }
 
   void dispose() {
+    _probeTimer?.cancel();
     _subscription?.cancel();
     _reconnectedController.close();
   }

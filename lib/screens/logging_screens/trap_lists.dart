@@ -1,3 +1,4 @@
+import 'package:visaia/services/local_write_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -464,9 +465,28 @@ Widget _buildAddTrapDialog(BuildContext context) {
     }
   }
 
-  void _completeSetup() {
-    _saveTrapsToFirestore();
-    _addToDailyLog();
+  bool _isSavingSetup = false;
+  Future<void> _completeSetup() async {
+    if (_isSavingSetup) return;
+    _isSavingSetup = true;
+    try {
+      final db = FirebaseFirestore.instance;
+      final batch = db.batch();
+      if (!await _saveTrapsToFirestore(batch: batch)) return;
+      await _addToDailyLog(batch: batch);
+      final cycleRef = db.collection('users').doc(widget.userId)
+          .collection('cycles').doc(widget.cycleId);
+      await LocalWriteService.run(cycleRef, batch.commit);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not save trap installation: $error')));
+      }
+      return;
+    } finally {
+      _isSavingSetup = false;
+    }
+    if (!mounted) return;
 
     showDialog(
       context: context,
@@ -508,7 +528,7 @@ Widget _buildAddTrapDialog(BuildContext context) {
     );
   }
 
-  Future<void> _saveTrapsToFirestore() async {
+  Future<bool> _saveTrapsToFirestore({WriteBatch? batch}) async {
     try {
       final trapData = _traps.map((trap) {
         return {
@@ -524,26 +544,34 @@ Widget _buildAddTrapDialog(BuildContext context) {
         };
       }).toList();
 
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.userId)
-          .collection('cycles')
-          .doc(widget.cycleId)
-          .update({
+      final ref = FirebaseFirestore.instance.collection('users')
+          .doc(widget.userId).collection('cycles').doc(widget.cycleId);
+      final data = <String, dynamic>{
         'traps': trapData,
         'trapsInstalled': true,
         'trapInstallationDate': FieldValue.serverTimestamp(),
         'trapCount': _traps.length,
-      });
+      };
+      if (batch != null) {
+        batch.update(ref, data);
+      } else {
+        await ref.updateLocally(data);
+      }
     } catch (e) {
       debugPrint('Error saving traps: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not save traps: $e')));
+      }
+      return false;
     }
+    return true;
   }
 
 // ========================
 // ADD TO DAILY LOG
 // ========================
-Future<void> _addToDailyLog() async {
+Future<void> _addToDailyLog({WriteBatch? batch}) async {
   try {
     // Get today's date
     final now = DateTime.now();
@@ -579,18 +607,24 @@ Future<void> _addToDailyLog() async {
         .collection('activities')
         .doc();
     
-    await docRef.set({
+    final data = <String, dynamic>{
       'type': 'Installed ${_traps.length} Pheromone Traps',
       'notes': 'Installed ${_traps.length} pheromone traps in the field for pest monitoring.',
       'images': [],
       'completed': true,
       'completedAt': FieldValue.serverTimestamp(),
       'timestamp': FieldValue.serverTimestamp(),
-    });
+    };
+    if (batch != null) {
+      batch.set(docRef, data);
+    } else {
+      await docRef.setLocally(data);
+    }
     
     debugPrint('✅ Trap installation added to daily log for day $dayId');
   } catch (e) {
     debugPrint('Error adding to daily log: $e');
+    rethrow;
   }
 }
 

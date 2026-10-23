@@ -1,3 +1,4 @@
+import 'package:visaia/services/local_write_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:visaia/services/firestore_safe_ext.dart';
 
@@ -44,7 +45,7 @@ class MonitoringFirestoreService {
         .doc(cycleId)
         .collection('weeks')
         .doc(weekId)
-        .set(data, SetOptions(merge: true));
+        .setLocally(data, SetOptions(merge: true));
   }
 
   Future<Map<String, dynamic>?> getDailyLog(
@@ -68,6 +69,6 @@ class MonitoringFirestoreService {
         .doc(cycleId)
         .collection('dailyLogs')
         .doc(dayId)
-        .set(data, SetOptions(merge: true));
+        .setLocally(data, SetOptions(merge: true));
   }
 }

@@ -1,3 +1,4 @@
+import 'package:visaia/services/firestore_safe_ext.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 String formatCycleName({required String crop, required String variety,
@@ -25,7 +26,7 @@ class CycleNamingService {
   Future<int> nextNumber({required String userId, required String farmId,
       required bool isPrevious}) async {
     final cycles = await FirebaseFirestore.instance.collection('users')
-        .doc(userId).collection('cycles').where('farmId', isEqualTo: farmId).get();
+        .doc(userId).collection('cycles').where('farmId', isEqualTo: farmId).safeGet();
     return nextCycleNumber(cycles.docs.map((doc) => doc.data()), isPrevious: isPrevious);
   }
 }

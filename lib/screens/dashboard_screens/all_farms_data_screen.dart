@@ -54,7 +54,7 @@ class _AllFarmsDataScreenState extends State<AllFarmsDataScreen> {
     if (amount >= 1000) {
       return '${NumberFormat('#,##0').format(amount)} T';
     }
-    return '${amount.toStringAsFixed(0)} T';
+    return '${amount.toStringAsFixed(0)} kg';
   }
 
   Future<void> _exportGeneralData(

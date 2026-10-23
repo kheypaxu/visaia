@@ -1,3 +1,4 @@
+import 'package:visaia/services/local_write_service.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -114,7 +115,7 @@ class OfflineQueueSheet extends StatelessWidget {
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          'Everything is up to date!',
+                          LocalWriteService.pendingCount.value > 0 ? 'Changes waiting to sync' : 'No queued pest uploads',
                           style: GoogleFonts.inter(
                             fontWeight: FontWeight.w700,
                             fontSize: 15,
@@ -123,7 +124,7 @@ class OfflineQueueSheet extends StatelessWidget {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'No pending offline uploads or reports.',
+                          LocalWriteService.pendingCount.value > 0 ? '${LocalWriteService.pendingCount.value} saved change(s) will sync automatically.' : 'Firestore changes synchronize separately.',
                           style: GoogleFonts.inter(
                             fontSize: 12,
                             color: Colors.grey,

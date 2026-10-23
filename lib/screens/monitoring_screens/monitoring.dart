@@ -1,3 +1,4 @@
+import 'package:visaia/services/local_write_service.dart';
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -308,6 +309,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   // Clustered report UI state
   bool _isSavingReport = false;
   Set<int> _completedWeeks = {};
+  Set<int> _pendingReportWeeks = {};
   List<int> _unscoutedWeeks = [];
 
   List<Map<String, dynamic>> _getDefaultStations(int count) {
@@ -753,7 +755,7 @@ Future<void> _checkThresholdAfterCompletion() async {
   double damagePercent = (totalInspected > 0) ? (totalDamaged / totalInspected) * 100 : 0.0;
   
   // Automatically generate and save the clustered report for this week!
-  await _createClusteredReport();
+  if (!await _createClusteredReport() || !mounted) return;
   await _loadAllWeeksStatus();
 
   if (damagePercent >= 10.0) {
@@ -963,7 +965,9 @@ void _showSafeModal(double percent, int damaged, int inspected) {
       _expandedStationIndex = -1;
     });
     _autoSaveTimer?.cancel();
-    final saved = await _saveCurrentWeekData();
+    final allCompleted = _stationData.isNotEmpty &&
+        _stationData.every((station) => station['completed'] == true);
+    final saved = await _saveCurrentWeekData(submitReport: allCompleted);
     if (!mounted) return;
     if (!saved) {
       setState(() => _stationData[index]['completed'] = false);
@@ -1213,6 +1217,18 @@ Future<void> _loadCycleData() async {
     });
 
     await _loadAllWeeksStatus();
+    final requestedWeek = _selectedWeek;
+    final requestedDay = _dailySelectedDay;
+    for (final week in _pendingReportWeeks.toList()) {
+      if (!mounted) return;
+      if (week < 1 || week > _totalWeeks) continue;
+      _selectedWeek = week - 1;
+      _dailySelectedDay = (_selectedWeek * 7).clamp(0, _totalDays - 1);
+      await _loadWeekData(_selectedWeek);
+    }
+    if (!mounted) return;
+    _selectedWeek = requestedWeek;
+    _dailySelectedDay = requestedDay;
     if (widget.quickLog && _completedWeeks.contains(_selectedWeek + 1)) {
       final available = List.generate(_currentWeekFromPlanting, (index) => index)
           .where((index) => !_completedWeeks.contains(index + 1)).toList();
@@ -1257,12 +1273,14 @@ Future<void> _loadCycleData() async {
           .collection('cycles')
           .doc(widget.cycleId)
           .collection('weeks')
-          .get();
+          .safeGet();
 
       final completed = <int>{};
+      final pendingReports = <int>{};
       for (final doc in snap.docs) {
         final weekNum = int.tryParse(doc.id.replaceAll('week_', ''));
         if (weekNum != null) {
+          if (doc.data()['reportSubmissionPending'] == true) pendingReports.add(weekNum);
           final stations = doc.data()['stations'] as List?;
           final completedStations = doc.data()['completedStations'] as int? ?? 0;
           final isAllCompleted = (stations != null &&
@@ -1286,6 +1304,7 @@ Future<void> _loadCycleData() async {
       if (mounted) {
         setState(() {
           _completedWeeks = completed;
+          _pendingReportWeeks = pendingReports;
           _unscoutedWeeks = unscouted;
         });
       }
@@ -1366,6 +1385,11 @@ Future<void> _loadCycleData() async {
           _recommendedTaskState[weekIndex] = loadedTaskState;
           _loadedWeekIndex = weekIndex;
         });
+      }
+      if (weekData?['reportSubmissionPending'] == true &&
+          _stationData.isNotEmpty &&
+          _stationData.every((station) => station['completed'] == true)) {
+        await _createClusteredReport();
       }
     } on TimeoutException {
       if (!mounted || weekIndex != _selectedWeek) return;
@@ -1453,7 +1477,7 @@ Future<void> _loadCycleData() async {
     });
   }
 
-  Future<bool> _saveCurrentWeekData({bool silent = false}) async {
+  Future<bool> _saveCurrentWeekData({bool silent = false, bool submitReport = false}) async {
     final weekId = 'week_${_selectedWeek + 1}';
     final stateMap = _recommendedTaskState[_selectedWeek] ?? {};
     final firestoreTaskMap = stateMap.map((k, v) => MapEntry(k.toString(), v));
@@ -1469,6 +1493,7 @@ Future<void> _loadCycleData() async {
       'recommendedTaskState': firestoreTaskMap,
       'timestamp': FieldValue.serverTimestamp(),
       'completedStations': _completedCount,
+      if (submitReport) 'reportSubmissionPending': true,
     };
     try {
       await _firestoreService.saveWeek(widget.cycleId, weekId, data);
@@ -1518,7 +1543,7 @@ Future<void> _loadCycleData() async {
           .doc(dayId)
           .collection('activities')
           .doc(taskId)
-          .update({
+          .updateLocally({
         'completed': !isCurrentlyCompleted,
         'completedAt': FieldValue.serverTimestamp(),
       });
@@ -1562,7 +1587,7 @@ Future<void> _loadCycleData() async {
         .collection('activities')
         .doc();
     
-    await docRef.set({
+    await docRef.setLocally({
       'type': 'Chemical Application: $chemicalName',
       'notes': details,
       'images': [],
@@ -1579,7 +1604,7 @@ Future<void> _loadCycleData() async {
         .collection('cycles')
         .doc(widget.cycleId)
         .collection('chemicalApplications')
-        .add({
+        .addLocally({
       'chemicalName': chemicalName,
       'weekApplied': _selectedWeek + 1,
       'dayApplied': _dailySelectedDay + 1,
@@ -2230,7 +2255,7 @@ if (isBiological) {
         .doc(_userId)
         .collection('cycles')
         .doc(widget.cycleId)
-        .update({
+        .updateLocally({
       'controlMethod': method,
       'controlMethodSelectedAt': FieldValue.serverTimestamp(),
       if (method == 'chemical') 'chemicalControlStartWeek': startWeek,
@@ -5169,7 +5194,7 @@ Widget _buildCompactScoringGuide(String title, List<Map<String, String>> scale) 
         .doc(_userId)
         .collection('cycles')
         .doc(widget.cycleId)
-        .update({
+        .updateLocally({
       'currentDap': currentDap,
       'currentGrowthStage': growthInfo.name,
       'currentGrowthStageScore': growthInfo.vulnerabilityScore,
@@ -5218,7 +5243,7 @@ Map<String, List<String>> _getAllCapturedImages() {
 }
 
 // ─── Plant Damage Report ─────────────────────────────────────────────
-Future<void> _createPlantDamageReport(DateTime reportDate, int weekNumber) async {
+Map<String, dynamic> _buildPlantDamageReport(DateTime reportDate, int weekNumber) {
   final dap = scoutingReportDap(_plantingDate!, reportDate);
   final growthInfo = getGrowthStage(dap);
 
@@ -5298,14 +5323,12 @@ Future<void> _createPlantDamageReport(DateTime reportDate, int weekNumber) async
     'submittedAt': FieldValue.serverTimestamp(),
   };
 
-  await FirebaseFirestore.instance
-      .collection('plant_damage_reports')
-      .add(reportData);
+  return reportData;
 }
 
 // ─── Clustered Report ────────────────────────────────────────────────
-Future<void> _createClusteredReport() async {
-  if (_isSavingReport) return;
+Future<bool> _createClusteredReport() async {
+  if (_isSavingReport) return false;
   setState(() => _isSavingReport = true);
 
   try {
@@ -5470,12 +5493,22 @@ Future<void> _createClusteredReport() async {
     };
 
     // ─── Save to top-level clustered_reports collection ────────────────
-    await FirebaseFirestore.instance
-        .collection('clustered_reports')
-        .add(reportData);
-
-    // ─── Save plant damage report ─────────────────────────────────────
-    await _createPlantDamageReport(reportDate, weekNumber);
+    final db = FirebaseFirestore.instance;
+    final reportId = 'scouting_${_userId}_${widget.cycleId}_week_$weekNumber';
+    final clusteredRef = db.collection('clustered_reports').doc(reportId);
+    final plantRef = db.collection('plant_damage_reports').doc(reportId);
+    final weekRef = db.collection('users').doc(_userId)
+        .collection('cycles').doc(widget.cycleId)
+        .collection('weeks').doc('week_$weekNumber');
+    final batch = db.batch();
+    batch.set(clusteredRef, reportData);
+    batch.set(plantRef, _buildPlantDamageReport(reportDate, weekNumber));
+    batch.set(weekRef, {
+      'reportSubmissionPending': false,
+      'clusteredReportId': reportId,
+      'plantDamageReportId': reportId,
+    }, SetOptions(merge: true));
+    await LocalWriteService.run(weekRef, batch.commit);
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -5500,8 +5533,10 @@ Future<void> _createClusteredReport() async {
         ),
       );
     }
-    setState(() => _isSavingReport = false);
+    if (mounted) setState(() => _isSavingReport = false);
+    return false;
   }
+  return true;
 }
 
 String _damageTypeLabelForDap() {

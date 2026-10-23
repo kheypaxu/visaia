@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:visaia/services/local_write_service.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -17,6 +19,7 @@ class QueuedOfflineItem {
   final String type; // 'pest_report', 'daily_log', etc.
   final String imagePath;
   final String userId;
+  final String? farmerName;
   final String? farmId;
   final String? farmName;
   final String? fieldId;
@@ -35,6 +38,7 @@ class QueuedOfflineItem {
     required this.type,
     required this.imagePath,
     required this.userId,
+    this.farmerName,
     this.farmId,
     this.farmName,
     this.fieldId,
@@ -49,23 +53,24 @@ class QueuedOfflineItem {
   });
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'docId': docId,
-        'type': type,
-        'imagePath': imagePath,
-        'userId': userId,
-        'farmId': farmId,
-        'farmName': farmName,
-        'fieldId': fieldId,
-        'fieldName': fieldName,
-        'cycleId': cycleId,
-        'latitude': latitude,
-        'longitude': longitude,
-        'areaName': areaName,
-        'timestamp': timestamp,
-        'status': status,
-        'errorMessage': errorMessage,
-      };
+    'id': id,
+    'docId': docId,
+    'type': type,
+    'imagePath': imagePath,
+    'userId': userId,
+    'farmerName': farmerName,
+    'farmId': farmId,
+    'farmName': farmName,
+    'fieldId': fieldId,
+    'fieldName': fieldName,
+    'cycleId': cycleId,
+    'latitude': latitude,
+    'longitude': longitude,
+    'areaName': areaName,
+    'timestamp': timestamp,
+    'status': status,
+    'errorMessage': errorMessage,
+  };
 
   factory QueuedOfflineItem.fromJson(Map<String, dynamic> json) =>
       QueuedOfflineItem(
@@ -74,6 +79,7 @@ class QueuedOfflineItem {
         type: json['type'] as String? ?? 'pest_report',
         imagePath: json['imagePath'] as String,
         userId: json['userId'] as String? ?? '',
+        farmerName: json['farmerName'] as String?,
         farmId: json['farmId'] as String?,
         farmName: json['farmName'] as String?,
         fieldId: json['fieldId'] as String?,
@@ -82,7 +88,8 @@ class QueuedOfflineItem {
         latitude: (json['latitude'] as num?)?.toDouble() ?? 0.0,
         longitude: (json['longitude'] as num?)?.toDouble() ?? 0.0,
         areaName: json['areaName'] as String? ?? 'Unknown Area',
-        timestamp: json['timestamp'] as int? ?? DateTime.now().millisecondsSinceEpoch,
+        timestamp:
+            json['timestamp'] as int? ?? DateTime.now().millisecondsSinceEpoch,
         status: json['status'] as String? ?? 'pending',
         errorMessage: json['errorMessage'] as String?,
       );
@@ -161,12 +168,18 @@ class OfflineSyncService {
   }
 
   bool _isInitialized = false;
+  Timer? _retryTimer;
 
   Future<void> init() async {
     if (_isInitialized) return;
     _isInitialized = true;
 
     await _loadQueue();
+    _retryTimer ??= Timer.periodic(const Duration(seconds: 45), (_) {
+      if (ConnectivityService().isOnline && getPendingCount() > 0) {
+        unawaited(syncAll());
+      }
+    });
 
     // Listen to Firebase Auth state changes so pending count stays scoped to the logged-in user
     FirebaseAuth.instance.authStateChanges().listen((user) {
@@ -174,24 +187,39 @@ class OfflineSyncService {
       _updatePendingCount();
 
       // If user logs in while online and has pending items, attempt auto-sync for that user
-      if (user != null && ConnectivityService().isOnline && getPendingCount(user.uid) > 0) {
-        Future.delayed(const Duration(seconds: 2), () => syncAll(forUserId: user.uid));
+      if (user != null &&
+          ConnectivityService().isOnline &&
+          getPendingCount(user.uid) > 0) {
+        Future.delayed(
+          const Duration(seconds: 2),
+          () => syncAll(forUserId: user.uid),
+        );
       }
     });
 
     // Listen to network reconnection events to trigger auto-sync for the current user only
     ConnectivityService().onConnectivityRestored.listen((isOnline) {
       final uid = currentUserId;
-      if (isOnline && uid != null && uid.isNotEmpty && getPendingCount(uid) > 0) {
-        debugPrint('🔄 Online restored: Auto-triggering offline sync queue for $uid (${getPendingCount(uid)} items)');
+      if (isOnline &&
+          uid != null &&
+          uid.isNotEmpty &&
+          getPendingCount(uid) > 0) {
+        debugPrint(
+          '🔄 Online restored: Auto-triggering offline sync queue for $uid (${getPendingCount(uid)} items)',
+        );
         syncAll(forUserId: uid);
       }
     });
 
     // If already online on startup and current user has pending items, attempt sync
     final startupUid = currentUserId;
-    if (ConnectivityService().isOnline && startupUid != null && getPendingCount(startupUid) > 0) {
-      Future.delayed(const Duration(seconds: 2), () => syncAll(forUserId: startupUid));
+    if (ConnectivityService().isOnline &&
+        startupUid != null &&
+        getPendingCount(startupUid) > 0) {
+      Future.delayed(
+        const Duration(seconds: 2),
+        () => syncAll(forUserId: startupUid),
+      );
     }
   }
 
@@ -203,7 +231,8 @@ class OfflineSyncService {
       for (final raw in rawList) {
         try {
           final decoded = jsonDecode(raw) as Map<String, dynamic>;
-          _queue.add(QueuedOfflineItem.fromJson(decoded));
+          final item = QueuedOfflineItem.fromJson(decoded);
+          if (item.status != 'synced') _queue.add(item);
         } catch (e) {
           debugPrint('Error parsing queued item: $e');
         }
@@ -217,11 +246,16 @@ class OfflineSyncService {
   Future<void> _saveQueue() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final stringList = _queue.map((item) => jsonEncode(item.toJson())).toList();
-      await prefs.setStringList(_queuePrefsKey, stringList);
+      final stringList = _queue
+          .map((item) => jsonEncode(item.toJson()))
+          .toList();
+      if (!await prefs.setStringList(_queuePrefsKey, stringList)) {
+        throw StateError('Could not save the offline queue on this device');
+      }
       _updatePendingCount();
     } catch (e) {
       debugPrint('Error saving sync queue: $e');
+      rethrow;
     }
   }
 
@@ -233,7 +267,8 @@ class OfflineSyncService {
       await queueDir.create(recursive: true);
     }
 
-    final filename = 'pest_${DateTime.now().millisecondsSinceEpoch}_${imageFile.path.split(Platform.pathSeparator).last}';
+    final filename =
+        'pest_${DateTime.now().millisecondsSinceEpoch}_${imageFile.path.split(Platform.pathSeparator).last}';
     final savedFile = await imageFile.copy('${queueDir.path}/$filename');
     return savedFile.path;
   }
@@ -255,13 +290,42 @@ class OfflineSyncService {
   }) async {
     await init();
 
+    if (userId.isEmpty) throw StateError('Sign in before saving a report');
     final persistentPath = await persistOfflineImage(imageFile);
     final itemId = 'offline_rep_${DateTime.now().millisecondsSinceEpoch}';
 
-    // Create a local Firestore report record (Firestore queues this write offline)
-    DocumentReference? docRef;
+    final docRef = FirebaseFirestore.instance.collection('reports').doc();
+
+    final item = QueuedOfflineItem(
+      id: itemId,
+      docId: docRef.id,
+      type: 'pest_report',
+      imagePath: persistentPath,
+      userId: userId,
+      farmerName: farmerName,
+      farmId: farmId,
+      farmName: farmName,
+      fieldId: fieldId,
+      fieldName: fieldName,
+      cycleId: cycleId,
+      latitude: latitude,
+      longitude: longitude,
+      areaName: areaName,
+      timestamp: DateTime.now().millisecondsSinceEpoch,
+    );
+
+    _activeUserId = userId;
+    _queue.add(item);
     try {
-      docRef = await FirebaseFirestore.instance.collection('reports').add({
+      await _saveQueue();
+    } catch (_) {
+      _queue.remove(item);
+      rethrow;
+    }
+
+    // Create a local Firestore report record (Firestore queues this write offline)
+    try {
+      await docRef.setLocally({
         'farmerId': userId,
         'farmerName': farmerName ?? 'Farmer',
         'farmId': farmId,
@@ -276,16 +340,13 @@ class OfflineSyncService {
         'confidence': 0,
         'stage': 'Pending',
         'crop': 'Maize',
-        'analysis': 'Recorded offline. Detailed AI analysis and treatment plan will be generated once connected to internet.',
+        'analysis':
+            'Recorded offline. Detailed AI analysis and treatment plan will be generated once connected to internet.',
         'treatment': 'Synchronizing with AI server when online...',
         'status': 'pending_offline_sync',
         'timestamp': FieldValue.serverTimestamp(),
         'isOfflineRecord': true,
-        'location': {
-          'lat': latitude,
-          'lng': longitude,
-          'areaName': areaName,
-        },
+        'location': {'lat': latitude, 'lng': longitude, 'areaName': areaName},
         'lat': latitude,
         'lng': longitude,
       });
@@ -293,28 +354,14 @@ class OfflineSyncService {
       debugPrint('Note: Firestore doc write queued offline: $e');
     }
 
-    final item = QueuedOfflineItem(
-      id: itemId,
-      docId: docRef?.id,
-      type: 'pest_report',
-      imagePath: persistentPath,
-      userId: userId,
-      farmId: farmId,
-      farmName: farmName,
-      fieldId: fieldId,
-      fieldName: fieldName,
-      cycleId: cycleId,
-      latitude: latitude,
-      longitude: longitude,
-      areaName: areaName,
-      timestamp: DateTime.now().millisecondsSinceEpoch,
+    // A backend failure while Wi-Fi remains connected also needs a retry.
+    if (ConnectivityService().isOnline) {
+      unawaited(syncAll(forUserId: userId));
+    }
+
+    debugPrint(
+      '📦 Pest report queued for offline sync (ID: $itemId, User: $userId)',
     );
-
-    _activeUserId = userId;
-    _queue.add(item);
-    await _saveQueue();
-
-    debugPrint('📦 Pest report queued for offline sync (ID: $itemId, User: $userId)');
     return item;
   }
 
@@ -339,42 +386,61 @@ class OfflineSyncService {
     if (pendingItems.isEmpty) return;
 
     isSyncing.value = true;
-    syncStatusMessage.value = 'Syncing ${pendingItems.length} offline item(s)...';
+    syncStatusMessage.value =
+        'Syncing ${pendingItems.length} offline item(s)...';
 
     int successCount = 0;
+    try {
+      for (final item in pendingItems) {
+        item.status = 'syncing';
+        await _saveQueue();
 
-    for (final item in pendingItems) {
-      item.status = 'syncing';
-      await _saveQueue();
-
-      try {
-        if (item.type == 'pest_report') {
-          await _processPestReportItem(item);
-          item.status = 'synced';
-          item.errorMessage = null;
-          successCount++;
+        try {
+          if (item.type == 'pest_report') {
+            await _processPestReportItem(item);
+            item.status = 'synced';
+            item.errorMessage = null;
+            successCount++;
+          }
+        } catch (e) {
+          debugPrint('Failed to sync item ${item.id}: $e');
+          item.status = 'failed';
+          item.errorMessage = e.toString();
         }
-      } catch (e) {
-        debugPrint('Failed to sync item ${item.id}: $e');
-        item.status = 'failed';
-        item.errorMessage = e.toString();
+        await _saveQueue();
+        // Persist the synced state before removing the only local photo.
+        if (item.status == 'synced') {
+          try {
+            final image = File(item.imagePath);
+            if (await image.exists()) await image.delete();
+          } catch (_) {}
+        }
       }
+
+      // Clean up successfully synced items from queue
+      _queue.removeWhere((item) => item.status == 'synced');
       await _saveQueue();
+
+      syncStatusMessage.value = successCount > 0
+          ? 'Successfully synced $successCount offline report(s)!'
+          : null;
+
+      debugPrint(
+        '✅ Sync finished for user $targetUserId: $successCount synced successfully.',
+      );
+    } catch (error) {
+      syncStatusMessage.value =
+          'Sync paused. Your reports remain on this device.';
+      debugPrint('Could not persist sync progress: $error');
+    } finally {
+      isSyncing.value = false;
     }
-
-    // Clean up successfully synced items from queue
-    _queue.removeWhere((item) => item.status == 'synced');
-    await _saveQueue();
-
-    isSyncing.value = false;
-    syncStatusMessage.value = successCount > 0
-        ? 'Successfully synced $successCount offline report(s)!'
-        : null;
-
-    debugPrint('✅ Sync finished for user $targetUserId: $successCount synced successfully.');
   }
 
   Future<void> _processPestReportItem(QueuedOfflineItem item) async {
+    if (FirebaseAuth.instance.currentUser?.uid != item.userId) {
+      throw StateError('Sign in to the account that owns this queued report');
+    }
     final imageFile = File(item.imagePath);
     if (!await imageFile.exists()) {
       throw Exception('Queued image file not found on device');
@@ -385,6 +451,7 @@ class OfflineSyncService {
 
     // 2. Compress image for Firestore document storage if cycle is present
     String? firestoreImageRef;
+    String? imageBase64;
     try {
       Uint8List? compressedBytes = await FlutterImageCompress.compressWithFile(
         imageFile.path,
@@ -394,7 +461,17 @@ class OfflineSyncService {
         format: CompressFormat.jpeg,
       );
 
-      if (compressedBytes != null && item.cycleId != null && item.cycleId!.isNotEmpty) {
+      if (compressedBytes != null) {
+        imageBase64 = base64Encode(compressedBytes);
+        if (imageBase64.length > 850000) {
+          throw StateError(
+            'Pest image is too large; please choose a smaller image',
+          );
+        }
+      }
+      if (compressedBytes != null &&
+          item.cycleId != null &&
+          item.cycleId!.isNotEmpty) {
         final encoded = base64Encode(compressedBytes);
         final imgRef = FirebaseFirestore.instance
             .collection('users')
@@ -402,18 +479,25 @@ class OfflineSyncService {
             .collection('cycles')
             .doc(item.cycleId)
             .collection('images')
-            .doc();
+            .doc(item.id);
 
-        await imgRef.set({
-          'data': encoded,
-          'contentType': 'image/jpeg',
-          'category': 'pest_report',
-          'createdAt': FieldValue.serverTimestamp(),
-        });
+        await imgRef
+            .set({
+              'data': encoded,
+              'contentType': 'image/jpeg',
+              'category': 'pest_report',
+              'createdAt': FieldValue.serverTimestamp(),
+            })
+            .timeout(const Duration(seconds: 20));
         firestoreImageRef = 'firestore-image://${imgRef.path}';
       }
     } catch (e) {
       debugPrint('Warning: Could not compress/store Firestore image ref: $e');
+      if ((imageBase64?.length ?? 0) > 850000) rethrow;
+    }
+
+    if (imageBase64 == null) {
+      throw StateError('Could not preserve the pest image; it remains queued');
     }
 
     // 3. Map severity
@@ -421,9 +505,12 @@ class OfflineSyncService {
     final severity = (risk == 'high' || risk == 'critical' || risk == 'severe')
         ? 'High'
         : (risk == 'medium' || risk == 'moderate')
-            ? 'Medium'
-            : 'Low';
+        ? 'Medium'
+        : 'Low';
 
+    if (FirebaseAuth.instance.currentUser?.uid != item.userId) {
+      throw StateError('Account changed; this report remains queued');
+    }
     // 4. Update the Firestore report
     final reportData = {
       'pestName': result.pestName,
@@ -437,6 +524,17 @@ class OfflineSyncService {
       'treatment': result.treatment,
       'annotatedImageUrl': result.annotatedImageUrl,
       'firestoreImageRef': firestoreImageRef,
+      if (firestoreImageRef == null) 'imageBase64': imageBase64,
+      'farmerId': item.userId,
+      'farmerName': item.farmerName ?? 'Farmer',
+      'farmId': item.farmId,
+      'cycleId': item.cycleId,
+      'timestamp': Timestamp.fromMillisecondsSinceEpoch(item.timestamp),
+      'location': {
+        'lat': item.latitude,
+        'lng': item.longitude,
+        'areaName': item.areaName,
+      },
       'status': 'pending', // update from pending_offline_sync to normal pending
       'isOfflineRecord': false,
       'syncedAt': FieldValue.serverTimestamp(),
@@ -453,33 +551,31 @@ class OfflineSyncService {
             if (item.fieldName != null) 'fieldName': item.fieldName,
             'lat': item.latitude,
             'lng': item.longitude,
-          }, SetOptions(merge: true));
+          }, SetOptions(merge: true))
+          .timeout(const Duration(seconds: 20));
     } else {
-      await FirebaseFirestore.instance.collection('reports').add({
-        ...reportData,
-        'farmerId': item.userId,
-        'farmId': item.farmId,
-        'farmName': item.farmName,
-        'fieldId': item.fieldId,
-        'fieldName': item.fieldName,
-        'cycleId': item.cycleId,
-        'timestamp': FieldValue.serverTimestamp(),
-        'location': {
-          'lat': item.latitude,
-          'lng': item.longitude,
-          'areaName': item.areaName,
-        },
-        'lat': item.latitude,
-        'lng': item.longitude,
-      });
+      await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(item.id)
+          .set({
+            ...reportData,
+            'farmerId': item.userId,
+            'farmId': item.farmId,
+            'farmName': item.farmName,
+            'fieldId': item.fieldId,
+            'fieldName': item.fieldName,
+            'cycleId': item.cycleId,
+            'timestamp': FieldValue.serverTimestamp(),
+            'location': {
+              'lat': item.latitude,
+              'lng': item.longitude,
+              'areaName': item.areaName,
+            },
+            'lat': item.latitude,
+            'lng': item.longitude,
+          })
+          .timeout(const Duration(seconds: 20));
     }
-
-    // Clean up local temp file
-    try {
-      if (await imageFile.exists()) {
-        await imageFile.delete();
-      }
-    } catch (_) {}
   }
 
   /// Remove a specific item from queue manually

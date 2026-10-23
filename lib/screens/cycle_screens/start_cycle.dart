@@ -1,3 +1,5 @@
+import 'package:visaia/services/firestore_safe_ext.dart';
+import 'package:visaia/services/local_write_service.dart';
 import 'package:visaia/services/cycle_naming_service.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -29,6 +31,7 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
   List<LatLng> farmBoundary = [];
   List<LatLng> selectedFieldPolygon = [];
   bool isLoading = true;
+  bool _isSaving = false;
   String? farmName;
 
   String? selectedFieldId;
@@ -159,7 +162,7 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
             .doc(_effectiveUid)
             .collection('farms')
             .doc(widget.farmId)
-            .get();
+            .safeGet();
       } catch (_) {
         doc = await FirebaseFirestore.instance
             .collection('users')
@@ -193,7 +196,7 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
           .doc(_effectiveUid)
           .collection('farms')
           .limit(1)
-          .get();
+          .safeGet();
     } catch (_) {
       snapshot = await FirebaseFirestore.instance
           .collection('users')
@@ -226,7 +229,7 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
           .collection('users')
           .doc(_effectiveUid)
           .collection('fields')
-          .get();
+          .safeGet();
     } catch (_) {
       snapshot = await FirebaseFirestore.instance
           .collection('users')
@@ -262,6 +265,7 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
   }
 
   Future<void> _saveCycle() async {
+    if (_isSaving) return;
     if (_effectiveUid.isEmpty || selectedFieldId == null) {
       _showSnackBar('Please select a field first.', isError: true);
       return;
@@ -292,6 +296,7 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
       }
     }
 
+    setState(() => _isSaving = true);
     try {
       await _loadCycleNumber();
       if (!mounted) return;
@@ -309,7 +314,7 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
           .collection('users')
           .doc(_effectiveUid)
           .collection('cycles')
-          .add({
+          .addLocally({
         'fieldId': selectedFieldId,
         'fieldName': selectedFieldName,
         'cycleName': cycleNameController.text,
@@ -345,13 +350,15 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
       });
 
       if (mounted) {
-        _showSnackBar('Cycle saved successfully with growth stage tracking');
+        _showSnackBar('Cycle saved on this device. Changes sync when connected.');
         Navigator.pop(context);
       }
     } catch (e) {
       if (mounted) {
         _showSnackBar('Failed to save cycle.', isError: true);
       }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -589,7 +596,7 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
           ],
         ),
         child: ElevatedButton(
-          onPressed: _saveCycle,
+          onPressed: _isSaving ? null : _saveCycle,
           style: ElevatedButton.styleFrom(
             backgroundColor: const Color(0xFF25523B),
             minimumSize: const Size(double.infinity, 54),

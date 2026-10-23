@@ -1,3 +1,4 @@
+import 'package:visaia/services/local_write_service.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -865,7 +866,7 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
           .doc(_effectiveUid)
           .collection('cycles')
           .doc(cycleId)
-          .update({
+          .updateLocally({
             'isCompleted': true,
             'status': 'completed',
             'completedAt': FieldValue.serverTimestamp(),
@@ -899,19 +900,21 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
     }
   }
 
+  final Set<String> _deletingCycleIds = {};
   Future<void> _deleteCycle(String cycleId) async {
+    if (!_deletingCycleIds.add(cycleId)) return;
     try {
       await FirebaseFirestore.instance
           .collection('users')
           .doc(_effectiveUid)
           .collection('cycles')
           .doc(cycleId)
-          .delete();
+          .deleteLocally();
 
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Cycle deleted successfully',
+          content: Text('Cycle removed on this device. Changes sync when connected.',
               style: GoogleFonts.manrope(
                   fontWeight: FontWeight.w600, color: Colors.white)),
           backgroundColor: darkGreen,
@@ -935,6 +938,8 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
           margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
         ));
       }
+    } finally {
+      _deletingCycleIds.remove(cycleId);
     }
   }
 

@@ -1,3 +1,4 @@
+import 'package:visaia/services/local_write_service.dart';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -665,7 +666,7 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
 
       print('📝 Saving to: users/${widget.userId}/cycles/$_selectedCycleId/weeks/$weekId');
 
-      await weekRef.set({
+      await weekRef.setLocally({
         'stations': stations,
         'totals': {
           'damaged': totalDamaged,
@@ -691,7 +692,7 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
       print('✓ Week data saved to Firestore with risk assessment: $riskLevel');
 
       // Verify the save was successful by reading it back
-      final verifySnapshot = await weekRef.get();
+      final verifySnapshot = await weekRef.safeGet();
       if (verifySnapshot.exists) {
         final savedStations = verifySnapshot.data()?['stations'] as List?;
         final savedLarvae = verifySnapshot.data()?['totals']?['larvae'] ?? 0;

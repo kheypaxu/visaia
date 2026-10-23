@@ -11,15 +11,7 @@ extension SafeFirestoreDocRefExt<T> on DocumentReference<T> {
     final isOnline = ConnectivityService().isOnline;
 
     if (!isOnline) {
-      try {
-        return await get(const GetOptions(source: Source.cache));
-      } catch (_) {
-        try {
-          return await get();
-        } catch (e) {
-          rethrow;
-        }
-      }
+      return get(const GetOptions(source: Source.cache));
     }
 
     try {
@@ -46,15 +38,7 @@ extension SafeFirestoreQueryExt<T> on Query<T> {
     final isOnline = ConnectivityService().isOnline;
 
     if (!isOnline) {
-      try {
-        return await get(const GetOptions(source: Source.cache));
-      } catch (_) {
-        try {
-          return await get();
-        } catch (e) {
-          rethrow;
-        }
-      }
+      return get(const GetOptions(source: Source.cache));
     }
 
     try {

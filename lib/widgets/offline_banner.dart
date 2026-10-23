@@ -1,3 +1,4 @@
+import 'package:visaia/services/local_write_service.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:visaia/services/connectivity_service.dart';
@@ -43,34 +44,43 @@ class _OfflineBannerState extends State<OfflineBanner> {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: _connectivityService.isOnlineNotifier,
-      builder: (context, isOnline, _) {
-        return ValueListenableBuilder<bool>(
-          valueListenable: _syncService.isSyncing,
-          builder: (context, isSyncing, _) {
-            return ValueListenableBuilder<int>(
-              valueListenable: _syncService.pendingSyncCount,
-              builder: (context, pendingCount, _) {
-                final shouldShow = !isOnline || isSyncing || _showBackOnline;
+    return AnimatedBuilder(
+      animation: LocalWriteService.pendingCount,
+      builder: (context, _) => ValueListenableBuilder<bool>(
+        valueListenable: _connectivityService.isOnlineNotifier,
+        builder: (context, isOnline, _) {
+          return ValueListenableBuilder<bool>(
+            valueListenable: _syncService.isSyncing,
+            builder: (context, isSyncing, _) {
+              return ValueListenableBuilder<int>(
+                valueListenable: _syncService.pendingSyncCount,
+                builder: (context, pestCount, _) {
+                  final pendingCount =
+                      pestCount + LocalWriteService.pendingCount.value;
+                  final shouldShow =
+                      !isOnline ||
+                      isSyncing ||
+                      pendingCount > 0 ||
+                      _showBackOnline;
 
-                return AnimatedContainer(
-                  duration: const Duration(milliseconds: 300),
-                  curve: Curves.easeInOut,
-                  height: shouldShow ? 38.0 : 0.0,
-                  child: shouldShow
-                      ? _buildBannerContent(
-                          isOnline: isOnline,
-                          isSyncing: isSyncing,
-                          pendingCount: pendingCount,
-                        )
-                      : const SizedBox.shrink(),
-                );
-              },
-            );
-          },
-        );
-      },
+                  return AnimatedContainer(
+                    duration: const Duration(milliseconds: 300),
+                    curve: Curves.easeInOut,
+                    height: shouldShow ? 38.0 : 0.0,
+                    child: shouldShow
+                        ? _buildBannerContent(
+                            isOnline: isOnline,
+                            isSyncing: isSyncing,
+                            pendingCount: pendingCount,
+                          )
+                        : const SizedBox.shrink(),
+                  );
+                },
+              );
+            },
+          );
+        },
+      ),
     );
   }
 
@@ -94,11 +104,16 @@ class _OfflineBannerState extends State<OfflineBanner> {
       textColor = const Color(0xFFFFD599);
       icon = Icons.wifi_off_rounded;
       message = 'Offline Mode • Actions saved to device';
+    } else if (pendingCount > 0) {
+      bgColor = const Color(0xFF1E3A8A);
+      textColor = Colors.white;
+      icon = Icons.sync_rounded;
+      message = '$pendingCount change(s) waiting to sync';
     } else {
       bgColor = const Color(0xFF0F5132); // Deep forest green
       textColor = const Color(0xFFD1E7DD);
       icon = Icons.cloud_done_rounded;
-      message = 'Connected • All data synchronized';
+      message = 'Connected • No tracked changes waiting to sync';
     }
 
     return GestureDetector(
@@ -153,7 +168,11 @@ class _OfflineBannerState extends State<OfflineBanner> {
                       ),
                     ),
                     const SizedBox(width: 2),
-                    Icon(Icons.chevron_right_rounded, size: 13, color: textColor),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      size: 13,
+                      color: textColor,
+                    ),
                   ],
                 ),
               ),
