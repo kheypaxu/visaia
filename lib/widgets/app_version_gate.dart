@@ -264,7 +264,7 @@ class _InAppUpdateDialogState extends State<_InAppUpdateDialog> {
               ),
               const SizedBox(height: 10),
               Text(
-                _errorMessage ?? 'Please update to the latest version to continue using VISAAIA.',
+                _errorMessage ?? 'Please update to the latest version to continue using VISAIA.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       height: 1.45,
@@ -395,7 +395,7 @@ class _InAppUpdateDialogState extends State<_InAppUpdateDialog> {
 
               const SizedBox(height: 8),
               const Text(
-                'You need the latest version to continue using VISAAIA.',
+                'You need the latest version to continue using VISAIA.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 12,
