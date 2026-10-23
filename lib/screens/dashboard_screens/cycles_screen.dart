@@ -865,7 +865,11 @@ class _CroppingCyclesScreenState extends State<CroppingCyclesScreen> {
           .doc(_effectiveUid)
           .collection('cycles')
           .doc(cycleId)
-          .update({'isCompleted': true});
+          .update({
+            'isCompleted': true,
+            'status': 'completed',
+            'completedAt': FieldValue.serverTimestamp(),
+          });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(

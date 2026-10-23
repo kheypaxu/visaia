@@ -1,3 +1,4 @@
+import 'package:visaia/core/models/cycle_audit_policy.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:visaia/services/firestore_safe_ext.dart';
@@ -74,7 +75,7 @@ class _HarvestRecordingScreenState extends State<HarvestRecordingScreen> {
         final data = cycleDoc.data();
         
         // Check if already harvested
-        if (data?['isCompleted'] == true) {
+        if (data != null && hasRecordedHarvest(data)) {
           if (mounted) {
             _showAlreadyHarvestedDialog();
           }
@@ -140,7 +141,7 @@ class _HarvestRecordingScreenState extends State<HarvestRecordingScreen> {
         'totalValue': totalValue,
         'lossRate': _lossRate,
         'harvestNotes': _notesController.text,
-        'actualHarvestDate': _cycleData?['harvestDate'] ?? FieldValue.serverTimestamp(),
+        'actualHarvestDate': FieldValue.serverTimestamp(),
         'expectedHarvestDate': _cycleData?['harvestDate'],
         'isEarlyHarvest': widget.isEarlyHarvest,
         if (widget.isEarlyHarvest && _earlyHarvestReason.isNotEmpty) 

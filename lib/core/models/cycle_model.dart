@@ -1,3 +1,4 @@
+import 'package:visaia/core/models/cycle_audit_policy.dart' as audit_policy;
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class CycleModel {
@@ -16,6 +17,8 @@ class CycleModel {
 
   // New fields
   final bool isCompleted;
+  final DateTime? actualHarvestDate;
+  final DateTime? harvestCompletedAt;
   final String? status;
   final String? statusText;
   final double? income;
@@ -35,6 +38,8 @@ class CycleModel {
     this.harvestDate,
     required this.seedDensity,
     this.isCompleted = false,
+    this.actualHarvestDate,
+    this.harvestCompletedAt,
     this.status,
     this.statusText,
     this.income,
@@ -54,12 +59,16 @@ class CycleModel {
       cycleName: map['cycleName'] ?? 'Untitled Cycle',
       cropVariety: map['cropVariety'] ?? '',
       plantingDate: _parseTimestamp(map['plantingDate']),
-      harvestDate: _parseTimestamp(map['expectedHarvestDate'] ??
-          map['estimatedHarvestDate'] ??
-          map['harvestDate'] ??
-          map['actualHarvestDate']),
+      harvestDate: _parseTimestamp(
+        map['expectedHarvestDate'] ??
+            map['estimatedHarvestDate'] ??
+            map['harvestDate'] ??
+            map['actualHarvestDate'],
+      ),
       seedDensity: (map['seedDensity'] as num?)?.toDouble() ?? 0.0,
       isCompleted: map['isCompleted'] ?? false,
+      actualHarvestDate: _parseTimestamp(map['actualHarvestDate']),
+      harvestCompletedAt: _parseTimestamp(map['harvestCompletedAt']),
       status: map['status'],
       statusText: map['statusText'],
       income: (map['income'] as num?)?.toDouble(),
@@ -91,23 +100,37 @@ class CycleModel {
       'farmId': farmId,
       'cycleName': cycleName,
       'cropVariety': cropVariety,
-      'plantingDate': plantingDate != null ? Timestamp.fromDate(plantingDate!) : null,
-      'harvestDate': harvestDate != null ? Timestamp.fromDate(harvestDate!) : null,
+      'plantingDate': plantingDate != null
+          ? Timestamp.fromDate(plantingDate!)
+          : null,
+      'harvestDate': harvestDate != null
+          ? Timestamp.fromDate(harvestDate!)
+          : null,
       'seedDensity': seedDensity,
       'isCompleted': isCompleted,
+      if (actualHarvestDate != null)
+        'actualHarvestDate': Timestamp.fromDate(actualHarvestDate!),
+      if (harvestCompletedAt != null)
+        'harvestCompletedAt': Timestamp.fromDate(harvestCompletedAt!),
       'status': status,
       'statusText': statusText,
       'income': income,
-      'createdAt': createdAt != null ? Timestamp.fromDate(createdAt!) : FieldValue.serverTimestamp(),
+      'createdAt': createdAt != null
+          ? Timestamp.fromDate(createdAt!)
+          : FieldValue.serverTimestamp(),
     };
   }
 
   Map<String, dynamic> toUpdateMap() {
     final map = <String, dynamic>{};
-    
-    if (plantingDate != null) map['plantingDate'] = Timestamp.fromDate(plantingDate!);
-    if (harvestDate != null) map['harvestDate'] = Timestamp.fromDate(harvestDate!);
-    
+
+    if (plantingDate != null) {
+      map['plantingDate'] = Timestamp.fromDate(plantingDate!);
+    }
+    if (harvestDate != null) {
+      map['harvestDate'] = Timestamp.fromDate(harvestDate!);
+    }
+
     map['fieldId'] = fieldId;
     map['fieldName'] = fieldName;
     map['farmId'] = farmId;
@@ -118,7 +141,7 @@ class CycleModel {
     map['status'] = status;
     map['statusText'] = statusText;
     map['income'] = income;
-    
+
     return map;
   }
 
@@ -151,10 +174,14 @@ class CycleModel {
       farmId: farmId ?? this.farmId,
       cycleName: cycleName ?? this.cycleName,
       cropVariety: cropVariety ?? this.cropVariety,
-      plantingDate: clearPlantingDate ? null : (plantingDate ?? this.plantingDate),
+      plantingDate: clearPlantingDate
+          ? null
+          : (plantingDate ?? this.plantingDate),
       harvestDate: clearHarvestDate ? null : (harvestDate ?? this.harvestDate),
       seedDensity: seedDensity ?? this.seedDensity,
       isCompleted: isCompleted ?? this.isCompleted,
+      actualHarvestDate: actualHarvestDate,
+      harvestCompletedAt: harvestCompletedAt,
       status: clearStatus ? null : (status ?? this.status),
       statusText: clearStatus ? null : (statusText ?? this.statusText),
       income: clearIncome ? null : (income ?? this.income),
@@ -170,11 +197,12 @@ class CycleModel {
   /// Only persisted completion state moves a cycle into historical records.
   /// A passed estimated harvest date does not mean an ongoing cycle was
   /// actually harvested.
-  bool get shouldBeCompleted {
-    if (isCompleted) return true;
-    final normalizedStatus = status?.toLowerCase();
-    return normalizedStatus == 'completed' || normalizedStatus == 'harvested';
-  }
+  bool get shouldBeCompleted => audit_policy.hasRecordedHarvest({
+    'isCompleted': isCompleted,
+    'status': status,
+    'actualHarvestDate': actualHarvestDate,
+    'harvestCompletedAt': harvestCompletedAt,
+  });
 
   /// Calculates progress percentage (0.0 to 1.0)
   double get progress {
@@ -253,8 +281,21 @@ class CycleModel {
 
   // ================= HELPERS =================
   static String _formatDate(DateTime date, String pattern) {
-    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    
+    final months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+
     if (pattern == 'MMM dd') {
       return '${months[date.month - 1]} ${date.day.toString().padLeft(2, '0')}';
     }

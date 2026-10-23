@@ -242,6 +242,7 @@ class _RecordCycleScreenState extends State<RecordCycleScreen> {
         'cropVariety': _selectedVariety ?? '',
         'plantingDate': Timestamp.fromDate(_plantingDate!),
         'harvestDate': Timestamp.fromDate(_harvestDate!),
+        'actualHarvestDate': Timestamp.fromDate(_harvestDate!),
         'isCompleted': true,
         'isPreviousCycle': true,
         'createdAt': FieldValue.serverTimestamp(),

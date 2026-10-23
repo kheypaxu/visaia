@@ -62,6 +62,14 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
   }
 
   @override
+  void reassemble() {
+    super.reassemble();
+    // Hot reload preserves the lists computed under the previous audit policy.
+    // Re-subscribe so unchanged Firestore documents are classified again too.
+    _loadData();
+  }
+
+  @override
   void didUpdateWidget(covariant IncomeEstimationScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.userId != widget.userId ||
@@ -327,6 +335,13 @@ class _IncomeEstimationScreenState extends State<IncomeEstimationScreen> {
           ),
         ),
         centerTitle: true,
+        actions: [
+          IconButton(
+            tooltip: 'Refresh cycle and audit status',
+            icon: const Icon(Icons.refresh_rounded, color: darkGreen),
+            onPressed: _isLoading ? null : _loadData,
+          ),
+        ],
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())

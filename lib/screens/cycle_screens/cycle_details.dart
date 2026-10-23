@@ -1,3 +1,4 @@
+import 'package:visaia/core/models/cycle_audit_policy.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -386,12 +387,8 @@ class _CycleDetailsScreenState extends State<CycleDetailsScreen> {
     return null;
   }
 
-  bool get _isCycleCompleted {
-    if (_cycleData == null) return false;
-    if (_cycleData!['isCompleted'] == true) return true;
-    final status = (_cycleData!['status'] ?? '').toString().toLowerCase();
-    return status == 'completed' || status == 'harvested';
-  }
+  bool get _isCycleCompleted =>
+      _cycleData != null && hasRecordedHarvest(_cycleData!);
 
   DateTime? _getPlantingDateTime() {
     return _parseDateTime(_cycleData?['plantingDate']);
