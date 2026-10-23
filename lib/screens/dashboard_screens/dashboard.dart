@@ -1,3 +1,5 @@
+import 'package:visaia/core/models/cycle_audit_policy.dart';
+import 'package:visaia/core/models/cycle_metrics.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -287,13 +289,13 @@ class MonitoringFirestoreService {
     });
   }
 
+  // Use the same finalized audits and financial calculation as Full Analysis.
   Stream<double> getNetIncome() {
     if (_userId.isEmpty) return Stream.value(0.0);
     Query<Map<String, dynamic>> ref = _db
         .collection('users')
         .doc(_userId)
-        .collection('cycles')
-        .where('isCompleted', isEqualTo: true);
+        .collection('cycles');
 
     if (_farmId != null && _farmId.isNotEmpty) {
       ref = ref.where('farmId', isEqualTo: _farmId);
@@ -303,9 +305,8 @@ class MonitoringFirestoreService {
         .snapshots()
         .map((snap) => snap.docs.fold<double>(0.0, (sum, doc) {
               final data = doc.data();
-              final income =
-                  (data['netIncome'] as num?)?.toDouble() ?? 0.0;
-              return sum + income;
+              if (!hasCompletedHarvestAudit(data)) return sum;
+              return sum + CycleFinance(data).net;
             }))
         .handleError((e) {
       debugPrint('getNetIncome error: $e');
@@ -313,8 +314,6 @@ class MonitoringFirestoreService {
     });
   }
 
-  // ----- (Optional) NET INCOME if you have expenses collection -----
-  // Stream<double> getNetIncome() { ... }
 }
 
 // ======================= HOMEDASHBOARD WIDGET =======================

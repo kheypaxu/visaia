@@ -1,3 +1,4 @@
+import 'package:visaia/core/models/cycle_dates.dart';
 import 'package:visaia/core/models/cycle_metrics.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -105,40 +106,10 @@ class _CompletedCycleContent extends StatelessWidget {
   String get fieldName => data['fieldName'] ?? 'Unknown Field';
   String get cropVariety => data['cropVariety'] ?? 'Unknown Variety';
 
-  DateTime? get plantingDate {
-    final timestamp = data['plantingDate'];
-    if (timestamp != null && timestamp is Timestamp) {
-      return timestamp.toDate();
-    }
-    return null;
-  }
-
-  DateTime? get harvestDate {
-    final raw =
-        data['expectedHarvestDate'] ??
-        data['estimatedHarvestDate'] ??
-        data['harvestDate'] ??
-        data['actualHarvestDate'];
-    if (raw != null) {
-      if (raw is Timestamp) return raw.toDate();
-      if (raw is DateTime) return raw;
-      if (raw is int) return DateTime.fromMillisecondsSinceEpoch(raw);
-      if (raw is String) return DateTime.tryParse(raw);
-    }
-    return null;
-  }
-
-  DateTime? get completedDate {
-    final raw =
-        data['completedAt'] ?? data['harvestCompletedAt'] ?? data['createdAt'];
-    if (raw != null) {
-      if (raw is Timestamp) return raw.toDate();
-      if (raw is DateTime) return raw;
-      if (raw is int) return DateTime.fromMillisecondsSinceEpoch(raw);
-      if (raw is String) return DateTime.tryParse(raw);
-    }
-    return null;
-  }
+  CycleDates get dates => CycleDates(data);
+  DateTime? get plantingDate => dates.planting;
+  DateTime? get harvestDate => dates.estimatedHarvest;
+  DateTime? get completedDate => dates.harvestCompleted;
 
   double get totalYield => recordedYield(data) ?? 0;
   double get area => cycleNumber(data['area']) ?? 0;
@@ -170,7 +141,7 @@ class _CompletedCycleContent extends StatelessWidget {
   bool get isPreviousCycle => data['isPreviousCycle'] == true;
 
   String get formattedCompletedDate {
-    if (completedDate == null) return 'Not completed';
+    if (completedDate == null) return 'Not recorded';
     return DateFormat('MMM d, yyyy').format(completedDate!);
   }
 
@@ -459,7 +430,7 @@ class _CompletedCycleContent extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text(
-                  'Harvest Date:',
+                  'Estimated Harvest Date:',
                   style: TextStyle(color: kTextGrey, fontSize: 12),
                 ),
                 Text(
@@ -718,21 +689,21 @@ class _CompletedCycleContent extends StatelessWidget {
     return Column(
       children: [
         _buildTimelineItem(
-          'Cycle Completed',
-          formattedCompletedDate,
-          'Final records moved to long-term storage.',
-          true,
-        ),
-        _buildTimelineItem(
-          'Record Finalized',
-          formattedHarvestDate,
-          'Harvest metrics validated by regional supervisor.',
-          true,
-        ),
-        _buildTimelineItem(
           'Harvest Completed',
+          formattedCompletedDate,
+          'Actual recorded harvest completion date.',
+          true,
+        ),
+        _buildTimelineItem(
+          'Estimated Harvest Date',
           formattedHarvestDate,
-          'All designated plots fully cleared.',
+          'Harvest date planned by the farmer.',
+          true,
+        ),
+        _buildTimelineItem(
+          'Planting Date',
+          formattedPlantingDate,
+          'Planting date recorded by the farmer.',
           false,
         ),
       ],
