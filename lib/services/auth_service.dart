@@ -81,8 +81,12 @@ class AuthService {
   }
 
   // Sign out
-  Future<void> signOut() async {
-    await PushNotificationService.instance.detach();
+  Future<void> signOut({bool keepNotifications = false}) async {
+    if (keepNotifications) {
+      await PushNotificationService.instance.keepForAccountSwitch();
+    } else {
+      await PushNotificationService.instance.detach(uid: _auth.currentUser?.uid ?? _cacheService.cachedUid);
+    }
     await DashboardWidgetService.clear();
     try {
       await _auth.signOut();

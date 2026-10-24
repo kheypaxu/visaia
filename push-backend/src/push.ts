@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { getAuth } from 'firebase-admin/auth';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { getFirebaseAdmin } from '@/src/config/firebaseAdmin';
+import { loggedToday, reminderPeriod, scoutingComplete } from './policy';
 
 export function eventId(key: string) {
   return createHash('sha256').update(key).digest('hex');
@@ -40,7 +41,7 @@ export async function deliver(id: string) {
   const event = await db.runTransaction(async tx => {
     const snapshot = await tx.get(ref);
     const data = snapshot.data();
-    if (!data || data.status === 'sent' || data.status === 'expired') return null;
+    if (!data || ['sent', 'expired', 'cancelled'].includes(data.status)) return null;
     if (data.leaseUntil?.toMillis() > Date.now()) return null;
     if (data.expiresAt.toMillis() <= Date.now()) {
       tx.update(ref, { status: 'expired' });
@@ -51,20 +52,46 @@ export async function deliver(id: string) {
   });
   if (!event) return;
   try {
-    const devices = await db.collection('pushDevices').where('uid', '==', event.farmerId).get();
+    // Retry delivery must re-check completion; a farmer may have logged since
+    // the cron first enqueued the event, including from another device.
+    if (event.type === 'daily_log_reminder' || event.type === 'scouting_reminder') {
+      const cycleRef = db.collection('users').doc(event.farmerId).collection('cycles').doc(event.cycleId);
+      const cycle = await cycleRef.get();
+      const now = new Date();
+      const period = reminderPeriod(cycle.data() ?? {}, now);
+      let complete = !period;
+      if (period && event.type === 'daily_log_reminder') {
+        const activities = await cycleRef.collection('dailyLogs').doc(period.dayId).collection('activities').get();
+        complete = activities.docs.some(activity => loggedToday(activity.data(), now));
+      } else if (period) {
+        complete = scoutingComplete((await cycleRef.collection('weeks').doc(period.weekId).get()).data() ?? {});
+      }
+      if (complete) {
+        await ref.update({ status: 'cancelled', leaseUntil: FieldValue.delete() });
+        return;
+      }
+    }
+    const memberships = await db.collection('pushDevices').where('uids', 'array-contains', event.farmerId).get();
+    // Compatibility for devices registered before multi-account support.
+    const legacy = await db.collection('pushDevices').where('uid', '==', event.farmerId).get();
+    const devices = new Map([...memberships.docs, ...legacy.docs].map(device => [device.id, device]));
+    const farmer = (await db.collection('farmers').doc(event.farmerId).get()).data();
+    const accountName = String(farmer?.name || farmer?.fullName || farmer?.email || 'Saved account').slice(0, 100);
+    const accountEmail = typeof farmer?.email === 'string' ? farmer.email : '';
     const delivered = new Set<string>(event.delivered ?? []);
     let retry = false;
-    for (const device of devices.docs) {
+    for (const device of devices.values()) {
       const data = device.data();
       if (delivered.has(device.id) || data.updatedAt?.toMillis() < Date.now() - 45 * 86400000) continue;
-      // Read again immediately before sending to catch account transfers.
+      // Read again immediately before sending to catch account removals.
       const current = (await device.ref.get()).data();
-      if (!current || current.uid !== event.farmerId || current.token !== data.token) continue;
+      if (!current || !(current.uids?.includes(event.farmerId) || current.uid === event.farmerId) || current.token !== data.token) continue;
       try {
         await messaging.send({
           token: data.token,
           data: {
             farmerId: event.farmerId, type: event.type, title: event.title,
+            accountName, accountEmail,
             body: event.body, eventId: id, cycleId: event.cycleId ?? '',
             expiresAt: String(event.expiresAt.toMillis()),
           },

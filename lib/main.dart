@@ -16,6 +16,7 @@ import 'package:visaia/services/connectivity_service.dart';
 import 'package:visaia/services/offline_sync_service.dart';
 import 'package:visaia/services/local_write_service.dart';
 import 'package:visaia/services/push_notification_service.dart';
+import 'package:visaia/services/auth_service.dart';
 import 'package:visaia/screens/logging_screens/daily_log_screen.dart';
 import 'package:visaia/screens/logging_screens/field_scouting_screen.dart';
 import 'dart:convert';
@@ -24,42 +25,120 @@ import 'package:visaia/widgets/app_version_gate.dart';
 
 final appNavigatorKey = GlobalKey<NavigatorState>();
 String? _pendingPush;
+bool _handlingPush = false;
+bool _pushAwaitingSignIn = false;
 
-void _openPendingPush() {
+Future<void> _openPendingPush() async {
   final payload = _pendingPush;
-  if (payload == null || appNavigatorKey.currentState == null) return;
+  if (_handlingPush || payload == null || appNavigatorKey.currentState == null) {
+    return;
+  }
+  _handlingPush = true;
   _pendingPush = null;
   try {
     final data = jsonDecode(payload) as Map<String, dynamic>;
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null || uid != data['farmerId']) {
-      appNavigatorKey.currentState!.pushNamed('/login');
+    final expires = int.tryParse(data['expiresAt']?.toString() ?? '');
+    if (expires == null || DateTime.now().millisecondsSinceEpoch >= expires) {
+      _pushAwaitingSignIn = false;
       return;
     }
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid != data['farmerId']) {
+      final name = data['accountName'] as String? ?? 'this saved account';
+      if (uid != null) {
+        final context = appNavigatorKey.currentContext!;
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text('Sign in to $name?'),
+            content: const Text(
+              'You are using another account. Switch to view this notification. Saved accounts will keep receiving notifications.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Sign in'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true) return;
+        await AuthService().signOut(keepNotifications: true);
+      }
+      _pendingPush = payload;
+      _pushAwaitingSignIn = true;
+      appNavigatorKey.currentState!.pushNamedAndRemoveUntil(
+        '/login',
+        (route) => false,
+        arguments: <String, dynamic>{
+          'email': data['accountEmail'] ?? '',
+          'autoFillMessage': 'Sign in to $name to view this notification.',
+        },
+      );
+      return;
+    }
+    _pushAwaitingSignIn = false;
     final cycleId = data['cycleId'] as String? ?? '';
     if (data['type'] == 'daily_log_reminder' && cycleId.isNotEmpty) {
-      appNavigatorKey.currentState!.push(MaterialPageRoute<void>(builder: (_) =>
-        DailyLogFormScreen(userId: uid, cycleId: cycleId, shouldAssignCycle: false)));
+      appNavigatorKey.currentState!.push(
+        MaterialPageRoute<void>(
+          builder: (_) => DailyLogFormScreen(
+            userId: uid,
+            cycleId: cycleId,
+            shouldAssignCycle: false,
+          ),
+        ),
+      );
     } else if (data['type'] == 'scouting_reminder' && cycleId.isNotEmpty) {
-      appNavigatorKey.currentState!.push(MaterialPageRoute<void>(builder: (_) =>
-        FieldScoutingFormScreen(userId: uid, cycleId: cycleId)));
+      appNavigatorKey.currentState!.push(
+        MaterialPageRoute<void>(
+          builder: (_) =>
+              FieldScoutingFormScreen(userId: uid, cycleId: cycleId),
+        ),
+      );
     } else {
       appNavigatorKey.currentState!.pushNamed('/login');
     }
   } catch (error) {
     debugPrint('Unable to open push notification: $error');
+  } finally {
+    _handlingPush = false;
   }
 }
 
 class _PushNavigatorObserver extends NavigatorObserver {
   void _ready(Route<dynamic>? route) {
     if (route?.settings.name == '/splash') return;
+    if (_pushAwaitingSignIn) {
+      if (route?.settings.name == '/login') return;
+      try {
+        final recipient =
+            (jsonDecode(_pendingPush ?? '{}')
+                as Map<String, dynamic>)['farmerId'];
+        if (FirebaseAuth.instance.currentUser?.uid != recipient) {
+          if (route?.settings.name == '/root') {
+            _pendingPush = null;
+            _pushAwaitingSignIn = false;
+          }
+          return;
+        }
+      } catch (_) {
+        return;
+      }
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) => _openPendingPush());
   }
+
   @override
-  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) => _ready(route);
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) =>
+      _ready(route);
   @override
-  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) => _ready(newRoute);
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) =>
+      _ready(newRoute);
 }
 
 void main() async {
@@ -92,10 +171,13 @@ void main() async {
   await syncService.init();
 
   try {
-    await PushNotificationService.instance.init(onTap: (payload) {
-      _pendingPush = payload;
-      if (appNavigatorKey.currentState != null) _openPendingPush();
-    });
+    await PushNotificationService.instance.init(
+      onTap: (payload) {
+        _pushAwaitingSignIn = false;
+        _pendingPush = payload;
+        if (appNavigatorKey.currentState != null) _openPendingPush();
+      },
+    );
   } catch (error) {
     debugPrint('Push notifications unavailable: $error');
   }

@@ -8,6 +8,9 @@
       "@/*": ["../../visaia-dashboard/*"]
     }
   },
-  "include": ["src/**/*.ts", "app/**/*.ts"],
+  "include": [
+    "src/**/*.ts", "app/**/*.ts",
+    "../../visaia-dashboard/app/(dashboard)/account-verification/[id]/page.tsx"
+  ],
   "exclude": []
 }

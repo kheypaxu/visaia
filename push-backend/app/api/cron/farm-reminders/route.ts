@@ -23,7 +23,9 @@ export async function GET(request: Request) {
     // Explicit pilot cap avoids accidentally consuming Spark quotas at scale.
     const devices = await db.collection('pushDevices').limit(501).get();
     const uids = [...new Set(devices.docs.filter(d =>
-      d.data().updatedAt?.toMillis() >= now.getTime() - 45 * 86400000).map(d => d.data().uid as string))];
+      d.data().updatedAt?.toMillis() >= now.getTime() - 45 * 86400000)
+      .flatMap(d => (Array.isArray(d.data().uids) ? d.data().uids : [d.data().uid]) as string[])
+      .filter((uid): uid is string => typeof uid === 'string' && uid.length > 0))];
     if (devices.size > 500 || uids.length > 100) {
       return Response.json({ error: 'Free-plan pilot capacity exceeded; review quotas before increasing limits' }, { status: 503 });
     }

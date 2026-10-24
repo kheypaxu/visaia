@@ -1,5 +1,9 @@
 # Notification delivery
 
+For Android phone delivery, MAO account approval, and morning farm reminders,
+see [Free-plan phone notifications](push-notifications-setup.md). The report feed
+behavior and report-outcome trigger follow-up below remain separate.
+
 The app merges alerts with the latest status of owned reports and clustered_reports.
 Clustered reports support farmerId and legacy userId ownership. The bell and inbox
 use the same feed. Explicit report alerts supersede matching derived entries.

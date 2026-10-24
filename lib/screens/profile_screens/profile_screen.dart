@@ -71,7 +71,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ],
         ),
         content: Text(
-          'Are you sure you want to logout?',
+          'Log out and stop notifications for this account on this phone? Use Switch account to keep receiving its notifications.',
           style: GoogleFonts.manrope(
             fontSize: 16,
             color: ProfileScreen.textGray,
@@ -250,6 +250,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
 
       // Check if this was the active farm
+      if (!mounted) return;
       final farmProvider = context.read<FarmProvider>();
       if (farmProvider.activeFarmId == farmId) {
         // Check if there are any remaining farms
@@ -292,7 +293,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  Future<void> _logout() async {
+  Future<void> _switchAccount() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Switch account'),
+        content: const Text('Sign in to another account. This phone will keep receiving notifications for accounts you switch from. Use Logout to stop notifications for an account.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Switch account')),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) await _logout(keepNotifications: true);
+  }
+
+  Future<void> _logout({bool keepNotifications = false}) async {
     try {
       if (mounted) {
         showDialog(
@@ -304,7 +320,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         );
       }
 
-      await AuthService().signOut();
+      await AuthService().signOut(keepNotifications: keepNotifications);
 
       if (mounted) {
         Navigator.of(context, rootNavigator: true).pushNamedAndRemoveUntil(
@@ -952,6 +968,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 title: 'Privacy & Data',
                 onTap: () => Navigator.push(context,
                     MaterialPageRoute(builder: (_) => const PrivacyDataScreen())),
+              ),
+              const Divider(height: 1),
+              _SystemTile(
+                icon: Icons.switch_account_outlined,
+                title: 'Switch account',
+                onTap: _switchAccount,
               ),
               const Divider(height: 1),
               _SystemTile(

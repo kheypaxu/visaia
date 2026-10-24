@@ -15,11 +15,19 @@ async function change(request: Request, remove: boolean) {
     const ref = db.collection('pushDevices').doc(body.installationId);
     await db.runTransaction(async tx => {
       const snapshot = await tx.get(ref);
+      const existing = snapshot.data();
+      const uids: string[] = Array.isArray(existing?.uids) ? existing.uids :
+        typeof existing?.uid === 'string' ? [existing.uid] : [];
       if (remove) {
-        if (snapshot.data()?.uid === user.uid) tx.delete(ref);
+        const remaining = uids.filter(uid => uid !== user.uid);
+        if (remaining.length === 0) tx.delete(ref);
+        else if (remaining.length !== uids.length) tx.set(ref, {
+          uids: remaining, token: existing!.token, updatedAt: existing!.updatedAt,
+        });
       } else {
-        // One installation belongs to one account; other devices stay registered.
-        tx.set(ref, { uid: user.uid, token: body.token, updatedAt: FieldValue.serverTimestamp() });
+        // Only the authenticated account can be added. Signing into another
+        // account retains this installation's other authenticated memberships.
+        tx.set(ref, { uids: [...new Set([...uids, user.uid])], token: body.token, updatedAt: FieldValue.serverTimestamp() });
       }
     });
     return Response.json({ success: true });

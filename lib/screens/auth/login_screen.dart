@@ -5,7 +5,6 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:visaia/screens/auth/forgot_password_screen.dart';
 import 'package:visaia/screens/auth/registration_screen.dart';
 import 'package:visaia/services/auth_service.dart';
-import 'package:visaia/screens/root_screen.dart';
 import 'package:visaia/services/auth_cache_service.dart';
 import 'package:visaia/services/connectivity_service.dart';
 
@@ -129,10 +128,7 @@ class _LoginPageState extends State<LoginPage> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
         );
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const VisaiaAppRoot()),
-        );
+        Navigator.pushReplacementNamed(context, '/root');
       }
     } catch (e) {
       if (mounted) {
