@@ -3,16 +3,33 @@ import 'package:visaia/services/cycle_naming_service.dart';
 
 void main() {
   test('Names follow the requested formats', () {
-    expect(formatCycleName(crop: 'Corn', variety: 'GMO Hybrid', isPrevious: false, number: 1),
-        'Corn (GMO Hybrid) - New Cycle 1');
-    expect(formatCycleName(crop: 'Corn', variety: 'Sweet Corn', isPrevious: true, number: 1),
-        'Corn (Sweet Corn) - Prev Cycle 1');
+    expect(
+      formatCycleName(
+        crop: 'Corn',
+        variety: 'GMO Hybrid',
+        isPrevious: false,
+        number: 1,
+      ),
+      'Corn (GMO Hybrid) - Cycle 1 | New',
+    );
+    expect(
+      formatCycleName(
+        crop: 'Corn',
+        variety: 'Sweet Corn',
+        isPrevious: true,
+        number: 1,
+      ),
+      'Corn (Sweet Corn) - Prev Cycle 1',
+    );
   });
 
   test('New and previous sequences are independent across varieties', () {
     final cycles = [
       {'cycleName': 'Corn (GMO Hybrid) - New Cycle 1'},
-      {'cycleName': 'Corn (Sweet Corn) - Prev Cycle 1', 'isPreviousCycle': true},
+      {
+        'cycleName': 'Corn (Sweet Corn) - Prev Cycle 1',
+        'isPreviousCycle': true,
+      },
       {'cycleName': 'Corn (Green Corn) - New Cycle 2'},
     ];
     expect(nextCycleNumber(cycles, isPrevious: false), 3);
@@ -32,8 +49,43 @@ void main() {
   });
 
   test('Number gaps do not cause an existing suffix to be reused', () {
-    expect(nextCycleNumber([
-      {'cycleName': 'Corn (GMO Hybrid) - New Cycle 7'},
-    ], isPrevious: false), 8);
+    expect(
+      nextCycleNumber([
+        {'cycleName': 'Corn (GMO Hybrid) - New Cycle 7'},
+      ], isPrevious: false),
+      8,
+    );
+  });
+
+  test('Only the latest cycle keeps the New marker', () {
+    final first = formatCycleName(
+      crop: 'Corn',
+      variety: 'GMO Hybrid',
+      isPrevious: false,
+      number: 1,
+    );
+    expect(retireNewCycleName(first), 'Corn (GMO Hybrid) - Cycle 1');
+    expect(
+      nextCycleNumber([
+        {'cycleName': retireNewCycleName(first)},
+        {'cycleName': 'Corn (Green Corn) - Cycle 2 | New'},
+      ], isPrevious: false),
+      3,
+    );
+    expect(
+      retireNewCycleName('Corn (GMO Hybrid) - New Cycle 7'),
+      'Corn (GMO Hybrid) - Cycle 7',
+    );
+    expect(retireNewCycleName('My custom cycle'), 'My custom cycle');
+    expect(
+      retireNewCycleName('Corn (Sweet Corn) - Prev Cycle 1'),
+      'Corn (Sweet Corn) - Prev Cycle 1',
+    );
+    expect(
+      nextCycleNumber([
+        {'cycleName': 'Corn (Green Corn) - Cycle 8 | New'},
+      ], isPrevious: false),
+      9,
+    );
   });
 }
