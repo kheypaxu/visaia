@@ -354,7 +354,9 @@ class FarmReportPdfService {
       }
     } catch (_) {}
     try {
-      final q3 = await db.collection('reports').where('farmId', isEqualTo: farmId).get();
+      final q3 = await db.collection('reports')
+          .where('farmerId', isEqualTo: userId)
+          .where('farmId', isEqualTo: farmId).get();
       for (final doc in q3.docs) {
         regularDocsMap[doc.id] = doc;
       }
@@ -398,7 +400,9 @@ class FarmReportPdfService {
       }
     } catch (_) {}
     try {
-      final qc3 = await db.collection('clustered_reports').where('farmId', isEqualTo: farmId).get();
+      final qc3 = await db.collection('clustered_reports')
+          .where('farmerId', isEqualTo: userId)
+          .where('farmId', isEqualTo: farmId).get();
       for (final doc in qc3.docs) {
         clusteredDocsMap[doc.id] = doc;
       }

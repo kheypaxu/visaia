@@ -1,9 +1,8 @@
 import 'dart:math' as math;
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:visaia/services/detection_weather_service.dart';
-import 'package:visaia/services/report_map_location_resolver.dart';
+import 'package:visaia/services/regional_feed_service.dart';
 
 /// The five level risk gradient shared by the web dashboard risk map and
 /// this mobile risk map.
@@ -187,6 +186,9 @@ class FawThreat {
   /// Owner of the report (uid).
   final String ownerId;
 
+  /// Sanitized server entries deliberately do not expose an owner UID.
+  final bool isExternal;
+
   /// Distance in kilometres from the user's nearest field.
   double distanceKm;
 
@@ -225,6 +227,7 @@ class FawThreat {
     required this.treatment,
     required this.timestamp,
     required this.ownerId,
+    this.isExternal = false,
     required this.distanceKm,
   });
 
@@ -271,19 +274,16 @@ class FawThreat {
 /// Loads nearby FAW threats (moth bearing reports and weekly scouting
 /// records) that can reach the user's farm by adult moth flight.
 class FawRiskService {
-  final FirebaseFirestore _db;
+  final RegionalFeedClient _feed;
   final DetectionWeatherService _weatherService;
 
   /// Adult moth flight radius used for the proximity monitoring zone.
   static const double mothRadiusKm = 5.0;
 
-  /// Maximum number of documents read per collection.
-  static const int _maxDocs = 250;
-
   FawRiskService({
-    FirebaseFirestore? db,
+    RegionalFeedClient? feedClient,
     DetectionWeatherService? weatherService,
-  }) : _db = db ?? FirebaseFirestore.instance,
+  }) : _feed = feedClient ?? RegionalFeedClient.instance,
        _weatherService = weatherService ?? DetectionWeatherService();
 
   /// Loads external reports whose monitoring radius reaches the farm footprint.
@@ -293,58 +293,9 @@ class FawRiskService {
     List<List<LatLng>> boundaries = const [],
     double radiusKm = mothRadiusKm,
   }) async {
-    final threats = <FawThreat>[];
-
-    try {
-      final clustered = await _db
-          .collection('clustered_reports')
-          .limit(_maxDocs)
-          .get();
-      for (final doc in clustered.docs) {
-        final threat = _parseClustered(doc);
-        if (threat != null) threats.add(threat);
-      }
-    } catch (e) {
-      debugPrint('FawRiskService: clustered_reports query failed: $e');
-      // Fall back to an unfiltered scan when the nested filter is not
-      // available (missing index / field on legacy documents).
-      try {
-        final all = await _db
-            .collection('clustered_reports')
-            .limit(_maxDocs)
-            .get();
-        for (final doc in all.docs) {
-          final threat = _parseClustered(doc);
-          if (threat != null) threats.add(threat);
-        }
-      } catch (e2) {
-        debugPrint('FawRiskService: clustered_reports fallback failed: $e2');
-      }
-    }
-
-    final reportLocations = ReportMapLocationResolver(db: _db);
-    try {
-      final reports = await _db.collection('reports').limit(_maxDocs).get();
-      for (final doc in reports.docs) {
-        final threat = await _parseReport(doc, reportLocations);
-        if (threat != null) threats.add(threat);
-      }
-    } catch (e) {
-      debugPrint('FawRiskService: reports query failed: $e');
-      try {
-        final all = await _db.collection('reports').limit(_maxDocs).get();
-        for (final doc in all.docs) {
-          final threat = await _parseReport(doc, reportLocations);
-          if (threat != null) threats.add(threat);
-        }
-      } catch (e2) {
-        debugPrint('FawRiskService: reports fallback failed: $e2');
-      }
-    }
-
-    // Unknown ownership cannot establish that a detection is external.
     if (anchors.isEmpty && boundaries.isEmpty) return [];
-    threats.removeWhere((t) => t.ownerId.isEmpty || t.ownerId == currentUserId);
+    final snapshot = await _feed.load(expectedUserId: currentUserId);
+    final threats = snapshot.threats.map(_fromPublic).toList();
 
     // Proximity filter against the user's own fields.
     final distance = const Distance();
@@ -419,140 +370,54 @@ class FawRiskService {
   // Parsing
   // ------------------------------------------------------------------
 
-  FawThreat? _parseClustered(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
-    final data = doc.data();
-    final location = _extractLocation(data);
-    if (location == null) return null;
-
-    final totals = _asMap(data['totals']);
-    final moths = _asInt(totals?['moths']);
-
-    final eggs = _asInt(totals?['eggs']);
-    final larvae = _asInt(totals?['larvae']);
-    final pupae = _asInt(totals?['pupae']);
-    if (moths <= 0 && larvae <= 0) return null;
-
-    final dap = _asInt(data['dap']);
-    final growthStage = MatrixGrowthStage.fromDap(dap);
-    final damagePercentage = _asDouble(data['damagePercentage']);
-    final thresholdReached =
-        data['exceedsThreshold'] == true ||
-        data['isHighLevel'] == true ||
-        data['thresholdTriggered'] == true ||
-        damagePercentage >= 10.0;
-
-    final risk = _compositeRisk(
-      eggs: eggs,
-      larvae: larvae,
-      pupae: pupae,
-      moths: moths,
-      dap: dap,
-      growthStage: growthStage,
-      damagePercentage: damagePercentage,
-      thresholdReached: thresholdReached,
-      storedRisk: data['riskLevel'] ?? data['risk'] ?? data['level'],
-    );
-
+  FawThreat _fromPublic(Map<String, dynamic> data) {
+    final counts = Map<String, dynamic>.from(data['counts'] as Map);
+    final location = Map<String, dynamic>.from(data['location'] as Map);
+    final dap = data['dap'] as int;
+    final growth = MatrixGrowthStage.fromDap(dap);
+    final damage = data['damagePercentage'] as double;
+    final threshold = data['thresholdReached'] as bool;
     return FawThreat(
-      id: doc.id,
-      isClustered: true,
-      location: location,
-      areaName: (data['areaName'] ?? '').toString(),
-      barangay: (data['barangay'] ?? '').toString(),
-      farmerName: (data['farmerName'] ?? '').toString(),
-      farmName: (data['farmName'] ?? '').toString(),
-      fieldName: (data['fieldName'] ?? '').toString(),
-      detection: (data['expertDiagnosis'] ?? 'Fall Army Worm').toString(),
-      stage: moths > 0 ? FawStageKey.moth : FawStageKey.larva,
-      riskLevel: risk,
+      id: data['id'] as String,
+      isClustered: data['isClustered'] as bool,
+      location: LatLng(location['lat'] as double, location['lng'] as double),
+      areaName: data['barangay'] as String,
+      barangay: data['barangay'] as String,
+      farmerName: '',
+      farmName: '',
+      fieldName: '',
+      detection: 'Fall Armyworm',
+      stage: data['stage'] == 'moth' ? FawStageKey.moth : FawStageKey.larva,
+      riskLevel: _compositeRisk(
+        eggs: counts['egg'] as int,
+        larvae: counts['larva'] as int,
+        pupae: counts['pupa'] as int,
+        moths: counts['moth'] as int,
+        dap: dap,
+        growthStage: growth,
+        damagePercentage: damage,
+        thresholdReached: threshold,
+        storedRisk: data['risk'],
+      ),
       dap: dap,
-      growthStage: growthStage,
-      eggs: eggs,
-      larvae: larvae,
-      pupae: pupae,
-      moths: moths,
-      damagePercentage: damagePercentage,
-      thresholdReached: thresholdReached,
-      mitigationAction: _asString(data['mitigationAction']),
-      advisoryMessage: _asString(data['advisoryMessage']),
-      controlMethod: _asString(data['controlMethod']),
-      expertDiagnosis: _asString(data['expertDiagnosis']),
-      analysis: _asString(data['analysis']),
-      treatment: _asString(data['treatment']),
-      timestamp:
-          _parseDateTime(data['timestamp']) ??
-          _parseDateTime(data['createdAt']) ??
-          _parseDateTime(data['submittedAt']),
-      ownerId: (data['userId'] ?? data['farmerId'] ?? '').toString(),
-      distanceKm: double.infinity,
-    );
-  }
-
-  Future<FawThreat?> _parseReport(
-    QueryDocumentSnapshot<Map<String, dynamic>> doc,
-    ReportMapLocationResolver locations,
-  ) async {
-    final data = doc.data();
-
-    final stage = FawStageKey.fromText(
-      data['lifeStage'] ?? data['stage'] ?? data['finalValidatedLifeStage'],
-    );
-    if (stage != FawStageKey.moth && stage != FawStageKey.larva) return null;
-
-    final location = await locations.resolve(data);
-    if (location == null) return null;
-
-    final dap = _asInt(data['dap']);
-    final growthStage = MatrixGrowthStage.fromDap(dap);
-    final damagePercentage = _asDouble(data['damagePercentage']);
-    final thresholdReached =
-        data['exceedsThreshold'] == true ||
-        data['isHighLevel'] == true ||
-        damagePercentage >= 10.0;
-
-    final risk = _compositeRisk(
-      eggs: 0,
-      larvae: stage == FawStageKey.larva ? 1 : 0,
-      pupae: 0,
-      moths: stage == FawStageKey.moth ? 1 : 0,
-      dap: dap,
-      growthStage: growthStage,
-      damagePercentage: damagePercentage,
-      thresholdReached: thresholdReached,
-      storedRisk: data['risk'] ?? data['riskLevel'],
-    );
-
-    return FawThreat(
-      id: doc.id,
-      isClustered: false,
-      location: location,
-      areaName: (data['areaName'] ?? '').toString(),
-      barangay: (data['barangay'] ?? '').toString(),
-      farmerName: (data['farmerName'] ?? '').toString(),
-      farmName: (data['farmName'] ?? '').toString(),
-      fieldName: (data['fieldName'] ?? '').toString(),
-      detection: (data['detection'] ?? data['pestName'] ?? 'Fall Army Worm')
-          .toString(),
-      stage: stage,
-      riskLevel: risk,
-      dap: dap,
-      growthStage: growthStage,
-      eggs: 0,
-      larvae: stage == FawStageKey.larva ? 1 : 0,
-      pupae: 0,
-      moths: stage == FawStageKey.moth ? 1 : 0,
-      damagePercentage: damagePercentage,
-      thresholdReached: thresholdReached,
-      mitigationAction: _asString(data['mitigationAction']),
-      advisoryMessage: _asString(data['advisoryMessage']),
-      controlMethod: _asString(data['controlMethod']),
-      expertDiagnosis: _asString(data['expertDiagnosis']),
-      analysis: _asString(data['analysis']),
-      treatment: _asString(data['treatment']),
-      timestamp:
-          _parseDateTime(data['timestamp']) ??
-          _parseDateTime(data['createdAt']),
-      ownerId: (data['farmerId'] ?? data['userId'] ?? '').toString(),
+      growthStage: growth,
+      eggs: counts['egg'] as int,
+      larvae: counts['larva'] as int,
+      pupae: counts['pupa'] as int,
+      moths: counts['moth'] as int,
+      damagePercentage: damage,
+      thresholdReached: threshold,
+      mitigationAction: null,
+      advisoryMessage: null,
+      controlMethod: null,
+      expertDiagnosis: null,
+      analysis: null,
+      treatment: null,
+      timestamp: data['timestamp'] == null
+          ? null
+          : DateTime.parse(data['timestamp'] as String),
+      ownerId: '',
+      isExternal: true,
       distanceKm: double.infinity,
     );
   }
@@ -607,55 +472,6 @@ class FawRiskService {
     }
 
     return highest;
-  }
-
-  // ------------------------------------------------------------------
-  // Helpers
-  // ------------------------------------------------------------------
-
-  LatLng? _extractLocation(Map<String, dynamic> data) {
-    final location = data['location'];
-    if (location is Map) {
-      final lat = _asDouble(location['lat']);
-      final lng = _asDouble(location['lng']);
-      if (lat != 0 || lng != 0) return LatLng(lat, lng);
-    }
-    final lat = _asDouble(data['lat']);
-    final lng = _asDouble(data['lng']);
-    if (lat != 0 || lng != 0) return LatLng(lat, lng);
-    return null;
-  }
-
-  Map<String, dynamic>? _asMap(dynamic value) {
-    if (value is Map) return Map<String, dynamic>.from(value);
-    return null;
-  }
-
-  int _asInt(dynamic value) {
-    if (value is num) return value.toInt();
-    if (value is String) return int.tryParse(value) ?? 0;
-    return 0;
-  }
-
-  double _asDouble(dynamic value) {
-    if (value is num) return value.toDouble();
-    if (value is String) return double.tryParse(value) ?? 0.0;
-    return 0.0;
-  }
-
-  String? _asString(dynamic value) {
-    if (value == null) return null;
-    final text = value.toString().trim();
-    return text.isEmpty ? null : text;
-  }
-
-  DateTime? _parseDateTime(dynamic value) {
-    if (value == null) return null;
-    if (value is Timestamp) return value.toDate();
-    if (value is DateTime) return value;
-    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
-    if (value is String) return DateTime.tryParse(value);
-    return null;
   }
 }
 

@@ -414,7 +414,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
   late final Stream<double> _totalYieldStream;
   late final Stream<List<CycleModel>> _activeCyclesStream;
   late final Future<List<FieldModel>> _fieldsFuture;
-  late final Stream<List<FawLifeStageReport>> _fawStream;
+  late Stream<List<FawLifeStageReport>> _fawStream;
   late final Stream<List<ActivityFeedItem>> _activityStream;
 
   @override
@@ -607,6 +607,19 @@ class _HomeDashboardState extends State<HomeDashboard> {
                   );
                 }
 
+                if (snapshot.hasError) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 20),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text('Regional information is unavailable. This does not mean there are no pest reports.'),
+                      TextButton.icon(
+                        onPressed: () => setState(() => _fawStream = _fawService.watchFawAssessment()),
+                        style: TextButton.styleFrom(foregroundColor: darkGreen),
+                        icon: const Icon(Icons.refresh), label: const Text('Try again'),
+                      ),
+                    ]),
+                  );
+                }
                 final reports = snapshot.data ?? [];
                 if (reports.isEmpty) {
                   return const Padding(
@@ -618,9 +631,13 @@ class _HomeDashboardState extends State<HomeDashboard> {
                 }
 
                 return Column(
-                  children: reports
-                      .map((report) => _buildFawStageCard(report))
-                      .toList(),
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Padding(padding: EdgeInsets.only(bottom: 12),
+                      child: Text('Regional overview updates about every 5 minutes.')),
+                    ...reports
+                      .map((report) => _buildFawStageCard(report)),
+                  ],
                 );
               },
             ),

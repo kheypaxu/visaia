@@ -1,0 +1,208 @@
+rules_version = '2';
+// See docs/firestore-security-audit.md for deployment order and role review.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function self(uid) { return signedIn() && request.auth.uid == uid; }
+    function staffRole(role) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == role
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('userType', null) in [null, 'dashboard'];
+    }
+    function mao() { return staffRole('mao_admin'); }
+    function rcpc() { return staffRole('rcpc_admin'); }
+    function staff() { return mao() || rcpc(); }
+    function verifiedFarmer() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/farmers/$(request.auth.uid))
+        && get(/databases/$(database)/documents/farmers/$(request.auth.uid)).data.get('status', '') == 'verified';
+    }
+    function mine(data) {
+      return signedIn() && (data.get('farmerId', '') == request.auth.uid || data.get('userId', '') == request.auth.uid);
+    }
+    function ownedSubmission(data) {
+      return mine(data)
+        && data.get('farmerId', request.auth.uid) in [null, '', request.auth.uid]
+        && data.get('userId', request.auth.uid) in [null, '', request.auth.uid];
+    }
+    function identityUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['farmerId', 'userId', 'farmId', 'fieldId', 'cycleId']);
+    }
+    function pending(data) {
+      return data.get('status', 'pending') in ['pending', 'pending_offline_sync'];
+    }
+    function noOfficialOutcome(data) {
+      return !data.keys().hasAny([
+        'validatedAt', 'validatedBy', 'validationNotes', 'validationAdjustment',
+        'expertDiagnosis', 'expertCorrection', 'finalValidatedResult',
+        'finalValidatedLifeStage', 'rejectionReason', 'rejectedAt', 'rejectedBy',
+        'resolvedAt', 'resolvedBy', 'advisoryMessage', 'pushNotificationMessage',
+        'pushNotificationPayload', 'isArchived', 'archivedAt'
+      ]) && data.get('damageAssessment', {}).get('validationStatus', 'pending') == 'pending';
+    }
+    function ownerPendingEdit() {
+      return verifiedFarmer() && mine(resource.data) && ownedSubmission(request.resource.data)
+        && identityUnchanged() && pending(resource.data) && pending(request.resource.data)
+        && noOfficialOutcome(request.resource.data);
+    }
+    function resolutionOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'status', 'resolvedAt', 'resolvedBy', 'resolvedByUserName',
+        'resolutionReason', 'resolutionExplanation', 'reportCategory'
+      ]) && request.resource.data.status == 'resolved'
+        && request.resource.data.resolvedBy == request.auth.uid
+        && request.resource.data.resolvedAt is timestamp;
+    }
+    function ownerResolution() {
+      return verifiedFarmer() && mine(resource.data)
+        && resource.data.get('status', '') == 'validated' && resolutionOnly();
+    }
+
+    match /users/{uid} {
+      allow get, list: if self(uid) || staff();
+      // Role provisioning must use Firebase Admin, never self-service writes.
+      allow create: if self(uid)
+        && request.resource.data.get('uid', uid) == uid
+        && request.resource.data.get('role', null) in [null, 'farmer']
+        && request.resource.data.get('userType', null) in [null, 'app']
+        && !request.resource.data.keys().hasAny(['isAdmin', 'admin', 'permissions', 'claims']);
+      allow update: if self(uid) && !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['uid', 'role', 'userType', 'isAdmin', 'admin', 'permissions', 'claims', 'disabled']);
+      allow delete: if false;
+
+      match /farms/{farmId} {
+        allow read: if self(uid) || staff();
+        allow write: if self(uid) && verifiedFarmer();
+      }
+      match /fields/{fieldId} {
+        allow read: if self(uid) || staff();
+        allow write: if self(uid) && verifiedFarmer();
+      }
+      match /pests/{pestId} {
+        allow read: if self(uid) || staff();
+        allow write: if self(uid) && verifiedFarmer();
+      }
+      match /cycles/{cycleId} {
+        allow read: if self(uid) || staff();
+        allow write: if self(uid) && verifiedFarmer();
+        match /{descendant=**} {
+          allow read: if self(uid) || staff();
+          allow write: if self(uid) && verifiedFarmer();
+        }
+      }
+      match /notifications/{notificationId} {
+        allow read: if self(uid) || staff();
+        allow create: if staff();
+        allow update: if self(uid) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read'])
+          && request.resource.data.read is bool;
+        allow delete: if self(uid);
+      }
+      match /tokens/{tokenId} { allow read, write: if false; }
+    }
+
+    // Required by the dashboard's collectionGroup('farms') queries. No farmer
+    // collection-group access: that query would expose other farmers' locations.
+    match /{parent=**}/farms/{farmId} { allow read: if staff(); }
+    match /farms/{farmId} { allow read: if staff(); }
+
+    match /farmers/{uid} {
+      allow read: if self(uid) || staff();
+      allow create: if self(uid)
+        && request.resource.data.get('uid', uid) == uid
+        && request.resource.data.get('status', 'pending') == 'pending'
+        && !request.resource.data.keys().hasAny([
+          'role', 'userType', 'isVerified', 'verifiedAt', 'verifiedBy',
+          'reviewedAt', 'reviewedBy', 'rejectionReason', 'rejectedAt'
+        ]);
+      allow update: if (self(uid)
+        && request.resource.data.get('status', 'pending') == resource.data.get('status', 'pending')
+        && request.resource.data.get('uid', uid) == resource.data.get('uid', uid)
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'role', 'userType', 'isVerified', 'verifiedAt', 'verifiedBy',
+          'reviewedAt', 'reviewedBy', 'reviewNotes', 'rejectionReason', 'rejectedAt', 'rejectedBy'
+        ])) || (mao()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'rejectionReason', 'rejectedAt', 'rejectedBy', 'reviewNotes', 'reviewedAt', 'reviewedBy'
+          ]) && (request.resource.data.status in ['pending', 'rejected']
+            || request.resource.data.status == resource.data.status));
+      // Approval to 'verified' is committed by the authenticated Admin SDK route,
+      // ensuring verification and its notification event are created together.
+      allow delete: if mao();
+    }
+
+    match /reports/{reportId} {
+      allow read: if staff() || mine(resource.data);
+      allow create: if verifiedFarmer() && ownedSubmission(request.resource.data)
+        && pending(request.resource.data) && noOfficialOutcome(request.resource.data);
+      allow update: if (rcpc() && identityUnchanged()) || ownerPendingEdit() || ownerResolution();
+      allow delete: if rcpc();
+    }
+    match /clustered_reports/{reportId} {
+      allow read: if staff() || mine(resource.data);
+      allow create: if verifiedFarmer() && ownedSubmission(request.resource.data)
+        && pending(request.resource.data) && noOfficialOutcome(request.resource.data);
+      allow update: if (rcpc() && identityUnchanged()) || ownerPendingEdit() || ownerResolution();
+      allow delete: if rcpc();
+    }
+    match /plant_damage_reports/{reportId} {
+      allow read: if staff() || mine(resource.data);
+      allow create: if verifiedFarmer() && ownedSubmission(request.resource.data)
+        && pending(request.resource.data) && noOfficialOutcome(request.resource.data);
+      allow update: if (rcpc() && identityUnchanged()) || ownerPendingEdit() || ownerResolution();
+      allow delete: if rcpc();
+    }
+
+    function ownsValidation(data) {
+      return signedIn() && (mine(data) || (
+        data.get('reportId', null) is string
+        && exists(/databases/$(database)/documents/reports/$(data.reportId))
+        && mine(get(/databases/$(database)/documents/reports/$(data.reportId)).data)
+      ));
+    }
+    match /validations/{validationId} {
+      allow read: if staff() || ownsValidation(resource.data);
+      allow create: if rcpc() && request.resource.data.get('reportId', null) is string;
+      allow update: if (rcpc() && identityUnchanged()
+          && request.resource.data.get('reportId', '') == resource.data.get('reportId', ''))
+        || (verifiedFarmer() && ownsValidation(resource.data)
+          && resource.data.get('status', 'validated') == 'validated'
+          && get(/databases/$(database)/documents/reports/$(resource.data.reportId)).data.get('status', '') == 'validated'
+          && resolutionOnly());
+      allow delete: if rcpc();
+    }
+
+    match /alerts/{alertId} {
+      allow read: if staff() || (signedIn() && resource.data.get('farmerId', '') == request.auth.uid);
+      allow create: if staff() || (verifiedFarmer()
+        && request.resource.data.get('farmerId', '') == request.auth.uid
+        && request.resource.data.get('source', '') == 'daily_log'
+        && request.resource.data.get('alertType', '') == 'scheduled_activity'
+        && request.resource.data.get('status', '') == 'unread'
+        && request.resource.data.keys().hasOnly([
+          'alertType', 'title', 'message', 'farmerId', 'createdAt', 'status',
+          'source', 'risk', 'activityId', 'cycleId', 'scheduledFor', 'activityType', 'severity'
+        ]));
+      allow update: if staff() || (signedIn() && resource.data.get('farmerId', '') == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+        && request.resource.data.status in ['read', 'unread']);
+      allow delete: if staff();
+    }
+    match /dispatches/{id} { allow read, write: if staff(); }
+    match /alertDrafts/{id} { allow read, write: if staff(); }
+    match /pests/{id} {
+      allow read: if verifiedFarmer() || staff();
+      allow write: if rcpc();
+    }
+    match /app_config/release {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /pushDevices/{document=**} { allow read, write: if false; }
+    match /pushEvents/{document=**} { allow read, write: if false; }
+    match /regionalRiskCache/{document=**} { allow read, write: if false; }
+    match /regionalFeedBudgets/{document=**} { allow read, write: if false; }
+    // Unlisted paths fail closed; no authenticated-user catch-all remains.
+  }
+}

@@ -41,20 +41,16 @@ Firestore TTL, or change Firebase billing. Firebase must remain on Spark.
      `visaia`, stored as a secret environment value, never in frontend code.
    - `CRON_SECRET`: a cryptographically random secret, at least 32 characters.
    The existing local service-account fallback is retained for local development.
-2. Review the deployed Firestore rules. Both new collections are server-only:
-
-   ```
-   match /pushDevices/{id} { allow read, write: if false; }
-   match /pushEvents/{id} { allow read, write: if false; }
-   ```
-
-   Merge these into the existing rules; do not replace the full ruleset. A broader
-   wildcard allow rule still grants access and must exclude these collections.
-   Neither mobile nor dashboard clients need direct access to these collections.
-   Admin SDK server operations bypass client rules.
+2. Follow [the regional feed rollout](regional-feed-rollout.md) before publishing
+   rules. The full tested replacement is now in the root `firestore.rules`.
+   Review existing administrator roles, deploy the updated dashboard and update
+   the pilot APKs first. Then replace the old catch-all with the entire rules file;
+   do not append deny blocks below the existing authenticated-user allow rule.
+   Push records, regional caches and budget documents are server-only. The Admin
+   SDK route continues to work because client rules do not control Admin access.
 3. Redeploy `visaia-dashboard` to `https://visaia-web.vercel.app`. The included
    `vercel.json` runs `/api/cron/farm-reminders` at `0 23 * * *` UTC, or 7 AM Manila.
-   Vercel Hobby can invoke during the scheduled hour, so expect 7–8 AM rather than
+   Vercel Hobby can invoke during the scheduled hour, so expect 7Ã¢â‚¬â€œ8 AM rather than
    an exact minute. Cron runs on production deployments only.
 4. Ensure the FCM HTTP v1 API is enabled for the existing Firebase project. This
    does not require upgrading Firebase to Blaze.
@@ -88,8 +84,8 @@ in this implementation; the repo currently has Android Firebase configuration.
 
 ## Validation
 
-- `node --test push-backend/policy.test.cjs push-backend/delivery.test.cjs`
-- `node ../visaia-dashboard/node_modules/typescript/bin/tsc -p push-backend/tsconfig.check.json --incremental false`
+- `npm.cmd --prefix ../visaia-dashboard run test:notifications`
+- `npm.cmd --prefix ../visaia-dashboard run check:security`
 - `flutter test test/push_message_policy_test.dart test/daily_log_week_policy_test.dart test/notification_feed_test.dart`
 - `flutter analyze --no-pub lib/services/push_notification_service.dart lib/services/push_message_policy.dart lib/main.dart lib/services/auth_service.dart lib/screens/auth/veri_form.dart test/push_message_policy_test.dart`
 - `flutter build apk --debug --no-pub`
@@ -104,16 +100,10 @@ Register a pending account and approve it from MAO to test the
 automatic-sign-out exception. Test missing/completed/scheduled-only logs, partial
 and complete scouting, harvested cycles, and repeated cron calls on the same day.
 
-## Dashboard source staging
+## Source locations
 
-`push-backend/` contains the server sources staged for the sibling dashboard.
-`python scripts/prepare_push_dashboard.py` fingerprints existing target files and
-prepares the minimal verification/admin initialization edits. Then
-`python scripts/install_push_dashboard.py` applies only those eight files and
-refuses if target files changed since staging. Installing into the sibling folder
-requires workspace write approval. These scripts do not deploy anything.
-
-References: [Firebase pricing](https://firebase.google.com/pricing),
-[Firestore quotas](https://firebase.google.com/docs/firestore/quotas),
-[Vercel cron limits](https://vercel.com/docs/cron-jobs/usage-and-pricing),
-[Flutter message delivery](https://firebase.google.com/docs/cloud-messaging/flutter/receive-messages).
+Backend production code and its tests live only in `visaia-dashboard`:
+`app/api/notifications`, `app/api/cron`, and `src/notifications`.
+The mobile app and the shared Firestore rules live in this repository.
+Temporary staging copies, installer scripts and machine-specific manifests have
+been removed; edit and commit each project's canonical files directly.

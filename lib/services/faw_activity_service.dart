@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
-import 'package:visaia/utils/growth_stage.dart';
+import 'package:visaia/services/regional_feed_service.dart';
 import 'package:visaia/utils/location_constants.dart';
 
 // ======================= FAW LIFE STAGE MODELS =======================
@@ -62,18 +62,9 @@ class FawLifeStageReport {
   }
 }
 
-class _BarangayAccumulator {
-  int count = 0;
-  final Set<String> growthStages = <String>{};
-}
-
 // ======================= ACTIVITY FEED MODELS =======================
 
-enum ActivityFeedKind {
-  dailyLog,
-  scouting,
-  pestReport,
-}
+enum ActivityFeedKind { dailyLog, scouting, pestReport }
 
 /// A single entry of the "Recent Activity" feed.
 class ActivityFeedItem {
@@ -100,451 +91,43 @@ class ActivityFeedItem {
 
 // ======================= MUNICIPAL FAW SERVICE =======================
 
-/// Watches every farmer inside a municipality and rolls up the FAW life
-/// stages observed there.
-///
-/// Only reports that a DA-RCPC expert validated are part of the assessment:
-///
-///  * `clustered_reports` – official weekly scouting reports. The adjusted
-///    station counters of the validated report hold the confirmed numbers.
-///  * `reports` – pest detection reports, one observation per report.
-///
-/// Reports that are still pending, already resolved or rejected are left
-/// out, so the assessment only shows confirmed FAW presence.
-///
-/// The result groups the observations by FAW life stage, then lists the
-/// barangay where the stage was found together with the number found.
+/// Reads only the authenticated server's public regional projection.
+/// Private farmer profiles and raw reports never enter this service.
 class MunicipalFawService {
-  final FirebaseFirestore _db;
+  final RegionalFeedClient _feed;
   final String municipality;
-
-  /// Barangay of every farmer known through the `farmers` collection.
-  final Map<String, String> _farmerBarangays = {};
-
   MunicipalFawService({
-    FirebaseFirestore? db,
+    RegionalFeedClient? feedClient,
     this.municipality = LocationConstants.defaultMunicipality,
-  }) : _db = db ?? FirebaseFirestore.instance;
+  }) : _feed = feedClient ?? RegionalFeedClient.instance;
 
-  Stream<List<FawLifeStageReport>> watchFawAssessment() {
-    late final StreamController<List<FawLifeStageReport>> controller;
-    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? municipalitySub;
-    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? barangaySub;
-    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? farmersSub;
-    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? reportsSub;
-    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? clusteredSub;
-
-    final Set<String> memberUids = <String>{};
-    final Map<String, QueryDocumentSnapshot<Map<String, dynamic>>> userDocs =
-        {};
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> reportDocs = const [];
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> clusteredDocs = const [];
-
-    var recomputing = false;
-    var recomputeQueued = false;
-    Timer? debounce;
-
-    Future<void> recompute() async {
-      if (recomputing) {
-        recomputeQueued = true;
-        return;
-      }
-      recomputing = true;
-      try {
-        do {
-          recomputeQueued = false;
-          final reports = await _buildReports(
-            memberUids,
-            userDocs,
-            reportDocs,
-            clusteredDocs,
-          );
-          if (!controller.isClosed) controller.add(reports);
-        } while (recomputeQueued);
-      } catch (e) {
-        debugPrint('FAW assessment error: $e');
-        if (!controller.isClosed) controller.add(const []);
-      } finally {
-        recomputing = false;
-      }
-    }
-
-    // Several collections fire at the same time, so the roll-up is debounced
-    // to avoid rebuilding it once per snapshot.
-    void scheduleRecompute() {
-      debounce?.cancel();
-      debounce = Timer(const Duration(milliseconds: 400), recompute);
-    }
-
-    controller = StreamController<List<FawLifeStageReport>>(
-      onListen: () {
-        // Farmers that explicitly set their municipality.
-        municipalitySub = _db
-            .collection('users')
-            .where('municipality', isEqualTo: municipality)
-            .snapshots()
-            .listen(
-          (snap) {
-            for (final doc in snap.docs) {
-              memberUids.add(doc.id);
-              userDocs[doc.id] = doc;
-            }
-            scheduleRecompute();
-          },
-          onError: (e) {
-            debugPrint('watchFawAssessment users error: $e');
-          },
-        );
-
-        // Farmers registered before the municipality field existed are matched
-        // by their barangay instead.
-        barangaySub = _db.collection('users').snapshots().listen(
-          (snap) {
-            for (final doc in snap.docs) {
-              final barangay = (doc.data()['barangay'] ?? '').toString();
-              if (_municipalityBarangay(barangay) == null) continue;
-              memberUids.add(doc.id);
-              userDocs[doc.id] = doc;
-            }
-            scheduleRecompute();
-          },
-          onError: (e) {
-            debugPrint('watchFawAssessment barangay fallback error: $e');
-          },
-        );
-
-        // Barangay of every farmer, used to attribute reports to a barangay.
-        farmersSub = _db.collection('farmers').snapshots().listen(
-          (snap) {
-            for (final doc in snap.docs) {
-              final barangay = (doc.data()['barangay'] ?? '').toString();
-              if (barangay.trim().isEmpty) continue;
-              _farmerBarangays[doc.id] = _canonicalBarangay(barangay);
-              if (_municipalityBarangay(barangay) != null) {
-                memberUids.add(doc.id);
-              }
-            }
-            scheduleRecompute();
-          },
-          onError: (e) {
-            debugPrint('watchFawAssessment farmers error: $e');
-          },
-        );
-
-        // Official pest detection reports.
-        reportsSub = _db.collection('reports').snapshots().listen(
-          (snap) {
-            reportDocs = snap.docs;
-            scheduleRecompute();
-          },
-          onError: (e) {
-            debugPrint('watchFawAssessment reports error: $e');
-          },
-        );
-
-        // Official weekly scouting reports.
-        clusteredSub = _db.collection('clustered_reports').snapshots().listen(
-          (snap) {
-            clusteredDocs = snap.docs;
-            scheduleRecompute();
-          },
-          onError: (e) {
-            debugPrint('watchFawAssessment clustered reports error: $e');
-          },
-        );
-      },
-      onCancel: () {
-        debounce?.cancel();
-        municipalitySub?.cancel();
-        barangaySub?.cancel();
-        farmersSub?.cancel();
-        reportsSub?.cancel();
-        clusteredSub?.cancel();
-      },
-    );
-
-    return controller.stream;
-  }
-
-  Future<List<FawLifeStageReport>> _buildReports(
-    Set<String> memberUids,
-    Map<String, QueryDocumentSnapshot<Map<String, dynamic>>> userDocs,
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> reportDocs,
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> clusteredDocs,
-  ) async {
-    // uid -> barangay for every farmer inside the municipality.
-    final Map<String, String> uidToBarangay = {};
-    for (final uid in memberUids) {
-      final userDoc = userDocs[uid];
-      final barangay = userDoc != null
-          ? await _resolveBarangay(uid, userDoc.data())
-          : (_farmerBarangays[uid] ?? '');
-      if (barangay.isEmpty) continue;
-      uidToBarangay[uid] = barangay;
-    }
-
-    if (uidToBarangay.isEmpty) return const [];
-
-    final accumulators = <FawLifeStage, Map<String, _BarangayAccumulator>>{
-      for (final stage in FawLifeStage.values)
-        stage: <String, _BarangayAccumulator>{},
-    };
-
-    void record(
-      FawLifeStage stage,
-      String barangay,
-      int count,
-      String? growthStage,
-    ) {
-      if (count <= 0) return;
-      final entry = accumulators[stage]!.putIfAbsent(
-        barangay,
-        () => _BarangayAccumulator(),
-      );
-      entry.count += count;
-      final label = growthStageDisplayName(growthStage ?? '');
-      if (label.isNotEmpty) entry.growthStages.add(label);
-    }
-
-    // ─── Official weekly scouting reports ───────────────────────────────
-    // Only validated reports count, and only the newest report of a cycle
-    // week is kept so that a re-submitted report is not counted twice.
-    final Map<String, _ClusteredReport> clusteredByWeek = {};
-    for (final doc in clusteredDocs) {
-      final data = doc.data();
-      if (!_isValidated(data)) continue;
-
-      final uid = _ownerUid(data, uidToBarangay);
-      if (uid == null) continue;
-
-      final cycleId = (data['cycleId'] ?? '').toString().trim();
-      final weekNumber = _asInt(data['weekNumber']);
-      if (cycleId.isEmpty || weekNumber == null) continue;
-
-      final key = '$uid#$cycleId#$weekNumber';
-      final existing = clusteredByWeek[key];
-      if (existing == null ||
-          _reportTime(data).isAfter(existing.timestamp)) {
-        clusteredByWeek[key] = _ClusteredReport(
-          uid: uid,
-          cycleId: cycleId,
-          weekNumber: weekNumber,
-          data: data,
-          timestamp: _reportTime(data),
-        );
-      }
-    }
-
-    for (final report in clusteredByWeek.values) {
-      final barangay = uidToBarangay[report.uid];
-      if (barangay == null) continue;
-      final growthStage = (report.data['growthStage'] ?? '').toString();
-
-      // The DA-RCPC expert can correct the station counters while
-      // validating, so the adjusted stations are preferred over the totals
-      // that were captured when the report was filed.
-      final stationCounts = _sumStations(report.data['stationsData']);
-      if (stationCounts != null) {
-        for (final stage in FawLifeStage.values) {
-          record(
-            stage,
-            barangay,
-            stationCounts[stage] ?? 0,
-            growthStage,
-          );
-        }
-        continue;
-      }
-
-      final totals = report.data['totals'];
-      if (totals is Map) {
-        for (final stage in FawLifeStage.values) {
-          record(
-            stage,
-            barangay,
-            _asInt(totals[stage.totalsField]) ?? 0,
-            growthStage,
-          );
-        }
-      }
-    }
-
-    // ─── Validated pest detection reports (one observation per report) ──
-    for (final doc in reportDocs) {
-      final data = doc.data();
-      if (!_isValidated(data)) continue;
-
-      final uid = _ownerUid(data, uidToBarangay);
-      if (uid == null) continue;
-
-      final stage = _mapLifeStage(
-        data['lifeStage'] ?? data['stage'] ?? data['originalLifeStage'],
-      );
-      if (stage == null) continue;
-
-      record(
-        stage,
-        uidToBarangay[uid]!,
-        1,
-        (data['growthStage'] ?? '').toString(),
-      );
-    }
-
-    final reports = <FawLifeStageReport>[];
-    for (final stage in FawLifeStage.values) {
-      final barangays = accumulators[stage]!;
-      if (barangays.isEmpty) continue;
-
-      final findings = barangays.entries
-          .map((entry) => FawBarangayFinding(
-                barangay: entry.key,
-                count: entry.value.count,
-                growthStages: entry.value.growthStages,
-              ))
-          .toList()
-        ..sort((a, b) {
-          final byCount = b.count.compareTo(a.count);
-          if (byCount != 0) return byCount;
-          return a.barangay.compareTo(b.barangay);
-        });
-
-      reports.add(FawLifeStageReport(
-        stage: stage,
-        total: findings.fold<int>(0, (total, finding) => total + finding.count),
-        findings: findings,
-      ));
-    }
-
-    // The life stage with the most findings comes first.
-    reports.sort((a, b) => b.total.compareTo(a.total));
-
-    return reports;
-  }
-
-  /// The uid of the farmer that owns a report, when that farmer belongs to
-  /// the municipality.
-  String? _ownerUid(Map<String, dynamic> data, Map<String, String> uidToBarangay) {
-    for (final key in const ['userId', 'farmerId']) {
-      final value = (data[key] ?? '').toString().trim();
-      if (value.isNotEmpty && uidToBarangay.containsKey(value)) {
-        return value;
-      }
-    }
-    return null;
-  }
-
-  Future<String> _resolveBarangay(
-      String uid, Map<String, dynamic> userData) async {
-    final fromUser = _canonicalBarangay((userData['barangay'] ?? '').toString());
-    if (fromUser.isNotEmpty) return fromUser;
-
-    final fromFarmer = _canonicalBarangay(_farmerBarangays[uid] ?? '');
-    if (fromFarmer.isNotEmpty) return fromFarmer;
-
-    try {
-      final farmerDoc = await _db.collection('farmers').doc(uid).get();
-      return _canonicalBarangay(
-          (farmerDoc.data()?['barangay'] ?? '').toString());
-    } catch (e) {
-      debugPrint('FAW assessment: could not resolve barangay for $uid: $e');
-      return '';
-    }
-  }
-
-  /// The canonical name of a barangay inside the municipality, or null when
-  /// the name does not belong to it.
-  String? _municipalityBarangay(String raw) {
-    final value = raw.trim();
-    if (value.isEmpty) return null;
-    for (final barangay in LocationConstants.cabatuanBarangays) {
-      if (barangay.toLowerCase() == value.toLowerCase()) return barangay;
-    }
-    return null;
-  }
-
-  /// The municipality spelling of a barangay name, so the same barangay is
-  /// never split over several rows because of casing or stray whitespace.
-  String _canonicalBarangay(String raw) {
-    final value = raw.trim();
-    return _municipalityBarangay(value) ?? value;
-  }
+  Stream<List<FawLifeStageReport>> watchFawAssessment() =>
+      _feed.watch(municipality: municipality).map(assessmentFromSnapshot);
 }
 
-/// A clustered scouting report of a single cycle week.
-class _ClusteredReport {
-  final String uid;
-  final String cycleId;
-  final int weekNumber;
-  final Map<String, dynamic> data;
-  final DateTime timestamp;
-
-  const _ClusteredReport({
-    required this.uid,
-    required this.cycleId,
-    required this.weekNumber,
-    required this.data,
-    required this.timestamp,
-  });
-}
-
-/// Only reports that a DA-RCPC expert validated are part of the assessment.
-/// Pending, resolved and rejected reports are left out.
-bool _isValidated(Map<String, dynamic> data) {
-  final status = (data['status'] ?? '').toString().trim().toLowerCase();
-  return status == 'validated';
-}
-
-/// Sums the life stage counters of a list of station maps.
-///
-/// Returns null when the report has no station list at all, so the caller can
-/// fall back to the totals that were captured when the report was filed.
-Map<FawLifeStage, int>? _sumStations(dynamic stations) {
-  if (stations is! List || stations.isEmpty) return null;
-
-  final counts = <FawLifeStage, int>{};
-  for (final rawStation in stations) {
-    if (rawStation is! Map) continue;
-    final station = Map<String, dynamic>.from(rawStation);
-    for (final stage in FawLifeStage.values) {
-      final count = _asInt(station[stage.stationField]) ?? 0;
-      if (count <= 0) continue;
-      counts[stage] = (counts[stage] ?? 0) + count;
-    }
-  }
-  return counts;
-}
-
-int? _asInt(dynamic value) {
-  if (value is num) return value.toInt();
-  if (value is String) return int.tryParse(value.trim());
-  return null;
-}
-
-DateTime _reportTime(Map<String, dynamic> data) {
-  for (final key in const [
-    'reportDate',
-    'timestamp',
-    'submittedAt',
-    'createdAt',
-    'dateConducted',
-  ]) {
-    final parsed = _parseDateTime(data[key]);
-    if (parsed != null) return parsed;
-  }
-  return DateTime.fromMillisecondsSinceEpoch(0);
-}
-
-FawLifeStage? _mapLifeStage(dynamic raw) {
-  final value = (raw ?? '').toString().trim().toLowerCase();
-  if (value.isEmpty) return null;
-  if (value.contains('egg')) return FawLifeStage.egg;
-  if (value.contains('larva')) return FawLifeStage.larva;
-  if (value.contains('pupa')) return FawLifeStage.pupa;
-  if (value.contains('moth') || value.contains('adult')) {
-    return FawLifeStage.moth;
-  }
-  return null;
-}
+List<FawLifeStageReport> assessmentFromSnapshot(
+  RegionalFeedSnapshot snapshot,
+) => snapshot.assessment
+    .map(
+      (data) => FawLifeStageReport(
+        stage: FawLifeStage.values.firstWhere(
+          (stage) => stage.name == data['stage'],
+        ),
+        total: data['total'] as int,
+        findings: (data['findings'] as List)
+            .map(
+              (finding) => FawBarangayFinding(
+                barangay: finding['barangay'] as String,
+                count: finding['count'] as int,
+                growthStages: (finding['growthStages'] as List)
+                    .cast<String>()
+                    .toSet(),
+              ),
+            )
+            .toList(),
+      ),
+    )
+    .toList();
 
 // ======================= ACTIVITY FEED SERVICE =======================
 
@@ -563,8 +146,8 @@ class ActivityFeedService {
   static const int _watchedCycles = 5;
 
   ActivityFeedService({FirebaseFirestore? db, required String userId})
-      : _db = db ?? FirebaseFirestore.instance,
-        _userId = userId;
+    : _db = db ?? FirebaseFirestore.instance,
+      _userId = userId;
 
   /// Recent activity across every cycle of the user.
   Stream<List<ActivityFeedItem>> watchUserActivity({int limit = 8}) =>
@@ -574,8 +157,7 @@ class ActivityFeedService {
   Stream<List<ActivityFeedItem>> watchCycleActivity({
     required String cycleId,
     int limit = 8,
-  }) =>
-      _buildFeed(limit: limit, cycleFilter: cycleId);
+  }) => _buildFeed(limit: limit, cycleFilter: cycleId);
 
   Stream<List<ActivityFeedItem>> _buildFeed({
     required int limit,
@@ -598,7 +180,9 @@ class ActivityFeedService {
     }
 
     void clearCycle(String cycleId) {
-      for (final sub in cycleSubs.remove(cycleId) ?? const <StreamSubscription<dynamic>>[]) {
+      for (final sub
+          in cycleSubs.remove(cycleId) ??
+              const <StreamSubscription<dynamic>>[]) {
         sub.cancel();
       }
       final days = daySubs.remove(cycleId);
@@ -613,31 +197,32 @@ class ActivityFeedService {
     void subscribeCycle(String cycleId, String cycleName) {
       clearCycle(cycleId);
 
-      final cycleRef =
-          _db.collection('users').doc(_userId).collection('cycles').doc(cycleId);
+      final cycleRef = _db
+          .collection('users')
+          .doc(_userId)
+          .collection('cycles')
+          .doc(cycleId);
       final weekSubs = <StreamSubscription<dynamic>>[];
       final dayMap = <String, StreamSubscription<dynamic>>{};
       cycleSubs[cycleId] = weekSubs;
       daySubs[cycleId] = dayMap;
 
       // ---- Weekly field scouting -------------------------------------
-      weekSubs.add(cycleRef.collection('weeks').snapshots().listen(
-        (snap) {
+      weekSubs.add(
+        cycleRef.collection('weeks').snapshots().listen((snap) {
           for (final doc in snap.docs) {
             final item = _scoutingItem(doc, cycleId, cycleName);
             if (item != null) cycleItems[item.id] = item;
           }
           emit();
-        },
-        onError: (e) => debugPrint('weeks watch error: $e'),
-      ));
+        }, onError: (e) => debugPrint('weeks watch error: $e')),
+      );
 
       // ---- Daily logs -----------------------------------------------
-      weekSubs.add(cycleRef.collection('dailyLogs').snapshots().listen(
-        (snap) {
+      weekSubs.add(
+        cycleRef.collection('dailyLogs').snapshots().listen((snap) {
           final days = snap.docs.toList()
-            ..sort((a, b) =>
-                _dayNumber(b.id).compareTo(_dayNumber(a.id)));
+            ..sort((a, b) => _dayNumber(b.id).compareTo(_dayNumber(a.id)));
           final keep = days.take(_watchedDaysPerCycle).map((d) => d.id).toSet();
 
           for (final key in dayMap.keys.toList()) {
@@ -652,78 +237,78 @@ class ActivityFeedService {
                 .doc(dayId)
                 .collection('activities')
                 .snapshots()
-                .listen(
-              (activitiesSnap) {
-                for (final doc in activitiesSnap.docs) {
-                  final item =
-                      _dailyLogItem(doc, cycleId, dayId, cycleName);
-                  if (item != null) cycleItems[item.id] = item;
-                }
-                emit();
-              },
-              onError: (e) => debugPrint('activities watch error: $e'),
-            );
+                .listen((activitiesSnap) {
+                  for (final doc in activitiesSnap.docs) {
+                    final item = _dailyLogItem(doc, cycleId, dayId, cycleName);
+                    if (item != null) cycleItems[item.id] = item;
+                  }
+                  emit();
+                }, onError: (e) => debugPrint('activities watch error: $e'));
           }
           emit();
-        },
-        onError: (e) => debugPrint('dailyLogs watch error: $e'),
-      ));
+        }, onError: (e) => debugPrint('dailyLogs watch error: $e')),
+      );
     }
 
     controller = StreamController<List<ActivityFeedItem>>(
       onListen: () {
         // ---- Cycles -------------------------------------------------
-        rootSubs.add(_db
-            .collection('users')
-            .doc(_userId)
-            .collection('cycles')
-            .snapshots()
-            .listen(
-          (snap) {
-            final wanted = <String, String>{};
-            final candidates = <String, Map<String, dynamic>>{};
+        rootSubs.add(
+          _db
+              .collection('users')
+              .doc(_userId)
+              .collection('cycles')
+              .snapshots()
+              .listen((snap) {
+                final wanted = <String, String>{};
+                final candidates = <String, Map<String, dynamic>>{};
 
-            for (final doc in snap.docs) {
-              if (cycleFilter != null && doc.id != cycleFilter) continue;
-              candidates[doc.id] = doc.data();
-            }
+                for (final doc in snap.docs) {
+                  if (cycleFilter != null && doc.id != cycleFilter) continue;
+                  candidates[doc.id] = doc.data();
+                }
 
-            if (cycleFilter == null && candidates.length > _watchedCycles) {
-              final sorted = candidates.keys.toList()
-                ..sort((a, b) {
-                  final aCreated = _parseDateTime(candidates[a]?['createdAt']);
-                  final bCreated = _parseDateTime(candidates[b]?['createdAt']);
-                  if (aCreated == null && bCreated == null) return a.compareTo(b);
-                  if (aCreated == null) return 1;
-                  if (bCreated == null) return -1;
-                  return bCreated.compareTo(aCreated);
-                });
-              for (final id in sorted.skip(_watchedCycles)) {
-                candidates.remove(id);
-              }
-            }
+                if (cycleFilter == null && candidates.length > _watchedCycles) {
+                  final sorted = candidates.keys.toList()
+                    ..sort((a, b) {
+                      final aCreated = _parseDateTime(
+                        candidates[a]?['createdAt'],
+                      );
+                      final bCreated = _parseDateTime(
+                        candidates[b]?['createdAt'],
+                      );
+                      if (aCreated == null && bCreated == null) {
+                        return a.compareTo(b);
+                      }
+                      if (aCreated == null) return 1;
+                      if (bCreated == null) return -1;
+                      return bCreated.compareTo(aCreated);
+                    });
+                  for (final id in sorted.skip(_watchedCycles)) {
+                    candidates.remove(id);
+                  }
+                }
 
-            for (final entry in candidates.entries) {
-              wanted[entry.key] =
-                  (entry.value['cycleName'] ?? 'Cropping Cycle').toString();
-            }
+                for (final entry in candidates.entries) {
+                  wanted[entry.key] =
+                      (entry.value['cycleName'] ?? 'Cropping Cycle').toString();
+                }
 
-            for (final existing in cycleSubs.keys.toList()) {
-              if (!wanted.containsKey(existing)) clearCycle(existing);
-            }
+                for (final existing in cycleSubs.keys.toList()) {
+                  if (!wanted.containsKey(existing)) clearCycle(existing);
+                }
 
-            for (final entry in wanted.entries) {
-              if (cycleNames[entry.key] == entry.value &&
-                  cycleSubs.containsKey(entry.key)) {
-                continue;
-              }
-              cycleNames[entry.key] = entry.value;
-              subscribeCycle(entry.key, entry.value);
-            }
-            emit();
-          },
-          onError: (e) => debugPrint('cycles watch error: $e'),
-        ));
+                for (final entry in wanted.entries) {
+                  if (cycleNames[entry.key] == entry.value &&
+                      cycleSubs.containsKey(entry.key)) {
+                    continue;
+                  }
+                  cycleNames[entry.key] = entry.value;
+                  subscribeCycle(entry.key, entry.value);
+                }
+                emit();
+              }, onError: (e) => debugPrint('cycles watch error: $e')),
+        );
 
         // ---- Pest uploads -------------------------------------------
         void handleReports(QuerySnapshot<Map<String, dynamic>> snap) {
@@ -736,19 +321,27 @@ class ActivityFeedService {
           emit();
         }
 
-        rootSubs.add(_db
-            .collection('reports')
-            .where('farmerId', isEqualTo: _userId)
-            .snapshots()
-            .listen(handleReports,
-                onError: (e) => debugPrint('reports watch error: $e')));
+        rootSubs.add(
+          _db
+              .collection('reports')
+              .where('farmerId', isEqualTo: _userId)
+              .snapshots()
+              .listen(
+                handleReports,
+                onError: (e) => debugPrint('reports watch error: $e'),
+              ),
+        );
 
-        rootSubs.add(_db
-            .collection('reports')
-            .where('userId', isEqualTo: _userId)
-            .snapshots()
-            .listen(handleReports,
-                onError: (e) => debugPrint('reports watch error: $e')));
+        rootSubs.add(
+          _db
+              .collection('reports')
+              .where('userId', isEqualTo: _userId)
+              .snapshots()
+              .listen(
+                handleReports,
+                onError: (e) => debugPrint('reports watch error: $e'),
+              ),
+        );
       },
       onCancel: () {
         for (final sub in rootSubs) {
@@ -778,7 +371,8 @@ class ActivityFeedService {
     final data = doc.data();
 
     final timestamp =
-        _parseDateTime(data['timestamp']) ?? _parseDateTime(data['lastUpdated']);
+        _parseDateTime(data['timestamp']) ??
+        _parseDateTime(data['lastUpdated']);
     if (timestamp == null) return null;
 
     var eggs = 0;
@@ -819,8 +413,7 @@ class ActivityFeedService {
     if (pupae > 0) parts.add('$pupae pupae');
     if (moths > 0) parts.add('$moths moths');
 
-    final weekNumber =
-        int.tryParse(doc.id.replaceAll(RegExp(r'[^0-9]'), ''));
+    final weekNumber = int.tryParse(doc.id.replaceAll(RegExp(r'[^0-9]'), ''));
 
     return ActivityFeedItem(
       id: 'scouting:$cycleId:${doc.id}',
@@ -843,8 +436,8 @@ class ActivityFeedService {
   ) {
     final data = doc.data();
 
-    final timestamp = _parseDateTime(data['timestamp']) ??
-        _parseDateTime(data['date']);
+    final timestamp =
+        _parseDateTime(data['timestamp']) ?? _parseDateTime(data['date']);
     if (timestamp == null) return null;
 
     final type = (data['type'] ?? '').toString().trim();
@@ -875,8 +468,8 @@ class ActivityFeedService {
   ) {
     final data = doc.data();
 
-    final timestamp = _parseDateTime(data['timestamp']) ??
-        _parseDateTime(data['createdAt']);
+    final timestamp =
+        _parseDateTime(data['timestamp']) ?? _parseDateTime(data['createdAt']);
     if (timestamp == null) return null;
 
     final pestName = (data['detection'] ?? data['pestName'] ?? 'Fall Army Worm')

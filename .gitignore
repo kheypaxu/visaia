@@ -47,5 +47,4 @@ app.*.map.json
 change-pass.js
 
 node_modules
-package-lock.jsonpackage.json
 service_acc.json

@@ -1,0 +1,11 @@
+{
+  "name": "visaia-firestore-rules-tests",
+  "private": true,
+  "scripts": {
+    "test": "node --test --test-concurrency=1 firestore.rules.test.cjs"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "firebase": "^12.19.0"
+  }
+}

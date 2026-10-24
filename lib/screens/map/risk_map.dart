@@ -61,6 +61,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
   final List<FawThreat> _threats = [];
   final FawRiskService _riskService = FawRiskService();
   bool _isLoadingThreats = false;
+  bool _regionalRiskUnavailable = false;
 
   // ========== CACHED MAP LAYERS ==========
   // Cache map objects to prevent recreation on every build
@@ -297,7 +298,10 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
         FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid;
     if (userId == null) return;
 
-    setState(() => _isLoadingThreats = true);
+    setState(() {
+      _isLoadingThreats = true;
+      _regionalRiskUnavailable = false;
+    });
 
     try {
       final anchors = <LatLng>[];
@@ -330,7 +334,14 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       });
     } catch (e) {
       debugPrint('Error loading nearby threats: $e');
-      if (mounted) setState(() => _isLoadingThreats = false);
+      if (mounted) {
+        setState(() {
+          _isLoadingThreats = false;
+          _regionalRiskUnavailable = true;
+          _threats.clear();
+          _needsCacheRebuild = true;
+        });
+      }
     }
   }
 
@@ -485,7 +496,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       final currentUserId =
           FirebaseAuth.instance.currentUser?.uid ??
           AuthCacheService().cachedUid;
-      if (threat.ownerId.isNotEmpty && threat.ownerId != currentUserId) {
+      if (threat.isExternal || (threat.ownerId.isNotEmpty && threat.ownerId != currentUserId)) {
         _cachedMarkers.add(
           Marker(
             point: threat.location,
@@ -1123,9 +1134,9 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                           threat.barangay.isNotEmpty ? threat.barangay : '—',
                         ),
                         _factRow(
-                          Icons.person_outline,
-                          'Reported by',
-                          threat.farmerName.isNotEmpty
+                          threat.isExternal ? Icons.verified_outlined : Icons.person_outline,
+                          threat.isExternal ? 'Source' : 'Reported by',
+                          threat.isExternal ? 'Validated regional report' : threat.farmerName.isNotEmpty
                               ? threat.farmerName
                               : '—',
                         ),
@@ -1143,7 +1154,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
 
                         // ---------- MITIGATION ----------
                         Text(
-                          'MITIGATION STRATEGIES',
+                          threat.isExternal ? 'REGIONAL REPORT INFORMATION' : 'MITIGATION STRATEGIES',
                           style: GoogleFonts.inter(
                             color: const Color(0xFF1A1C1E),
                             fontSize: 12,
@@ -1154,7 +1165,9 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                         const SizedBox(height: 10),
                         if (steps.isEmpty)
                           Text(
-                            'No mitigation strategy has been recorded for this detection yet. '
+                            threat.isExternal
+                            ? 'Personal report details and individual treatment notes are private. Contact MAO or RCPC for advice for your own field.'
+                            : 'No mitigation strategy has been recorded for this detection yet. '
                             'Scout your nearest fields for egg masses and larvae, and set up '
                             'pheromone traps to monitor adult activity.',
                             style: GoogleFonts.inter(
@@ -1540,6 +1553,23 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
             ),
           ),
 
+          if (_regionalRiskUnavailable)
+            Positioned(
+              top: 86, left: 16, right: 16,
+              child: Material(
+                color: const Color(0xFFFFF3CD), borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(children: [
+                    const Icon(Icons.info_outline, color: Color(0xFF664D03)),
+                    const SizedBox(width: 8),
+                    const Expanded(child: Text('Regional risk is unavailable. The map may be incomplete.', style: TextStyle(color: Color(0xFF664D03)))),
+                    TextButton(onPressed: _loadThreats,
+                      style: TextButton.styleFrom(foregroundColor: const Color(0xFF664D03)), child: const Text('Retry')),
+                  ]),
+                ),
+              ),
+            ),
           /// NEARBY THREAT BADGE
           if (_isLoadingThreats)
             Positioned(

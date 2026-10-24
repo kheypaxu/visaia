@@ -13,7 +13,7 @@ This provides in-app updates, not background push delivery or a historical event
 A report with no status timestamp uses its available saved timestamp for display;
 no fabricated current timestamp is used. Ordinary edits do not reset its read receipt.
 
-## Backend follow-up (backend and rules are not in this repository)
+## Report-status follow-up (automatic transition trigger is not implemented)
 
 Create an idempotent trusted trigger for status transitions in reports and
 clustered_reports. Resolve the owner using farmerId/userId, and write an alert
