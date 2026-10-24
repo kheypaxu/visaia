@@ -1,3 +1,8 @@
+import 'dart:async';
+import 'dart:ui' as ui;
+
+import 'package:flutter/rendering.dart';
+import 'package:visaia/services/dashboard_widget_service.dart';
 import 'package:visaia/core/models/cycle_audit_policy.dart';
 import 'package:visaia/core/models/cycle_metrics.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -54,10 +59,12 @@ class CycleModel {
       cycleName: map['cycleName'] ?? 'Untitled Cycle',
       cropVariety: map['cropVariety'] ?? '',
       plantingDate: _parseTimestamp(map['plantingDate']),
-      harvestDate: _parseTimestamp(map['expectedHarvestDate'] ??
-          map['estimatedHarvestDate'] ??
-          map['harvestDate'] ??
-          map['actualHarvestDate']),
+      harvestDate: _parseTimestamp(
+        map['expectedHarvestDate'] ??
+            map['estimatedHarvestDate'] ??
+            map['harvestDate'] ??
+            map['actualHarvestDate'],
+      ),
       seedDensity: (map['seedDensity'] as num?)?.toDouble() ?? 0.0,
       isCompleted: map['isCompleted'] ?? false,
       status: map['status'],
@@ -108,10 +115,12 @@ class FieldModel {
       acres: (data['acres'] ?? 0).toDouble(),
       crop: data['crop'],
       boundaries: (data['boundaries'] as List)
-          .map((p) => LatLng(
-                (p['latitude'] ?? p['lat']).toDouble(),
-                (p['longitude'] ?? p['lng']).toDouble(),
-              ))
+          .map(
+            (p) => LatLng(
+              (p['latitude'] ?? p['lat']).toDouble(),
+              (p['longitude'] ?? p['lng']).toDouble(),
+            ),
+          )
           .toList(),
     );
   }
@@ -157,10 +166,13 @@ class MonitoringFirestoreService {
   final String _userId;
   final String? _farmId;
 
-  MonitoringFirestoreService({FirebaseFirestore? db, required String userId, String? farmId})
-      : _db = db ?? FirebaseFirestore.instance,
-        _userId = userId,
-        _farmId = farmId;
+  MonitoringFirestoreService({
+    FirebaseFirestore? db,
+    required String userId,
+    String? farmId,
+  }) : _db = db ?? FirebaseFirestore.instance,
+       _userId = userId,
+       _farmId = farmId;
 
   // ----- Fields (from user document) -----
   Future<List<FieldModel>> getFields() async {
@@ -200,13 +212,15 @@ class MonitoringFirestoreService {
 
     return ref
         .snapshots()
-        .map((snap) => snap.docs
-            .map((doc) => CycleModel.fromMap(doc.id, doc.data()))
-            .toList())
+        .map(
+          (snap) => snap.docs
+              .map((doc) => CycleModel.fromMap(doc.id, doc.data()))
+              .toList(),
+        )
         .handleError((e) {
-      debugPrint('getActiveCycles error: $e');
-      return <CycleModel>[];
-    });
+          debugPrint('getActiveCycles error: $e');
+          return <CycleModel>[];
+        });
   }
 
   // ----- Active Pests (isActive == true) -----
@@ -220,20 +234,21 @@ class MonitoringFirestoreService {
         .orderBy('detectedAt', descending: true)
         .snapshots()
         .asyncMap((snap) async {
-      List<PestModel> pests = snap.docs
-          .map((doc) => PestModel.fromFirestore(doc))
-          .toList();
+          List<PestModel> pests = snap.docs
+              .map((doc) => PestModel.fromFirestore(doc))
+              .toList();
 
-      if (_farmId != null && _farmId.isNotEmpty && pests.isNotEmpty) {
-        final fieldIds = await _getFieldIdsForFarm();
-        pests = pests.where((p) => fieldIds.contains(p.fieldId)).toList();
-      }
+          if (_farmId != null && _farmId.isNotEmpty && pests.isNotEmpty) {
+            final fieldIds = await _getFieldIdsForFarm();
+            pests = pests.where((p) => fieldIds.contains(p.fieldId)).toList();
+          }
 
-      return pests;
-    }).handleError((e) {
-      debugPrint('getActivePests error: $e');
-      return <PestModel>[];
-    });
+          return pests;
+        })
+        .handleError((e) {
+          debugPrint('getActivePests error: $e');
+          return <PestModel>[];
+        });
   }
 
   Future<Set<String>> _getFieldIdsForFarm() async {
@@ -255,9 +270,10 @@ class MonitoringFirestoreService {
   // ----- Recent Activity (daily logs, weekly scouting, pest uploads) -----
   Stream<List<ActivityFeedItem>> getRecentActivityLogs({int limit = 6}) {
     if (_userId.isEmpty) return Stream.value([]);
-    return ActivityFeedService(userId: _userId, db: _db)
-        .watchUserActivity(limit: limit)
-        .handleError((e) {
+    return ActivityFeedService(
+      userId: _userId,
+      db: _db,
+    ).watchUserActivity(limit: limit).handleError((e) {
       debugPrint('getRecentActivityLogs error: $e');
       return <ActivityFeedItem>[];
     });
@@ -278,15 +294,17 @@ class MonitoringFirestoreService {
 
     return ref
         .snapshots()
-        .map((snap) => snap.docs.fold<double>(0.0, (sum, doc) {
-              final data = doc.data();
-              final yield = recordedYield(data) ?? 0.0;
-              return sum + yield;
-            }))
+        .map(
+          (snap) => snap.docs.fold<double>(0.0, (sum, doc) {
+            final data = doc.data();
+            final yield = recordedYield(data) ?? 0.0;
+            return sum + yield;
+          }),
+        )
         .handleError((e) {
-      debugPrint('getTotalYield error: $e');
-      return 0.0;
-    });
+          debugPrint('getTotalYield error: $e');
+          return 0.0;
+        });
   }
 
   // Use the same finalized audits and financial calculation as Full Analysis.
@@ -303,17 +321,18 @@ class MonitoringFirestoreService {
 
     return ref
         .snapshots()
-        .map((snap) => snap.docs.fold<double>(0.0, (sum, doc) {
-              final data = doc.data();
-              if (!hasCompletedHarvestAudit(data)) return sum;
-              return sum + CycleFinance(data).net;
-            }))
+        .map(
+          (snap) => snap.docs.fold<double>(0.0, (sum, doc) {
+            final data = doc.data();
+            if (!hasCompletedHarvestAudit(data)) return sum;
+            return sum + CycleFinance(data).net;
+          }),
+        )
         .handleError((e) {
-      debugPrint('getNetIncome error: $e');
-      return 0.0;
-    });
+          debugPrint('getNetIncome error: $e');
+          return 0.0;
+        });
   }
-
 }
 
 // ======================= HOMEDASHBOARD WIDGET =======================
@@ -329,6 +348,60 @@ class HomeDashboard extends StatefulWidget {
 }
 
 class _HomeDashboardState extends State<HomeDashboard> {
+  final _kpiCaptureKey = GlobalKey();
+  Timer? _widgetUpdateTimer;
+  late final int _widgetGeneration;
+  bool _incomeReady = false;
+  bool _yieldReady = false;
+  bool _fieldsReady = false;
+  bool _cyclesReady = false;
+
+  void _scheduleWidgetUpdate() {
+    if (!DashboardWidgetService.supported ||
+        !_incomeReady ||
+        !_yieldReady ||
+        !_fieldsReady ||
+        !_cyclesReady) {
+      return;
+    }
+    _widgetUpdateTimer?.cancel();
+    _widgetUpdateTimer = Timer(const Duration(milliseconds: 500), () async {
+      try {
+        try {
+          await GoogleFonts.pendingFonts();
+        } catch (_) {
+          // Offline, capture the same fallback font currently shown in the app.
+        }
+        await WidgetsBinding.instance.endOfFrame;
+        if (!mounted) return;
+        final boundary = _kpiCaptureKey.currentContext?.findRenderObject();
+        if (boundary is! RenderRepaintBoundary || boundary.debugNeedsPaint) {
+          return;
+        }
+        final image = await boundary.toImage(pixelRatio: 1.5);
+        try {
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+          if (mounted && bytes != null) {
+            await DashboardWidgetService.update(
+              bytes.buffer.asUint8List(),
+              _widgetGeneration,
+            );
+          }
+        } finally {
+          image.dispose();
+        }
+      } catch (error) {
+        debugPrint('Could not render dashboard widget: $error');
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _widgetUpdateTimer?.cancel();
+    super.dispose();
+  }
+
   // Brand colors
   static const Color darkGreen = Color(0xFF0D4D33);
   static const Color textGray = Color(0xFF43483E);
@@ -347,6 +420,9 @@ class _HomeDashboardState extends State<HomeDashboard> {
   @override
   void initState() {
     super.initState();
+    unawaited(DashboardWidgetService.clear());
+    // clear invalidates old captures; begin a fresh generation for this farm.
+    _widgetGeneration = DashboardWidgetService.beginSession();
 
     _service = MonitoringFirestoreService(
       userId: widget.userId,
@@ -372,82 +448,100 @@ class _HomeDashboardState extends State<HomeDashboard> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ----- Top Metrics: NET INCOME & TOTAL YIELD -----
-            Row(
-              children: [
-                Expanded(
-                  child: StreamBuilder<double>(
-                    stream: _netIncomeStream,
-                    builder: (ctx, snapshot) {
-                      final total = snapshot.data ?? 0.0;
+            RepaintBoundary(
+              key: _kpiCaptureKey,
+              child: Column(
+                children: [
+                  // ----- Top Metrics: NET INCOME & TOTAL YIELD -----
+                  Row(
+                    children: [
+                      Expanded(
+                        child: StreamBuilder<double>(
+                          stream: _netIncomeStream,
+                          builder: (ctx, snapshot) {
+                            final total = snapshot.data ?? 0.0;
+                            _incomeReady =
+                                snapshot.hasData && !snapshot.hasError;
+                            _scheduleWidgetUpdate();
 
-                      return _buildMetricCard(
-                        title: "NET INCOME",
-                        prefix: '\u20b1',
-                        value: _formatNetIncome(total),
-                        icon: Icons.payments_outlined,
-                        bgColor: darkGreen,
-                        textColor: Colors.white,
+                            return _buildMetricCard(
+                              title: "NET INCOME",
+                              prefix: '\u20b1',
+                              value: _formatNetIncome(total),
+                              icon: Icons.payments_outlined,
+                              bgColor: darkGreen,
+                              textColor: Colors.white,
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: StreamBuilder<double>(
+                          stream: _totalYieldStream,
+                          builder: (ctx, snapshot) {
+                            final totalYield = snapshot.data ?? 0.0;
+                            _yieldReady =
+                                snapshot.hasData && !snapshot.hasError;
+                            _scheduleWidgetUpdate();
+
+                            return _buildMetricCard(
+                              title: "TOTAL YIELD",
+                              value: totalYield.toStringAsFixed(1),
+                              unit: "kg",
+                              icon: Icons.agriculture_rounded,
+                              bgColor: const Color(0xFFC5E1A5),
+                              textColor: darkGreen,
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 15),
+
+                  // ----- Active Cycle & Field Count -----
+                  FutureBuilder<List<FieldModel>>(
+                    future: _fieldsFuture,
+                    builder: (ctx, fieldSnapshot) {
+                      _fieldsReady =
+                          fieldSnapshot.hasData && !fieldSnapshot.hasError;
+                      final fieldCount = fieldSnapshot.data?.length ?? 0;
+                      return StreamBuilder<List<CycleModel>>(
+                        stream: _activeCyclesStream,
+                        builder: (ctx, cycleSnapshot) {
+                          _cyclesReady =
+                              cycleSnapshot.hasData && !cycleSnapshot.hasError;
+                          _scheduleWidgetUpdate();
+                          final cycles = cycleSnapshot.data ?? [];
+                          final activeCycleCount = cycles.length;
+                          return Row(
+                            children: [
+                              Expanded(
+                                child: _buildSmallMetricCard(
+                                  "ACTIVE CYCLES",
+                                  activeCycleCount.toString(),
+                                  "",
+                                  const Color(0xFF7BC72E).withOpacity(0.6),
+                                ),
+                              ),
+                              const SizedBox(width: 15),
+                              Expanded(
+                                child: _buildSmallMetricCard(
+                                  "FIELD COUNT",
+                                  fieldCount.toString(),
+                                  "",
+                                  const Color(0xFFF7E594),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
                       );
                     },
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: StreamBuilder<double>(
-                    stream: _totalYieldStream,
-                    builder: (ctx, snapshot) {
-                      final totalYield = snapshot.data ?? 0.0;
-
-                      return _buildMetricCard(
-                        title: "TOTAL YIELD",
-                        value: totalYield.toStringAsFixed(1),
-                        unit: "kg",
-                        icon: Icons.agriculture_rounded,
-                        bgColor: const Color(0xFFC5E1A5),
-                        textColor: darkGreen,
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 15),
-
-            // ----- Active Cycle & Field Count -----
-            FutureBuilder<List<FieldModel>>(
-              future: _fieldsFuture,
-              builder: (ctx, fieldSnapshot) {
-                final fieldCount = fieldSnapshot.data?.length ?? 0;
-                return StreamBuilder<List<CycleModel>>(
-                  stream: _activeCyclesStream,
-                  builder: (ctx, cycleSnapshot) {
-                    final cycles = cycleSnapshot.data ?? [];
-                    final activeCycleCount = cycles.length;
-                    return Row(
-                      children: [
-                        Expanded(
-                          child: _buildSmallMetricCard(
-                            "ACTIVE CYCLES",
-                            activeCycleCount.toString(),
-                            "",
-                            const Color(0xFF7BC72E).withOpacity(0.6),
-                          ),
-                        ),
-                        const SizedBox(width: 15),
-                        Expanded(
-                          child: _buildSmallMetricCard(
-                            "FIELD COUNT",
-                            fieldCount.toString(),
-                            "",
-                            const Color(0xFFF7E594),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                );
-              },
+                ],
+              ),
             ),
             const SizedBox(height: 18),
             SizedBox(
@@ -483,12 +577,18 @@ class _HomeDashboardState extends State<HomeDashboard> {
             Text(
               "FAW Assessment",
               style: GoogleFonts.epilogue(
-                  fontSize: 28, fontWeight: FontWeight.w800, color: headingBlack),
+                fontSize: 28,
+                fontWeight: FontWeight.w800,
+                color: headingBlack,
+              ),
             ),
             Text(
               "Validated FAW life stages in ${LocationConstants.defaultMunicipality}",
               style: GoogleFonts.manrope(
-                fontSize: 16, color: textGray, fontWeight: FontWeight.w500),
+                fontSize: 16,
+                color: textGray,
+                fontWeight: FontWeight.w500,
+              ),
             ),
             const SizedBox(height: 24),
             StreamBuilder<List<FawLifeStageReport>>(
@@ -500,7 +600,9 @@ class _HomeDashboardState extends State<HomeDashboard> {
                     padding: EdgeInsets.symmetric(vertical: 20),
                     child: Center(
                       child: CircularProgressIndicator(
-                          strokeWidth: 2, color: darkGreen),
+                        strokeWidth: 2,
+                        color: darkGreen,
+                      ),
                     ),
                   );
                 }
@@ -510,7 +612,8 @@ class _HomeDashboardState extends State<HomeDashboard> {
                   return const Padding(
                     padding: EdgeInsets.symmetric(vertical: 20),
                     child: Text(
-                        "No validated FAW life stages recorded yet in this municipality"),
+                      "No validated FAW life stages recorded yet in this municipality",
+                    ),
                   );
                 }
 
@@ -866,10 +969,9 @@ class _HomeDashboardState extends State<HomeDashboard> {
       scaled /= 1000;
       suffixIndex++;
     }
-    final number = scaled.toStringAsFixed(2).replaceFirst(
-          RegExp(r'\.?0+$'),
-          '',
-        );
+    final number = scaled
+        .toStringAsFixed(2)
+        .replaceFirst(RegExp(r'\.?0+$'), '');
     return '$number${suffixes[suffixIndex]}';
   }
 
@@ -900,12 +1002,15 @@ class _HomeDashboardState extends State<HomeDashboard> {
             child: Icon(icon, color: textColor, size: 24),
           ),
           const SizedBox(height: 24),
-          Text(title,
-              style: GoogleFonts.manrope(
-                  color: textColor.withOpacity(0.7),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.5)),
+          Text(
+            title,
+            style: GoogleFonts.manrope(
+              color: textColor.withOpacity(0.7),
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.5,
+            ),
+          ),
           Row(
             crossAxisAlignment: CrossAxisAlignment.baseline,
             textBaseline: TextBaseline.alphabetic,
@@ -914,21 +1019,27 @@ class _HomeDashboardState extends State<HomeDashboard> {
                 child: FittedBox(
                   fit: BoxFit.scaleDown,
                   alignment: Alignment.centerLeft,
-                  child: Text('$prefix$value',
-                      style: GoogleFonts.manrope(
-                          color: textColor,
-                          fontSize: prefix.isEmpty ? 32 : 36,
-                          fontWeight: FontWeight.w800)),
+                  child: Text(
+                    '$prefix$value',
+                    style: GoogleFonts.manrope(
+                      color: textColor,
+                      fontSize: prefix.isEmpty ? 32 : 36,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                 ),
               ),
               if (unit != null) ...[
                 const SizedBox(width: 4),
-                Text(unit,
-                    style: GoogleFonts.manrope(
-                        color: textColor.withOpacity(0.7),
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600)),
-              ]
+                Text(
+                  unit,
+                  style: GoogleFonts.manrope(
+                    color: textColor.withOpacity(0.7),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ],
           ),
         ],
@@ -936,7 +1047,12 @@ class _HomeDashboardState extends State<HomeDashboard> {
     );
   }
 
-  Widget _buildSmallMetricCard(String title, String value, String unit, Color color) {
+  Widget _buildSmallMetricCard(
+    String title,
+    String value,
+    String unit,
+    Color color,
+  ) {
     IconData displayIcon = title.contains("CYCLE")
         ? Icons.stacked_line_chart_rounded
         : Icons.grid_view_rounded;
@@ -948,10 +1064,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
       decoration: BoxDecoration(
         color: color,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: Colors.white.withOpacity(0.5),
-          width: 1,
-        ),
+        border: Border.all(color: Colors.white.withOpacity(0.5), width: 1),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -963,7 +1076,11 @@ class _HomeDashboardState extends State<HomeDashboard> {
               color: Colors.black.withOpacity(0.06),
               shape: BoxShape.circle,
             ),
-            child: Icon(displayIcon, size: 18, color: Colors.black.withOpacity(0.7)),
+            child: Icon(
+              displayIcon,
+              size: 18,
+              color: Colors.black.withOpacity(0.7),
+            ),
           ),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -977,7 +1094,8 @@ class _HomeDashboardState extends State<HomeDashboard> {
                   letterSpacing: 0.5,
                 ),
               ),
-              const SizedBox(height: 2),              Row(
+              const SizedBox(height: 2),
+              Row(
                 crossAxisAlignment: CrossAxisAlignment.baseline,
                 textBaseline: TextBaseline.alphabetic,
                 children: [
@@ -999,7 +1117,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                  ]
+                  ],
                 ],
               ),
             ],
@@ -1029,7 +1147,9 @@ class _HomeDashboardState extends State<HomeDashboard> {
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-                color: iconBg, borderRadius: BorderRadius.circular(18)),
+              color: iconBg,
+              borderRadius: BorderRadius.circular(18),
+            ),
             child: Icon(icon, color: darkGreen, size: 24),
           ),
           const SizedBox(width: 16),
@@ -1037,26 +1157,34 @@ class _HomeDashboardState extends State<HomeDashboard> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title,
-                    style: GoogleFonts.manrope(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 16,
-                        color: headingBlack)),
+                Text(
+                  title,
+                  style: GoogleFonts.manrope(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                    color: headingBlack,
+                  ),
+                ),
                 if (subtitle.isNotEmpty) ...[
                   const SizedBox(height: 2),
-                  Text(subtitle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.manrope(
-                          color: textGray,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500)),
+                  Text(
+                    subtitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.manrope(
+                      color: textGray,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
                 ],
                 if (tag != null && tag.isNotEmpty) ...[
                   const SizedBox(height: 6),
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(8),
@@ -1064,10 +1192,11 @@ class _HomeDashboardState extends State<HomeDashboard> {
                     child: Text(
                       tag,
                       style: GoogleFonts.manrope(
-                          color: Colors.grey.shade600,
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.2),
+                        color: Colors.grey.shade600,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.2,
+                      ),
                     ),
                   ),
                 ],
@@ -1075,15 +1204,16 @@ class _HomeDashboardState extends State<HomeDashboard> {
             ),
           ),
           const SizedBox(width: 8),
-          Text(time,
-              style: GoogleFonts.manrope(
-                  color: Colors.grey.shade500,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700)),
+          Text(
+            time,
+            style: GoogleFonts.manrope(
+              color: Colors.grey.shade500,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
         ],
       ),
     );
   }
 }
-
-

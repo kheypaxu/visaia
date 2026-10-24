@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:visaia/services/auth_cache_service.dart';
 import 'package:visaia/services/connectivity_service.dart';
 import 'package:visaia/services/offline_sync_service.dart';
+import 'package:visaia/services/dashboard_widget_service.dart';
+import 'package:visaia/services/push_notification_service.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -13,23 +15,28 @@ class AuthService {
 
   // Sign in – returns UserCredential if online, or null if offline fallback
   Future<UserCredential?> signInWithEmailAndPassword(
-      String email, String password) async {
+    String email,
+    String password,
+  ) async {
     final isOnline = _connectivityService.isOnline;
 
     if (!isOnline) {
-      final isValid = await _cacheService.verifyOfflineCredentials(email, password);
+      final isValid = await _cacheService.verifyOfflineCredentials(
+        email,
+        password,
+      );
       if (isValid) {
         debugPrint('🔓 Offline login successful using cached credentials.');
         return null;
       }
 
       final cachedEmail = _cacheService.cachedEmail;
-      if (cachedEmail != null &&
-          cachedEmail == email.trim().toLowerCase()) {
+      if (cachedEmail != null && cachedEmail == email.trim().toLowerCase()) {
         throw Exception('Incorrect password for cached offline account.');
       } else {
         throw Exception(
-            'You are currently offline. Please connect to Wi-Fi or mobile data to sign in for the first time.');
+          'You are currently offline. Please connect to Wi-Fi or mobile data to sign in for the first time.',
+        );
       }
     }
 
@@ -41,10 +48,14 @@ class AuthService {
     } on FirebaseAuthException catch (e) {
       // If network error during Firebase auth, try offline fallback
       if (e.code == 'network-request-failed') {
-        final isValid =
-            await _cacheService.verifyOfflineCredentials(email, password);
+        final isValid = await _cacheService.verifyOfflineCredentials(
+          email,
+          password,
+        );
         if (isValid) {
-          debugPrint('🔓 Network failed: Fallen back to offline cached credentials.');
+          debugPrint(
+            '🔓 Network failed: Fallen back to offline cached credentials.',
+          );
           return null;
         }
       }
@@ -56,7 +67,9 @@ class AuthService {
 
   // Sign up
   Future<UserCredential> signUpWithEmailAndPassword(
-      String email, String password) async {
+    String email,
+    String password,
+  ) async {
     try {
       return await _auth.createUserWithEmailAndPassword(
         email: email.trim(),
@@ -69,6 +82,8 @@ class AuthService {
 
   // Sign out
   Future<void> signOut() async {
+    await PushNotificationService.instance.detach();
+    await DashboardWidgetService.clear();
     try {
       await _auth.signOut();
     } catch (e) {
@@ -81,8 +96,10 @@ class AuthService {
   // Get verification status from Firestore (farmers collection) with offline fallback
   Future<String?> getUserVerificationStatus(String uid) async {
     try {
-      DocumentSnapshot doc =
-          await _firestore.collection('farmers').doc(uid).get();
+      DocumentSnapshot doc = await _firestore
+          .collection('farmers')
+          .doc(uid)
+          .get();
       if (doc.exists) {
         final status = doc.get('status') as String?;
         if (status != null) {
@@ -103,23 +120,24 @@ class AuthService {
 
     if (!isOnline) {
       // Offline verification flow
-      final isValid =
-          await _cacheService.verifyOfflineCredentials(email, password);
+      final isValid = await _cacheService.verifyOfflineCredentials(
+        email,
+        password,
+      );
       if (!isValid) {
         final cachedEmail = _cacheService.cachedEmail;
-        if (cachedEmail != null &&
-            cachedEmail == email.trim().toLowerCase()) {
+        if (cachedEmail != null && cachedEmail == email.trim().toLowerCase()) {
           throw Exception('Incorrect password for cached offline account.');
         } else {
           throw Exception(
-              'No cached credentials found for this account. Please connect to internet to sign in.');
+            'No cached credentials found for this account. Please connect to internet to sign in.',
+          );
         }
       }
 
       final status = _cacheService.cachedVerificationStatus;
       if (status != 'verified') {
-        throw Exception(
-            'Your account has not been verified by an admin yet.');
+        throw Exception('Your account has not been verified by an admin yet.');
       }
 
       _cacheService.isOfflineSessionActive = true;
@@ -147,7 +165,11 @@ class AuthService {
     final status = await getUserVerificationStatus(uid);
 
     if (status != 'verified') {
-      await signOut(); // kick out unverified users
+      // Preserve the pending account's approval delivery address.
+      await PushNotificationService.instance.register(cred.user!);
+      await _auth.signOut();
+      await _cacheService.clearActiveSession();
+      OfflineSyncService().updateCurrentUser(null);
       throw Exception('Your account has not been verified by an admin yet.');
     }
 
@@ -219,7 +241,9 @@ class AuthService {
     } else if (e.code == 'invalid-email') {
       return Exception('The email address is invalid.');
     } else if (e.code == 'network-request-failed') {
-      return Exception('Network error. Check your connection or use offline login.');
+      return Exception(
+        'Network error. Check your connection or use offline login.',
+      );
     } else {
       return Exception(e.message ?? 'An unknown error occurred.');
     }

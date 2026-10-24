@@ -477,6 +477,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  Future<void> _removeProfileImage() async {
+    final user = currentUser;
+    if (_uploading || user == null) return;
+
+    setState(() => _uploading = true);
+    try {
+      await _firestore.collection('farmers').doc(user.uid).set(
+        {'profileImage': FieldValue.delete()},
+        SetOptions(merge: true),
+      );
+      await AuthCacheService().updateProfile(profileImage: '');
+      _showSnack('Profile picture removed', Colors.green);
+    } catch (e) {
+      debugPrint(e.toString());
+      _showSnack('Could not remove profile picture. Please try again.', Colors.red);
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
   void _showSnack(String message, Color color) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -624,6 +644,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                           ],
                         ),
+                        if ((farmerData['profileImage']?.toString() ?? '').isNotEmpty)
+                          TextButton.icon(
+                            onPressed: _uploading ? null : _removeProfileImage,
+                            style: TextButton.styleFrom(
+                              foregroundColor: const Color(0xFFD32F2F),
+                              minimumSize: const Size(48, 48),
+                            ),
+                            icon: const Icon(Icons.delete_outline_rounded),
+                            label: const Text('Remove profile picture'),
+                          ),
                         const SizedBox(height: 16),
                         Text(
                           fullName,

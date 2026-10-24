@@ -1,0 +1,13 @@
+{
+  "extends": "../../visaia-dashboard/tsconfig.json",
+  "compilerOptions": {
+    "incremental": false,
+    "baseUrl": ".",
+    "paths": {
+      "@/src/notifications/*": ["src/*"],
+      "@/*": ["../../visaia-dashboard/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "app/**/*.ts"],
+  "exclude": []
+}

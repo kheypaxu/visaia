@@ -50,11 +50,9 @@ class _AllFarmsDataScreenState extends State<AllFarmsDataScreen> {
     return NumberFormat('#,##0').format(amount);
   }
 
-  String _formatYieldShort(double amount) {
-    if (amount >= 1000) {
-      return '${NumberFormat('#,##0').format(amount)} T';
-    }
-    return '${amount.toStringAsFixed(0)} kg';
+  String _formatYieldShort(double kilograms) {
+    final tons = kilograms / 1000;
+    return '${NumberFormat('#,##0.###').format(tons)} tons';
   }
 
   Future<void> _exportGeneralData(

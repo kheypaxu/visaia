@@ -9,6 +9,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:visaia/screens/auth/login_screen.dart';
 import 'package:visaia/utils/location_constants.dart';
 import 'package:visaia/utils/image_compression.dart';
+import 'package:visaia/services/push_notification_service.dart';
 
 class VerificationFormScreen extends StatefulWidget {
   const VerificationFormScreen({super.key});
@@ -390,6 +391,8 @@ class _VerificationFormScreenState extends State<VerificationFormScreen> {
         "email": user.email ?? '',
       }, SetOptions(merge: true));
 
+      // Register before sign-out so MAO approval can reach this pending account.
+      await PushNotificationService.instance.register(user);
       // Sign out after successful submission
       await FirebaseAuth.instance.signOut();
 

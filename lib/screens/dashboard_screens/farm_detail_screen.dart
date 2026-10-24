@@ -43,11 +43,9 @@ class _FarmDetailScreenState extends State<FarmDetailScreen> {
     return NumberFormat('#,##0').format(amount);
   }
 
-  String _formatYield(double amount) {
-    if (amount >= 1000) {
-      return NumberFormat('#,##0').format(amount);
-    }
-    return amount.toStringAsFixed(0);
+  String _formatYield(double kilograms) {
+    final tons = kilograms / 1000;
+    return NumberFormat('#,##0.###').format(tons);
   }
 
   void _showExportOptionsSheet(BuildContext context) {
