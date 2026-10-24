@@ -71,6 +71,8 @@ Future<void> _display(RemoteMessage message) async {
         'farm_reminders',
         'Farm notifications',
         channelDescription: 'Account approval and farm activity reminders',
+        icon: 'ic_stat_visaia',
+        largeIcon: DrawableResourceAndroidBitmap('ic_launcher_foreground'),
         importance: Importance.high,
         priority: Priority.high,
         groupKey: 'visaia_${message.data['farmerId']}',

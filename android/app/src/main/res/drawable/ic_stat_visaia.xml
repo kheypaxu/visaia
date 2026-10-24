@@ -1,4 +1,11 @@
+<!-- Monochrome silhouette traced from assets/images/final-logo-visaia.png.
+     Android tints small notification icons; preserve the transparent V-shaped mark. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FFFFFFFF" android:pathData="M20,4C12,4 5,7 5,14c0,2 1,4 3,5l-2,3h3l2,-3c7,0 10,-7 9,-15zM8,16l8,-8 -6,10z" />
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFFFFFFF" android:pathData="M5.36,10.50L5.55,10.97L6.24,12.23L6.59,13.01L7.66,14.93L10.13,19.68L10.43,20.17L10.49,20.08L10.56,19.40L10.48,17.91L10.24,16.80L9.77,15.59L9.06,14.41L8.35,13.49L7.27,12.35Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M4.27,8.25L4.63,9.08L5.18,9.88L6.08,10.84L8.37,13.04L9.06,13.86L9.78,14.94L10.34,16.11L10.70,17.47L10.81,18.50L10.74,19.99L11.42,18.59L11.74,17.38L11.74,16.08L11.51,15.13L11.18,14.32L10.33,13.02L9.04,11.74L7.79,10.79L5.57,9.33Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M3.31,6.28L3.45,6.66L3.91,7.43L4.71,8.31L6.03,9.33L7.95,10.55L8.91,11.25L9.84,12.03L10.72,13.00L11.36,13.99L11.84,15.08L11.99,15.65L12.06,17.18L12.36,16.40L12.60,15.51L12.62,14.03L12.46,13.29L12.22,12.65L11.90,11.99L11.41,11.27L10.47,10.33L9.29,9.46L8.22,8.89L4.97,7.45L4.21,6.99Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M21.98,3.96L19.00,3.94L17.86,4.09L16.73,4.43L15.78,4.99L15.08,5.69L14.38,6.79L13.66,8.30L12.72,10.58L12.29,11.93L13.73,11.25L14.55,11.01L17.12,10.51L17.74,10.28L18.56,9.80L19.15,9.26L19.76,8.44L21.97,4.10Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M2.00,3.85L2.97,5.49L3.42,6.03L3.94,6.49L5.16,7.22L7.96,8.41L9.36,9.13L10.68,10.13L11.61,11.08L8.76,5.87L8.21,5.00L7.72,4.50L7.02,4.10L6.13,3.86Z" />
 </vector>

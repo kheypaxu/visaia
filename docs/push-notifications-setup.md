@@ -71,6 +71,13 @@ The morning job fails explicitly above 100 recently active recipients or 500
 installation records. This is a conservative pilot guard, not a guarantee of
 quota headroom: cycle counts, activity counts, retries and other app use matter.
 Device records older than 45 days are ignored until the farmer signs in again.
+An event with no successful FCM sends remains `pending`. Its `lastOutcome`
+distinguishes `no_registered_device`, `no_eligible_device`, `fcm_retry`, and
+`fcm_accepted`; `lastAttemptAt` records the last attempt. `sent` and entries in
+`delivered` mean FCM accepted messages, not that the phone displayed them.
+Successful device registration retries that account's existing, unexpired approval
+event, including legacy events incorrectly marked `sent` with an empty `delivered`
+array. It does not create approvals or replay approvals already accepted by FCM.
 Expired event records are deleted by the daily job; Firestore paid TTL is unused.
 Review project usage before increasing capacity. No paid overflow service is used.
 
