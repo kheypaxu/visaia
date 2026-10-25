@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:visaia/services/notification_content.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:visaia/screens/dashboard_screens/spread_risk_sheet.dart';
@@ -35,10 +36,15 @@ class ThreatDetailsScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: background,
       body: FutureBuilder<DocumentSnapshot>(
-        future: FirebaseFirestore.instance.collection('alerts').doc(alertId).get(),
+        future: FirebaseFirestore.instance
+            .collection('alerts')
+            .doc(alertId)
+            .get(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator(color: darkGreen));
+            return const Center(
+              child: CircularProgressIndicator(color: darkGreen),
+            );
           }
 
           if (snapshot.hasError) {
@@ -61,37 +67,61 @@ class ThreatDetailsScreen extends StatelessWidget {
 
           final data = snapshot.data!.data() as Map<String, dynamic>;
           final type = (data['type'] ?? '').toString().toLowerCase();
-          final risk = (data['risk'] ?? 'Moderate').toString().toLowerCase();
-          final double? distance = data['distanceKm'] is num ? (data['distanceKm'] as num).toDouble() : null;
+          final content = NotificationContent(data);
+          final risk = content.risk.toLowerCase();
+          final double? distance =
+              content.isPestAlert &&
+                  content.risk.isNotEmpty &&
+                  data['distanceKm'] is num
+              ? (data['distanceKm'] as num).toDouble()
+              : null;
 
-          final Color themeColor = _resolveThemeColor(type, risk);
-          final String categoryTitle = _resolveCategoryTitle(type, risk, data);
+          final Color themeColor = content.isMao
+              ? darkGreen
+              : _resolveThemeColor(type, risk);
+          final String categoryTitle = content.label;
           final IconData categoryIcon = _resolveCategoryIcon(type, risk, data);
 
           return Stack(
             children: [
               CustomScrollView(
                 slivers: [
-                  _buildHeroAppBar(context, data, themeColor, categoryTitle, categoryIcon),
+                  _buildHeroAppBar(
+                    context,
+                    data,
+                    themeColor,
+                    categoryTitle,
+                    categoryIcon,
+                  ),
                   SliverToBoxAdapter(
                     child: Padding(
-                      padding: EdgeInsets.fromLTRB(20, 20, 20, distance != null ? 100 : 36),
+                      padding: EdgeInsets.fromLTRB(
+                        20,
+                        20,
+                        20,
+                        distance != null ? 100 : 36,
+                      ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // 1. Key Metrics Summary Grid
-                          _buildMetricsGrid(data),
-                          const SizedBox(height: 20),
-
                           // 2. Alert Message & Details
-                          _buildSectionTitle('Alert Intelligence', Icons.campaign_outlined),
+                          _buildSectionTitle(
+                            content.isMao
+                                ? 'MAO Advisory'
+                                : content.isPestAlert
+                                ? 'Alert Message'
+                                : 'Advisory Message',
+                            Icons.campaign_outlined,
+                          ),
                           const SizedBox(height: 10),
                           _buildCard(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  data['message'] ?? 'No additional details provided.',
+                                  content.message.isEmpty
+                                      ? 'No message provided.'
+                                      : content.message,
                                   style: GoogleFonts.inter(
                                     fontSize: 14.5,
                                     color: textDark,
@@ -99,17 +129,26 @@ class ThreatDetailsScreen extends StatelessWidget {
                                     fontWeight: FontWeight.w500,
                                   ),
                                 ),
-                                if (data['farmName'] != null || data['fieldName'] != null) ...[
+                                if (data['farmName'] != null ||
+                                    data['fieldName'] != null) ...[
                                   const SizedBox(height: 14),
-                                  const Divider(height: 1, color: Color(0xFFF1F5F9)),
+                                  const Divider(
+                                    height: 1,
+                                    color: Color(0xFFF1F5F9),
+                                  ),
                                   const SizedBox(height: 12),
                                   Row(
                                     children: [
-                                      const Icon(Icons.location_on_outlined, size: 16, color: darkGreen),
+                                      const Icon(
+                                        Icons.location_on_outlined,
+                                        size: 16,
+                                        color: darkGreen,
+                                      ),
                                       const SizedBox(width: 6),
                                       Expanded(
                                         child: Text(
-                                          'Target: ${data['farmName'] ?? ''} ${data['fieldName'] != null ? '(${data['fieldName']})' : ''}'.trim(),
+                                          'Target: ${data['farmName'] ?? ''} ${data['fieldName'] != null ? '(${data['fieldName']})' : ''}'
+                                              .trim(),
                                           style: GoogleFonts.inter(
                                             fontSize: 12.5,
                                             fontWeight: FontWeight.w600,
@@ -125,19 +164,29 @@ class ThreatDetailsScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 20),
 
+                          _buildMetricsGrid(data),
+                          const SizedBox(height: 20),
+
                           // 3. RCPC Validation Details (if validation alert)
                           if (type.contains('validation')) ...[
-                            _buildSectionTitle('RCPC Validation Review', Icons.verified_outlined),
+                            _buildSectionTitle(
+                              'RCPC Validation Review',
+                              Icons.verified_outlined,
+                            ),
                             const SizedBox(height: 10),
                             _buildValidationCard(data, type),
                             const SizedBox(height: 20),
                           ],
 
-                          // 4. Mitigation Strategy Card
-                          _buildSectionTitle('Recommended Mitigation', Icons.shield_outlined),
-                          const SizedBox(height: 10),
-                          _buildMitigationCard(data),
-                          const SizedBox(height: 20),
+                          if (content.recommendations.isNotEmpty) ...[
+                            _buildSectionTitle(
+                              'Recommendations from issuing office',
+                              Icons.shield_outlined,
+                            ),
+                            const SizedBox(height: 10),
+                            _buildMitigationCard(data),
+                            const SizedBox(height: 20),
+                          ],
 
                           // 5. Linked Report Button (if available)
                           if (data['reportId'] != null) ...[
@@ -151,11 +200,18 @@ class ThreatDetailsScreen extends StatelessWidget {
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                const Icon(Icons.schedule_rounded, size: 14, color: textGray),
+                                const Icon(
+                                  Icons.schedule_rounded,
+                                  size: 14,
+                                  color: textGray,
+                                ),
                                 const SizedBox(width: 4),
                                 Text(
                                   'Received ${_formatTimestamp(data['createdAt'])}',
-                                  style: GoogleFonts.inter(fontSize: 12, color: textGray),
+                                  style: GoogleFonts.inter(
+                                    fontSize: 12,
+                                    color: textGray,
+                                  ),
                                 ),
                               ],
                             ),
@@ -185,79 +241,48 @@ class ThreatDetailsScreen extends StatelessWidget {
     String categoryTitle,
     IconData categoryIcon,
   ) {
-    return SliverAppBar(
-      pinned: true,
-      expandedHeight: 210,
-      backgroundColor: themeColor,
-      elevation: 0,
-      leading: Padding(
-        padding: const EdgeInsets.all(8.0),
-        child: IconButton(
-          style: IconButton.styleFrom(
-            backgroundColor: Colors.black.withValues(alpha: 0.25),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 18),
-          onPressed: () => Navigator.pop(context),
-        ),
-      ),
-      flexibleSpace: FlexibleSpaceBar(
-        background: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                themeColor,
-                themeColor.withValues(alpha: 0.85),
-                const Color(0xFF0F172A),
+    final content = NotificationContent(data);
+    return SliverToBoxAdapter(
+      child: Container(
+        color: themeColor,
+        child: SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                IconButton(
+                  tooltip: 'Back',
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(
+                    Icons.arrow_back_rounded,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  categoryTitle,
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  content.text('title').isEmpty
+                      ? 'Notification'
+                      : content.text('title'),
+                  style: GoogleFonts.epilogue(
+                    fontSize: 24,
+                    height: 1.3,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                ),
               ],
             ),
-          ),
-          padding: const EdgeInsets.fromLTRB(20, 60, 20, 20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              // Badge Pill
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(categoryIcon, size: 13, color: Colors.white),
-                    const SizedBox(width: 6),
-                    Text(
-                      categoryTitle,
-                      style: GoogleFonts.inter(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.white,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 10),
-              // Title
-              Text(
-                data['title'] ?? 'Threat Alert',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: GoogleFonts.epilogue(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                  color: Colors.white,
-                  height: 1.25,
-                ),
-              ),
-            ],
           ),
         ),
       ),
@@ -266,116 +291,48 @@ class ThreatDetailsScreen extends StatelessWidget {
 
   // --- KEY METRICS GRID ---
   Widget _buildMetricsGrid(Map<String, dynamic> data) {
-    final pest = data['detection'] ?? 'Not specified';
-    final risk = (data['risk'] ?? 'Moderate').toString().toUpperCase();
-    final crop = data['cropAffected'] ?? data['cropType'] ?? 'Corn';
-    final stage = data['lifeStage'] ?? 'Active';
-    final distance = data['distanceKm'] != null ? '${data['distanceKm']} km away' : 'Farm Zone';
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: surface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: border),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: _buildMetricTile(
-                  icon: Icons.warning_amber_rounded,
-                  label: 'Risk Level',
-                  value: risk,
-                  color: _riskTextColor(risk),
-                ),
-              ),
-              Container(width: 1, height: 44, color: const Color(0xFFF1F5F9)),
-              Expanded(
-                child: _buildMetricTile(
-                  icon: Icons.bug_report_rounded,
-                  label: 'Threat / Pest',
-                  value: pest,
-                  color: darkGreen,
-                ),
-              ),
-            ],
-          ),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 10),
-            child: Divider(height: 1, color: Color(0xFFF1F5F9)),
-          ),
-          Row(
-            children: [
-              Expanded(
-                child: _buildMetricTile(
-                  icon: Icons.eco_outlined,
-                  label: 'Crop & Stage',
-                  value: '$crop ($stage)',
-                  color: const Color(0xFF2E7D32),
-                ),
-              ),
-              Container(width: 1, height: 44, color: const Color(0xFFF1F5F9)),
-              Expanded(
-                child: _buildMetricTile(
-                  icon: Icons.near_me_outlined,
-                  label: 'Proximity',
-                  value: distance,
-                  color: warningAmber,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMetricTile({
-    required IconData icon,
-    required String label,
-    required String value,
-    required Color color,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10),
+    final content = NotificationContent(data);
+    final area =
+        [
+              data['municipality'] ?? data['targetMunicipality'],
+              data['barangay'] ?? data['areaName'],
+            ]
+            .where((v) => v != null && v.toString().trim().isNotEmpty)
+            .map((v) => v.toString())
+            .toSet()
+            .join(' · ');
+    final fields = <String, String>{
+      if (content.text('source').isNotEmpty)
+        'Issued by': content.text('source'),
+      if (area.isNotEmpty) 'Target area': area,
+      if (content.priority.isNotEmpty) 'Priority': content.priority,
+      if (content.risk.isNotEmpty) 'Risk level': content.risk,
+      if (content.isPestAlert && content.text('detection').isNotEmpty)
+        'Pest': content.text('detection'),
+      if (content.isPestAlert && content.text('cropAffected').isNotEmpty)
+        'Crop': content.text('cropAffected'),
+      if (content.isPestAlert && content.text('lifeStage').isNotEmpty)
+        'Life stage': content.text('lifeStage'),
+    };
+    if (fields.isEmpty) return const SizedBox.shrink();
+    return _buildCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(icon, size: 14, color: textGray),
-              const SizedBox(width: 5),
-              Text(
-                label,
-                style: GoogleFonts.inter(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: textGray,
+        children: fields.entries
+            .map(
+              (entry) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: Text(
+                  '${entry.key}: ${entry.value}',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    height: 1.5,
+                    color: textDark,
+                  ),
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: GoogleFonts.inter(
-              fontSize: 13.5,
-              fontWeight: FontWeight.w700,
-              color: color,
-            ),
-          ),
-        ],
+            )
+            .toList(),
       ),
     );
   }
@@ -383,8 +340,13 @@ class ThreatDetailsScreen extends StatelessWidget {
   // --- RCPC VALIDATION CARD ---
   Widget _buildValidationCard(Map<String, dynamic> data, String type) {
     final isRejected = type.contains('rejected');
-    final String statusText = isRejected ? 'Validation Rejected' : 'Validation Confirmed';
-    final String? notes = data['validationNotes'] ?? data['rejectionReason'] ?? data['advisoryMessage'];
+    final String statusText = isRejected
+        ? 'Validation Rejected'
+        : 'Validation Confirmed';
+    final String? notes =
+        data['validationNotes'] ??
+        data['rejectionReason'] ??
+        data['advisoryMessage'];
     final String officer = data['validatedBy'] ?? 'RCPC Regional Officer';
 
     return Container(
@@ -394,7 +356,9 @@ class ThreatDetailsScreen extends StatelessWidget {
         color: isRejected ? rejectBg : successBg,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: isRejected ? rejectRose.withValues(alpha: 0.3) : successEmerald.withValues(alpha: 0.3),
+          color: isRejected
+              ? rejectRose.withValues(alpha: 0.3)
+              : successEmerald.withValues(alpha: 0.3),
         ),
       ),
       child: Column(
@@ -419,7 +383,11 @@ class ThreatDetailsScreen extends StatelessWidget {
               const Spacer(),
               Text(
                 officer,
-                style: GoogleFonts.inter(fontSize: 11.5, color: textGray, fontWeight: FontWeight.w600),
+                style: GoogleFonts.inter(
+                  fontSize: 11.5,
+                  color: textGray,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
           ),
@@ -441,91 +409,11 @@ class ThreatDetailsScreen extends StatelessWidget {
 
   // --- MITIGATION STRATEGY CARD ---
   Widget _buildMitigationCard(Map<String, dynamic> data) {
-    final hasCustom = data['mitigationStrategy'] != null && data['mitigationStrategy'].toString().isNotEmpty;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF0FDF4),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFBBF7D0)),
+    return _buildCard(
+      child: SelectableText(
+        NotificationContent(data).recommendations,
+        style: GoogleFonts.inter(fontSize: 14, color: textDark, height: 1.55),
       ),
-      child: hasCustom
-          ? Text(
-              data['mitigationStrategy'],
-              style: GoogleFonts.inter(fontSize: 14, color: textDark, height: 1.55),
-            )
-          : _buildDefaultMitigation(data),
-    );
-  }
-
-  Widget _buildDefaultMitigation(Map<String, dynamic> data) {
-    final pest = (data['detection'] ?? '').toString().toLowerCase();
-
-    if (pest.contains('armyworm') || pest.contains('faw')) {
-      return _bulletList(const [
-        'Apply Emamectin benzoate or Spinetoram within 24 hours of infestation detection.',
-        'Scout fields in early morning or late afternoon for egg masses and young larvae.',
-        'Install and maintain pheromone lure traps to monitor and trap adult male moths.',
-        'Implement crop rotation with non-host legumes in the next planting cycle.',
-        'Ensure field sanitation by properly clearing volunteer plants and crop residues.',
-      ]);
-    }
-    if (pest.contains('rust') || pest.contains('puccinia')) {
-      return _bulletList(const [
-        'Apply registered protective fungicides (e.g. Azoxystrobin or Pyraclostrobin).',
-        'Avoid overhead sprinkler irrigation to keep leaf surfaces dry.',
-        'Prune or rogue severely infected lower leaves to restrict spore dispersal.',
-        'Maintain proper row spacing to maximize canopy airflow and sun penetration.',
-        'Select rust-tolerant hybrid corn seed varieties for the following cropping cycle.',
-      ]);
-    }
-    if (pest.contains('borer')) {
-      return _bulletList(const [
-        'Release biological control agents (Trichogramma egg parasitoid wasps).',
-        'Inspect whorls for "pin-hole" feeding marks and destroy dead hearts immediately.',
-        'Deploy light and pheromone traps along field borders to suppress adult moths.',
-        'Apply systemic botanical or targeted insecticide if damage exceeds 5% of plants.',
-      ]);
-    }
-    return _bulletList(const [
-      'Inspect your crop rows within 500m of the alert perimeter.',
-      'Document and log pest pressure with the in-app Scouting Tool.',
-      'Contact your local Municipal Agricultural Office or RCPC officer for on-site assistance.',
-      'Adhere to the recommended Integrated Pest Management (IPM) guidelines.',
-    ]);
-  }
-
-  Widget _bulletList(List<String> items) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: items.map((text) {
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Padding(
-                padding: EdgeInsets.only(top: 2),
-                child: Icon(Icons.check_circle_rounded, size: 16, color: Color(0xFF16A34A)),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  text,
-                  style: GoogleFonts.inter(
-                    fontSize: 13.5,
-                    color: const Color(0xFF1E293B),
-                    height: 1.45,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      }).toList(),
     );
   }
 
@@ -551,14 +439,22 @@ class ThreatDetailsScreen extends StatelessWidget {
               const SizedBox(width: 8),
               Text(
                 'Linked Farm Inspection Report',
-                style: GoogleFonts.inter(fontSize: 13.5, fontWeight: FontWeight.w700, color: textDark),
+                style: GoogleFonts.inter(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w700,
+                  color: textDark,
+                ),
               ),
             ],
           ),
           const SizedBox(height: 6),
           Text(
             'This alert is tied to an inspection report. You can review the photos, damage scores, and resolution status.',
-            style: GoogleFonts.inter(fontSize: 12.5, color: textGray, height: 1.4),
+            style: GoogleFonts.inter(
+              fontSize: 12.5,
+              color: textGray,
+              height: 1.4,
+            ),
           ),
           const SizedBox(height: 12),
           SizedBox(
@@ -571,8 +467,13 @@ class ThreatDetailsScreen extends StatelessWidget {
                 backgroundColor: darkGreen,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                textStyle: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 13.5),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                textStyle: GoogleFonts.inter(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13.5,
+                ),
               ),
             ),
           ),
@@ -581,31 +482,49 @@ class ThreatDetailsScreen extends StatelessWidget {
     );
   }
 
-  Future<void> _openLinkedReport(BuildContext context, String reportId, String? reportType) async {
+  Future<void> _openLinkedReport(
+    BuildContext context,
+    String reportId,
+    String? reportType,
+  ) async {
     try {
       if (reportType == 'clustered') {
-        final snap = await FirebaseFirestore.instance.collection('clustered_reports').doc(reportId).get();
+        final snap = await FirebaseFirestore.instance
+            .collection('clustered_reports')
+            .doc(reportId)
+            .get();
         if (snap.exists && context.mounted) {
           final rData = snap.data()!;
           rData['reportType'] = 'clustered';
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => ReportDetailScreen(reportId: reportId, reportData: rData, reportType: 'clustered'),
+              builder: (_) => ReportDetailScreen(
+                reportId: reportId,
+                reportData: rData,
+                reportType: 'clustered',
+              ),
             ),
           );
           return;
         }
       }
 
-      final regSnap = await FirebaseFirestore.instance.collection('reports').doc(reportId).get();
+      final regSnap = await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(reportId)
+          .get();
       if (regSnap.exists && context.mounted) {
         final rData = regSnap.data()!;
         rData['reportType'] = 'regular';
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => ReportDetailScreen(reportId: reportId, reportData: rData, reportType: 'regular'),
+            builder: (_) => ReportDetailScreen(
+              reportId: reportId,
+              reportData: rData,
+              reportType: 'regular',
+            ),
           ),
         );
       }
@@ -615,7 +534,11 @@ class ThreatDetailsScreen extends StatelessWidget {
   }
 
   // --- STICKY MAP BUTTON ---
-  Widget _buildStickyMapButton(BuildContext context, Map<String, dynamic> data, Color themeColor) {
+  Widget _buildStickyMapButton(
+    BuildContext context,
+    Map<String, dynamic> data,
+    Color themeColor,
+  ) {
     return Positioned(
       left: 0,
       right: 0,
@@ -637,11 +560,13 @@ class ThreatDetailsScreen extends StatelessWidget {
           height: 50,
           child: ElevatedButton.icon(
             onPressed: () {
-              final distance = data['distanceKm'] is num ? (data['distanceKm'] as num).toDouble() : null;
+              final distance = data['distanceKm'] is num
+                  ? (data['distanceKm'] as num).toDouble()
+                  : null;
               showSpreadRiskSheet(
                 context,
                 pestName: data['detection'] ?? data['title'] ?? 'Unknown pest',
-                riskLevel: (data['risk'] ?? 'Moderate').toString(),
+                riskLevel: NotificationContent(data).risk,
                 distanceKm: distance,
                 cropAffected: data['cropAffected'],
                 lifeStage: data['lifeStage'],
@@ -650,13 +575,18 @@ class ThreatDetailsScreen extends StatelessWidget {
             style: ElevatedButton.styleFrom(
               backgroundColor: themeColor,
               foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
               elevation: 0,
             ),
             icon: const Icon(Icons.radar_rounded, size: 20),
             label: Text(
               'View Proximity / Monitoring Zone',
-              style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14.5),
+              style: GoogleFonts.inter(
+                fontWeight: FontWeight.w700,
+                fontSize: 14.5,
+              ),
             ),
           ),
         ),
@@ -716,16 +646,30 @@ class ThreatDetailsScreen extends StatelessWidget {
           children: [
             Container(
               padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(color: color.withValues(alpha: 0.1), shape: BoxShape.circle),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
               child: Icon(icon, size: 44, color: color),
             ),
             const SizedBox(height: 16),
-            Text(title, style: GoogleFonts.inter(fontSize: 18, fontWeight: FontWeight.w800, color: textDark)),
+            Text(
+              title,
+              style: GoogleFonts.inter(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: textDark,
+              ),
+            ),
             const SizedBox(height: 8),
             Text(
               subtitle,
               textAlign: TextAlign.center,
-              style: GoogleFonts.inter(fontSize: 13.5, color: textGray, height: 1.5),
+              style: GoogleFonts.inter(
+                fontSize: 13.5,
+                color: textGray,
+                height: 1.5,
+              ),
             ),
           ],
         ),
@@ -735,55 +679,39 @@ class ThreatDetailsScreen extends StatelessWidget {
 
   Color _resolveThemeColor(String type, String risk) {
     if (type.contains('validation_rejected')) return rejectRose;
-    if (type.contains('validation_confirmed') || type.contains('validated')) return successEmerald;
+    if (type.contains('validation_confirmed') || type.contains('validated'))
+      return successEmerald;
     if (risk == 'high') return dangerRed;
     if (risk == 'moderate') return warningAmber;
     return darkGreen;
   }
 
-  String _resolveCategoryTitle(String type, String risk, [Map<String, dynamic>? data]) {
-    final sender = (data?['sender'] ?? data?['source'] ?? data?['issuer'] ?? '').toString().toLowerCase();
-    final title = (data?['title'] ?? '').toString().toLowerCase();
-
-    if (type.contains('validation_rejected')) return 'VALIDATION REJECTED';
-    if (type.contains('validation_confirmed') || type.contains('validated')) return 'DA-RCPC VALIDATED';
-    if (type.contains('mao') || sender.contains('mao') || title.contains('mao') || type.contains('local_advisory')) {
-      return 'MAO LOCAL ADVISORY';
-    }
-    if (type.contains('rcpc') || type.contains('technical') || sender.contains('rcpc') || type.contains('pest_advisory')) {
-      return 'DA-RCPC TECHNICAL ADVISORY';
-    }
-    if (risk == 'high') return 'CRITICAL PEST ALERT';
-    if (risk == 'moderate') return 'PROXIMITY MONITORING ALERT';
-    return 'AGRICULTURAL ADVISORY';
-  }
-
-  IconData _resolveCategoryIcon(String type, String risk, [Map<String, dynamic>? data]) {
-    final sender = (data?['sender'] ?? data?['source'] ?? data?['issuer'] ?? '').toString().toLowerCase();
+  IconData _resolveCategoryIcon(
+    String type,
+    String risk, [
+    Map<String, dynamic>? data,
+  ]) {
+    final sender = (data?['sender'] ?? data?['source'] ?? data?['issuer'] ?? '')
+        .toString()
+        .toLowerCase();
     final title = (data?['title'] ?? '').toString().toLowerCase();
 
     if (type.contains('validation_rejected')) return Icons.cancel_rounded;
-    if (type.contains('validation_confirmed') || type.contains('validated')) return Icons.verified_rounded;
-    if (type.contains('mao') || sender.contains('mao') || title.contains('mao')) return Icons.location_city_rounded;
-    if (type.contains('rcpc') || type.contains('technical') || sender.contains('rcpc')) return Icons.biotech_rounded;
+    if (type.contains('validation_confirmed') || type.contains('validated'))
+      return Icons.verified_rounded;
+    if (type.contains('mao') || sender.contains('mao') || title.contains('mao'))
+      return Icons.location_city_rounded;
+    if (type.contains('rcpc') ||
+        type.contains('technical') ||
+        sender.contains('rcpc'))
+      return Icons.biotech_rounded;
     if (risk == 'high') return Icons.warning_amber_rounded;
     if (risk == 'moderate') return Icons.radar_rounded;
     return Icons.campaign_rounded;
   }
 
-  Color _riskTextColor(String risk) {
-    switch (risk.toLowerCase()) {
-      case 'high':
-        return dangerRed;
-      case 'moderate':
-        return warningAmber;
-      default:
-        return const Color(0xFF16A34A);
-    }
-  }
-
   String _formatTimestamp(dynamic timestamp) {
-    if (timestamp == null) return 'recently';
+    if (timestamp == null) return 'Date unavailable';
     if (timestamp is Timestamp) {
       final date = timestamp.toDate();
       final diff = DateTime.now().difference(date);

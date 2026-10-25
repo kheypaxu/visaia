@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:visaia/services/notification_content.dart';
 import 'package:intl/intl.dart';
 import 'package:visaia/screens/dashboard_screens/threat_details.dart';
 import 'package:visaia/screens/report_history/report_details.dart';
@@ -136,7 +137,7 @@ class _AlertsPageState extends State<AlertsPage> {
                     (n) =>
                         (_filter != 'Unread' || n.unread) &&
                         (_filter != 'Report Updates' || n.isReport) &&
-                        (_filter != 'Alerts' || !n.isReport) &&
+                        (_filter != 'Alerts & Advisories' || !n.isReport) &&
                         '${n.title} ${n.message} ${n.reportId}'
                             .toLowerCase()
                             .contains(_search),
@@ -192,19 +193,25 @@ class _AlertsPageState extends State<AlertsPage> {
                     child: ListView(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
                       scrollDirection: Axis.horizontal,
-                      children: ['All', 'Unread', 'Report Updates', 'Alerts']
-                          .map(
-                            (label) => Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: ChoiceChip(
-                                label: Text(label),
-                                selected: _filter == label,
-                                onSelected: (_) =>
-                                    setState(() => _filter = label),
-                              ),
-                            ),
-                          )
-                          .toList(),
+                      children:
+                          [
+                                'All',
+                                'Unread',
+                                'Report Updates',
+                                'Alerts & Advisories',
+                              ]
+                              .map(
+                                (label) => Padding(
+                                  padding: const EdgeInsets.only(right: 8),
+                                  child: ChoiceChip(
+                                    label: Text(label),
+                                    selected: _filter == label,
+                                    onSelected: (_) =>
+                                        setState(() => _filter = label),
+                                  ),
+                                ),
+                              )
+                              .toList(),
                     ),
                   ),
                   Expanded(
@@ -297,6 +304,17 @@ class _AlertsPageState extends State<AlertsPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      if (!n.isReport) ...[
+                        Text(
+                          NotificationContent(n.data).label,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: green,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                      ],
                       Text(
                         n.title,
                         style: TextStyle(
