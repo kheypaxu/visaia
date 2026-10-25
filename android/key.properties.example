@@ -1,0 +1,6 @@
+# Copy to key.properties and fill in your private values. Never commit that file.
+# storeFile is resolved relative to android; an absolute path also works.
+storeFile=app/release-key.jks
+storePassword=
+keyAlias=
+keyPassword=

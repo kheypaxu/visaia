@@ -14,6 +14,23 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
+fun signingValue(property: String, environment: String): String? =
+    System.getenv(environment)?.takeIf { it.isNotBlank() }
+        ?: keystoreProperties.getProperty(property)?.takeIf { it.isNotBlank() }
+
+val releaseKeyFile = rootProject.file(signingValue("storeFile", "ANDROID_KEYSTORE_PATH") ?: "app/release-key.jks")
+val releaseStorePassword = signingValue("storePassword", "ANDROID_KEYSTORE_PASSWORD")
+val releaseKeyAlias = signingValue("keyAlias", "ANDROID_KEY_ALIAS")
+val releaseKeyPassword = signingValue("keyPassword", "ANDROID_KEY_PASSWORD")
+val hasReleaseSigning = releaseKeyFile.isFile && releaseStorePassword != null &&
+    releaseKeyAlias != null && releaseKeyPassword != null
+
+gradle.taskGraph.whenReady {
+    if (allTasks.any { it.project == project && it.name.contains("Release") } && !hasReleaseSigning) {
+        throw GradleException("Release signing is not configured. Set private android/key.properties or ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD. See docs/android-signing.md.")
+    }
+}
+
 android {
     namespace = "com.example.visaia"
     compileSdk = 36
@@ -40,24 +57,18 @@ android {
 
     signingConfigs {
         create("release") {
-            val keyFile = file("release-key.jks")
-            if (keyFile.exists()) {
-                storeFile = keyFile
-                storePassword = keystoreProperties.getProperty("storePassword") ?: "visaia_release_password_2026"
-                keyAlias = keystoreProperties.getProperty("keyAlias") ?: "visaia_key"
-                keyPassword = keystoreProperties.getProperty("keyPassword") ?: "visaia_release_password_2026"
+            if (hasReleaseSigning) {
+                storeFile = releaseKeyFile
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
             }
         }
     }
 
     buildTypes {
         release {
-            val releaseSigning = signingConfigs.getByName("release")
-            signingConfig = if (releaseSigning.storeFile != null && releaseSigning.storeFile!!.exists()) {
-                releaseSigning
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android.txt"),

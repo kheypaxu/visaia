@@ -7,6 +7,7 @@ gradle-wrapper.jar
 GeneratedPluginRegistrant.java
 .cxx/
 
-# Release keystore for CI builds
-!key.properties
-!app/release-key.jks
+# Private release signing files (CI restores them from repository secrets).
+/key.properties
+*.jks
+*.keystore

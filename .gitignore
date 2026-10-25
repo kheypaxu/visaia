@@ -48,3 +48,8 @@ change-pass.js
 
 node_modules
 service_acc.json
+
+# Android signing credentials stay on the developer machine or in CI secrets.
+**/key.properties
+*.jks
+*.keystore
