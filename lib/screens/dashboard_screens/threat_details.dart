@@ -3,7 +3,6 @@ import 'package:visaia/services/notification_content.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:visaia/screens/dashboard_screens/spread_risk_sheet.dart';
-import 'package:visaia/screens/report_history/report_details.dart';
 
 class ThreatDetailsScreen extends StatelessWidget {
   final String alertId;
@@ -185,12 +184,6 @@ class ThreatDetailsScreen extends StatelessWidget {
                             ),
                             const SizedBox(height: 10),
                             _buildMitigationCard(data),
-                            const SizedBox(height: 20),
-                          ],
-
-                          // 5. Linked Report Button (if available)
-                          if (data['reportId'] != null) ...[
-                            _buildReportJumpCard(context, data),
                             const SizedBox(height: 20),
                           ],
 
@@ -417,122 +410,6 @@ class ThreatDetailsScreen extends StatelessWidget {
     );
   }
 
-  // --- REPORT JUMP CARD ---
-  Widget _buildReportJumpCard(BuildContext context, Map<String, dynamic> data) {
-    final reportId = data['reportId'].toString();
-    final reportType = data['reportType']?.toString();
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: surface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.link_rounded, size: 18, color: darkGreen),
-              const SizedBox(width: 8),
-              Text(
-                'Linked Farm Inspection Report',
-                style: GoogleFonts.inter(
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w700,
-                  color: textDark,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'This alert is tied to an inspection report. You can review the photos, damage scores, and resolution status.',
-            style: GoogleFonts.inter(
-              fontSize: 12.5,
-              color: textGray,
-              height: 1.4,
-            ),
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: () => _openLinkedReport(context, reportId, reportType),
-              icon: const Icon(Icons.description_outlined, size: 16),
-              label: const Text('View Full Report & Resolution'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: darkGreen,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                textStyle: GoogleFonts.inter(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 13.5,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _openLinkedReport(
-    BuildContext context,
-    String reportId,
-    String? reportType,
-  ) async {
-    try {
-      if (reportType == 'clustered') {
-        final snap = await FirebaseFirestore.instance
-            .collection('clustered_reports')
-            .doc(reportId)
-            .get();
-        if (snap.exists && context.mounted) {
-          final rData = snap.data()!;
-          rData['reportType'] = 'clustered';
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => ReportDetailScreen(
-                reportId: reportId,
-                reportData: rData,
-                reportType: 'clustered',
-              ),
-            ),
-          );
-          return;
-        }
-      }
-
-      final regSnap = await FirebaseFirestore.instance
-          .collection('reports')
-          .doc(reportId)
-          .get();
-      if (regSnap.exists && context.mounted) {
-        final rData = regSnap.data()!;
-        rData['reportType'] = 'regular';
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => ReportDetailScreen(
-              reportId: reportId,
-              reportData: rData,
-              reportType: 'regular',
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      debugPrint('Error opening report from threat details: $e');
-    }
-  }
-
   // --- STICKY MAP BUTTON ---
   Widget _buildStickyMapButton(
     BuildContext context,
@@ -565,6 +442,7 @@ class ThreatDetailsScreen extends StatelessWidget {
                   : null;
               showSpreadRiskSheet(
                 context,
+                alertData: data,
                 pestName: data['detection'] ?? data['title'] ?? 'Unknown pest',
                 riskLevel: NotificationContent(data).risk,
                 distanceKm: distance,

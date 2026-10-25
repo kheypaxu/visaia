@@ -1,4 +1,4 @@
-import 'dart:math' as math;
+import 'package:visaia/widgets/notification_proximity_map.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 /// Works out of the box with just [distanceKm] — no map SDK required.
 Future<void> showSpreadRiskSheet(
   BuildContext context, {
+  required Map<String, dynamic> alertData,
   required String pestName,
   required String riskLevel,
   double? distanceKm,
@@ -17,6 +18,7 @@ Future<void> showSpreadRiskSheet(
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     builder: (_) => SpreadRiskSheet(
+      alertData: alertData,
       pestName: pestName,
       riskLevel: riskLevel,
       distanceKm: distanceKm,
@@ -27,6 +29,7 @@ Future<void> showSpreadRiskSheet(
 }
 
 class SpreadRiskSheet extends StatelessWidget {
+  final Map<String, dynamic> alertData;
   final String pestName;
   final String riskLevel;
   final double? distanceKm;
@@ -35,6 +38,7 @@ class SpreadRiskSheet extends StatelessWidget {
 
   const SpreadRiskSheet({
     super.key,
+    required this.alertData,
     required this.pestName,
     required this.riskLevel,
     this.distanceKm,
@@ -61,12 +65,14 @@ class SpreadRiskSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double km = distanceKm ?? 3.0;
-    final String zoneLabel = km <= 2
+    final double? km = distanceKm;
+    final String zoneLabel = km == null
+        ? 'Distance unavailable'
+        : km <= 2
         ? 'Immediate Risk Zone'
         : km <= 5
-            ? 'Caution Zone'
-            : 'Watch Zone';
+        ? 'Caution Zone'
+        : 'Watch Zone';
 
     return DraggableScrollableSheet(
       initialChildSize: 0.82,
@@ -98,21 +104,27 @@ class SpreadRiskSheet extends StatelessWidget {
                 children: [
                   Icon(Icons.radar_rounded, color: _riskColor, size: 22),
                   const SizedBox(width: 8),
-                  Text(
-                    'Proximity / Monitoring Zone',
-                    style: GoogleFonts.epilogue(
-                      fontSize: 19,
-                      fontWeight: FontWeight.w800,
-                      color: headingBlack,
+                  Expanded(
+                    child: Text(
+                      'Proximity / Monitoring Zone',
+                      style: GoogleFonts.epilogue(
+                        fontSize: 19,
+                        fontWeight: FontWeight.w800,
+                        color: headingBlack,
+                      ),
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: 6),
               Text(
-                'Schematic view of nearby pest detections relative to your farm. '
+                'Report location and your saved farm boundaries. '
                 'Represents a proximity monitoring zone for heightened surveillance, not guaranteed infestation or pest spread.',
-                style: GoogleFonts.manrope(fontSize: 13, color: textGray, height: 1.5),
+                style: GoogleFonts.manrope(
+                  fontSize: 13,
+                  color: textGray,
+                  height: 1.5,
+                ),
               ),
               const SizedBox(height: 24),
 
@@ -125,22 +137,21 @@ class SpreadRiskSheet extends StatelessWidget {
                 ),
                 child: Column(
                   children: [
-                    SizedBox(
-                      height: 260,
-                      width: double.infinity,
-                      child: CustomPaint(
-                        painter: _RiskZonePainter(distanceKm: km),
-                      ),
-                    ),
+                    NotificationProximityMap(alertData: alertData),
                     const SizedBox(height: 12),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
                         color: _riskColor.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
-                        '${km.toStringAsFixed(1)} km away · $zoneLabel',
+                        km == null
+                            ? zoneLabel
+                            : '${km.toStringAsFixed(1)} km away · $zoneLabel',
                         style: GoogleFonts.manrope(
                           fontSize: 12.5,
                           fontWeight: FontWeight.w800,
@@ -154,9 +165,21 @@ class SpreadRiskSheet extends StatelessWidget {
               const SizedBox(height: 20),
 
               // --- Legend ---
-              _legendRow(dangerRed, 'Immediate Monitoring Zone (0–2 km)', 'Nearby detection: inspect fields and increase monitoring within 24 hours'),
-              _legendRow(amber, 'Caution Monitoring Zone (2–5 km)', 'Monitor closely, prepare preventative controls'),
-              _legendRow(darkGreen, 'General Monitoring Zone (5 km+)', 'Maintain routine scouting, log any sightings'),
+              _legendRow(
+                dangerRed,
+                'Immediate Monitoring Zone (0–2 km)',
+                'Nearby detection: inspect fields and increase monitoring within 24 hours',
+              ),
+              _legendRow(
+                amber,
+                'Caution Monitoring Zone (2–5 km)',
+                'Monitor closely, prepare preventative controls',
+              ),
+              _legendRow(
+                darkGreen,
+                'General Monitoring Zone (5 km+)',
+                'Maintain routine scouting, log any sightings',
+              ),
               const SizedBox(height: 20),
 
               // --- Quick facts ---
@@ -172,13 +195,29 @@ class SpreadRiskSheet extends StatelessWidget {
                   children: [
                     Text(
                       'Reported Threat',
-                      style: GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w700, color: headingBlack),
+                      style: GoogleFonts.manrope(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: headingBlack,
+                      ),
                     ),
                     const SizedBox(height: 10),
                     _factRow(Icons.bug_report_rounded, 'Pest', pestName),
-                    if (cropAffected != null) _factRow(Icons.eco_rounded, 'Crop', cropAffected!),
-                    if (lifeStage != null) _factRow(Icons.timeline_rounded, 'Life stage', lifeStage!),
-                    _factRow(Icons.straighten_rounded, 'Distance', '${km.toStringAsFixed(1)} km from your farm'),
+                    if (cropAffected != null)
+                      _factRow(Icons.eco_rounded, 'Crop', cropAffected!),
+                    if (lifeStage != null)
+                      _factRow(
+                        Icons.timeline_rounded,
+                        'Life stage',
+                        lifeStage!,
+                      ),
+                    _factRow(
+                      Icons.straighten_rounded,
+                      'Distance',
+                      km == null
+                          ? 'Unavailable'
+                          : '${km.toStringAsFixed(1)} km from your farm',
+                    ),
                   ],
                 ),
               ),
@@ -191,12 +230,17 @@ class SpreadRiskSheet extends StatelessWidget {
                     backgroundColor: darkGreen,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
                   ),
                   icon: const Icon(Icons.check_circle_outline, size: 20),
                   label: Text(
                     'Got it',
-                    style: GoogleFonts.manrope(fontWeight: FontWeight.w700, fontSize: 15),
+                    style: GoogleFonts.manrope(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                    ),
                   ),
                 ),
               ),
@@ -224,8 +268,18 @@ class SpreadRiskSheet extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: GoogleFonts.manrope(fontSize: 13.5, fontWeight: FontWeight.w700, color: headingBlack)),
-                Text(subtitle, style: GoogleFonts.manrope(fontSize: 12, color: textGray)),
+                Text(
+                  title,
+                  style: GoogleFonts.manrope(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                    color: headingBlack,
+                  ),
+                ),
+                Text(
+                  subtitle,
+                  style: GoogleFonts.manrope(fontSize: 12, color: textGray),
+                ),
               ],
             ),
           ),
@@ -241,99 +295,22 @@ class SpreadRiskSheet extends StatelessWidget {
         children: [
           Icon(icon, size: 16, color: darkGreen),
           const SizedBox(width: 8),
-          Text('$label: ', style: GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w700, color: headingBlack)),
+          Text(
+            '$label: ',
+            style: GoogleFonts.manrope(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: headingBlack,
+            ),
+          ),
           Expanded(
-            child: Text(value, style: GoogleFonts.manrope(fontSize: 13, color: textGray)),
+            child: Text(
+              value,
+              style: GoogleFonts.manrope(fontSize: 13, color: textGray),
+            ),
           ),
         ],
       ),
     );
   }
-}
-
-/// Paints concentric risk rings with the farm at the center and the
-/// reported outbreak marker placed proportionally to [distanceKm].
-class _RiskZonePainter extends CustomPainter {
-  final double distanceKm;
-  static const double maxRadiusKm = 10.0;
-
-  _RiskZonePainter({required this.distanceKm});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2 + 10);
-    final maxRadius = math.min(size.width, size.height) / 2 - 12;
-
-    final zones = [
-      (_pxFor(2, maxRadius), const Color(0xFFBA1A1A)),
-      (_pxFor(5, maxRadius), const Color(0xFFB8860B)),
-      (_pxFor(maxRadiusKm, maxRadius), const Color(0xFF0D4D33)),
-    ];
-
-    // Draw rings from outermost to innermost so inner tints layer on top.
-    for (final zone in zones.reversed) {
-      final paint = Paint()
-        ..color = zone.$2.withValues(alpha: 0.08)
-        ..style = PaintingStyle.fill;
-      canvas.drawCircle(center, zone.$1, paint);
-
-      final strokePaint = Paint()
-        ..color = zone.$2.withValues(alpha: 0.35)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5;
-      canvas.drawCircle(center, zone.$1, strokePaint);
-    }
-
-    // Farm marker (center)
-    final farmPaint = Paint()..color = const Color(0xFF0D4D33);
-    canvas.drawCircle(center, 10, farmPaint);
-    canvas.drawCircle(center, 10, Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 2.5);
-
-    // Outbreak marker, placed at a fixed bearing (schematic, not true direction)
-    final clampedKm = distanceKm.clamp(0, maxRadiusKm).toDouble();
-    final markerRadius = _pxFor(clampedKm, maxRadius);
-    const angle = -math.pi / 3; // top-right
-    final markerCenter = Offset(
-      center.dx + markerRadius * math.cos(angle),
-      center.dy + markerRadius * math.sin(angle),
-    );
-
-    final markerColor = distanceKm <= 2
-        ? const Color(0xFFBA1A1A)
-        : distanceKm <= 5
-            ? const Color(0xFFB8860B)
-            : const Color(0xFF0D4D33);
-
-    canvas.drawCircle(markerCenter, 8, Paint()..color = markerColor);
-    canvas.drawCircle(markerCenter, 8, Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 2);
-
-    // Dashed connecting line
-    _drawDashedLine(canvas, center, markerCenter, markerColor.withValues(alpha: 0.5));
-  }
-
-  double _pxFor(double km, double maxRadiusPx) {
-    final ratio = (km / maxRadiusKm).clamp(0.0, 1.0);
-    return ratio * maxRadiusPx;
-  }
-
-  void _drawDashedLine(Canvas canvas, Offset start, Offset end, Color color) {
-    const dashWidth = 5.0;
-    const dashSpace = 4.0;
-    final totalDistance = (end - start).distance;
-    if (totalDistance == 0) return;
-    final direction = (end - start) / totalDistance;
-    double covered = 0;
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = 1.5;
-    while (covered < totalDistance) {
-      final segStart = start + direction * covered;
-      final segEnd = start + direction * math.min(covered + dashWidth, totalDistance);
-      canvas.drawLine(segStart, segEnd, paint);
-      covered += dashWidth + dashSpace;
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _RiskZonePainter oldDelegate) => oldDelegate.distanceKm != distanceKm;
 }
