@@ -63,6 +63,9 @@ class _AIResultScreenState extends State<AIResultScreen>
     with SingleTickerProviderStateMixin {
   // ── State variable for assigned cycle & field ──────────────────────────────
   String? _assignedCycleId;
+  String? _assignedCycleName;
+  int? _assignedWeekNumber;
+  int? _assignedStation;
   int? _assignedDap;
   String? _assignedGrowthStage;
   String? _assignedFieldId;
@@ -356,6 +359,9 @@ class _AIResultScreenState extends State<AIResultScreen>
         'fieldId': _assignedFieldId,
         'fieldName': _assignedFieldName ?? _reportAreaName ?? 'Farm Field',
         'cycleId': _assignedCycleId,
+        'cycleName': _assignedCycleName,
+        'weekNumber': _assignedWeekNumber,
+        'station': _assignedStation,
         'dap': _assignedDap,
         'growthStage': _assignedGrowthStage,
         'status': 'pending',
@@ -1929,6 +1935,9 @@ class _AIResultScreenState extends State<AIResultScreen>
                     if (returnedData != null && returnedData['cycleId'] != null) {
                       setState(() { 
                         _assignedCycleId = returnedData['cycleId'];
+                        _assignedCycleName = returnedData['cycleName']?.toString();
+                        _assignedWeekNumber = (returnedData['weekNumber'] as num?)?.toInt();
+                        _assignedStation = (returnedData['station'] as num?)?.toInt();
                         _assignedDap = returnedData['dap'];
                         _assignedGrowthStage = returnedData['growthStage'];
                         if (returnedData['fieldId'] != null && returnedData['fieldId'].toString().isNotEmpty) {

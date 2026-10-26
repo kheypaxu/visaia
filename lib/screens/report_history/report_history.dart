@@ -102,11 +102,7 @@ class UnifiedReportItem {
     final detection = data['detection'] ?? data['originalDetection'] ?? 'Unknown Pest';
     final risk = (data['risk'] ?? 'Low').toString();
     final status = (data['status'] ?? 'pending').toString();
-    final rawTs = data['dateConducted'] ??
-        data['scoutingDate'] ??
-        data['submittedAt'] ??
-        data['timestamp'] ??
-        data['createdAt'];
+    final rawTs = data['scoutingDate'];
     DateTime ts = DateTime.now();
     if (rawTs is Timestamp) {
       ts = rawTs.toDate();

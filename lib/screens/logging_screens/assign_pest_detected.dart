@@ -728,6 +728,7 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
           'growthStageDisplay': growthStageDisplay,
           'riskLevel': riskLevel,
           'weekNumber': _selectedWeek,
+          'station': _selectedStation,
         });
       }
     } catch (e) {

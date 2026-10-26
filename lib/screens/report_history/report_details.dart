@@ -6,6 +6,9 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:visaia/widgets/database_image.dart';
+import 'package:visaia/widgets/report_detail_tabs.dart';
+import 'package:visaia/widgets/scouting_map_dialog.dart';
+import 'package:visaia/utils/scouting_week_comparison.dart';
 
 class ReportDetailScreen extends StatefulWidget {
   final String reportId;
@@ -110,6 +113,54 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
   // CLUSTERED SCOUTING REPORT VIEW
   // ══════════════════════════════════════════════════════════════════════════
 
+  Widget _buildScoutingMapButton(Map<String, dynamic> data) => Material(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(20),
+    child: InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: () => showDialog<void>(
+        context: context,
+        builder: (_) => ScoutingMapDialog(
+          report: ScoutingWeekReport(widget.reportId, data),
+        ),
+      ),
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: _gold.withValues(alpha: .4)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.map_outlined, color: _forestGreen, size: 28),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Scouting map & weekly details',
+                    style: GoogleFonts.epilogue(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: _forestGreen,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'View this field and the previous scouting week',
+                    style: GoogleFonts.manrope(fontSize: 12, color: _darkGreen),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: _forestGreen),
+          ],
+        ),
+      ),
+    ),
+  );
+
   Widget _buildClusteredView() {
     final data = _currentData;
     final status = (data['status'] ?? 'pending').toString();
@@ -121,22 +172,37 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
 
     final totalInspected = data['correctedInspected'] is num
         ? (data['correctedInspected'] as num).toInt()
-        : (data['totalInspected'] is num ? (data['totalInspected'] as num).toInt() : 100);
+        : (data['totalInspected'] is num
+              ? (data['totalInspected'] as num).toInt()
+              : 100);
     final totalDamaged = data['correctedDamaged'] is num
         ? (data['correctedDamaged'] as num).toInt()
-        : (data['totalDamaged'] is num ? (data['totalDamaged'] as num).toInt() : 0);
+        : (data['totalDamaged'] is num
+              ? (data['totalDamaged'] as num).toInt()
+              : 0);
     final damagePercentage = data['damagePercentage'] is num
         ? (data['damagePercentage'] as num).toDouble()
         : (totalInspected > 0 ? (totalDamaged / totalInspected) * 100 : 0.0);
-    final exceedsThreshold = data['exceedsThreshold'] == true || damagePercentage >= 10.0;
+    final exceedsThreshold =
+        data['exceedsThreshold'] == true || damagePercentage >= 10.0;
 
-    final totals = (data['correctedTotals'] as Map<String, dynamic>?) ?? (data['totals'] as Map<String, dynamic>?) ?? {};
+    final totals =
+        (data['correctedTotals'] as Map<String, dynamic>?) ??
+        (data['totals'] as Map<String, dynamic>?) ??
+        {};
     final eggs = totals['eggs'] is num ? (totals['eggs'] as num).toInt() : 0;
-    final larvae = totals['larvae'] is num ? (totals['larvae'] as num).toInt() : 0;
+    final larvae = totals['larvae'] is num
+        ? (totals['larvae'] as num).toInt()
+        : 0;
     final pupae = totals['pupae'] is num ? (totals['pupae'] as num).toInt() : 0;
     final moths = totals['moths'] is num ? (totals['moths'] as num).toInt() : 0;
 
-    final risk = (data['correctedRisk'] ?? data['riskLevel'] ?? data['severityLevel'] ?? (exceedsThreshold ? 'High' : 'Moderate')).toString();
+    final risk =
+        (data['correctedRisk'] ??
+                data['riskLevel'] ??
+                data['severityLevel'] ??
+                (exceedsThreshold ? 'High' : 'Moderate'))
+            .toString();
     final isResolved = status.toLowerCase() == 'resolved';
     final isRejected = status.toLowerCase() == 'rejected';
     final isValidated = status.toLowerCase() == 'validated';
@@ -144,261 +210,246 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
 
     // Collect all structured evidence images (both pest sightings and damage plants)
     final List<_ScoutingEvidenceImage> allEvidence = _extractAllEvidence(data);
-    final List<_ScoutingEvidenceImage> damageImages =
-        allEvidence.where((e) => e.category == 'damage').toList();
-    final List<_ScoutingEvidenceImage> pestImages =
-        allEvidence.where((e) => e.category != 'damage').toList();
+    final List<_ScoutingEvidenceImage> damageImages = allEvidence
+        .where((e) => e.category == 'damage')
+        .toList();
+    final List<_ScoutingEvidenceImage> pestImages = allEvidence
+        .where((e) => e.category != 'damage')
+        .toList();
 
     return Scaffold(
       backgroundColor: _cream,
-      body: CustomScrollView(
-        slivers: [
-          // ─── Sliver App Bar ───────────────────────────────────────────────
-          SliverAppBar(
-            expandedHeight: allEvidence.isNotEmpty ? 290 : 200,
-            pinned: true,
-            backgroundColor: _forestGreen,
-            leading: Padding(
-              padding: const EdgeInsets.all(8),
-              child: CircleAvatar(
-                backgroundColor: Colors.black.withValues(alpha: 0.35),
-                child: IconButton(
-                  icon: const Icon(Icons.arrow_back_rounded, color: Colors.white, size: 20),
-                  onPressed: () => Navigator.pop(context),
+      body: ReportDetailTabs(
+        key: ValueKey('scouting-${widget.reportId}'),
+        expandedHeight: allEvidence.isNotEmpty ? 290 : 200,
+        header: SliverAppBar(
+          expandedHeight: allEvidence.isNotEmpty ? 290 : 200,
+          pinned: true,
+          backgroundColor: _forestGreen,
+          leading: Padding(
+            padding: const EdgeInsets.all(8),
+            child: CircleAvatar(
+              backgroundColor: Colors.black.withValues(alpha: 0.35),
+              child: IconButton(
+                icon: const Icon(
+                  Icons.arrow_back_rounded,
+                  color: Colors.white,
+                  size: 20,
                 ),
+                onPressed: () => Navigator.pop(context),
               ),
             ),
-            actions: [
-              if (isValidated && !isResolved)
-                Padding(
-                  padding: const EdgeInsets.only(right: 12),
-                  child: _isResolving
-                      ? const Padding(
-                          padding: EdgeInsets.all(14),
-                          child: SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                          ),
-                        )
-                      : TextButton.icon(
-                          onPressed: _showResolveConfirmation,
-                          style: TextButton.styleFrom(
-                            backgroundColor: Colors.white.withValues(alpha: 0.2),
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                          ),
-                          icon: const Icon(Icons.check_circle_outline, color: Colors.white, size: 16),
-                          label: Text(
-                            'Resolve',
-                            style: GoogleFonts.manrope(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ),
-                ),
-            ],
-            flexibleSpace: FlexibleSpaceBar(
-              background: Stack(
-                fit: StackFit.expand,
-                children: [
-                  // Image Gallery or Forest Background
-                  if (allEvidence.isNotEmpty)
-                    _buildGalleryHeader(allEvidence)
-                  else
-                    Container(
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [_forestGreen, Color(0xFF2D5523)],
-                        ),
-                      ),
-                    ),
-                  // Dark bottom gradient for text contrast
-                  const DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        stops: [0.3, 1.0],
-                        colors: [Colors.transparent, Color(0xDD1B3015)],
-                      ),
-                    ),
-                  ),
-                  // Bottom title & pills overlay
-                  Positioned(
-                    bottom: 16,
-                    left: 20,
-                    right: 20,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            _StatusChip(status: status, color: statusColor),
-                            const SizedBox(width: 8),
-                            _StatusChip(
-                              status: '${risk.toUpperCase()} RISK',
-                              color: _riskColor(risk),
-                              icon: Icons.warning_amber_rounded,
-                            ),
-                            const Spacer(),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: 0.2),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Text(
-                                dap,
-                                style: GoogleFonts.manrope(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'FAW Clustered Scouting Report',
-                          style: GoogleFonts.epilogue(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w900,
+          ),
+          actions: [
+            if (isValidated && !isResolved)
+              Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: _isResolving
+                    ? const Padding(
+                        padding: EdgeInsets.all(14),
+                        child: SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
                             color: Colors.white,
-                            height: 1.15,
                           ),
                         ),
-                        const SizedBox(height: 3),
-                        Text(
-                          '$growthStage · $farmName · $fieldName',
+                      )
+                    : TextButton.icon(
+                        onPressed: _showResolveConfirmation,
+                        style: TextButton.styleFrom(
+                          backgroundColor: Colors.white.withValues(alpha: 0.2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 8,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                        ),
+                        icon: const Icon(
+                          Icons.check_circle_outline,
+                          color: Colors.white,
+                          size: 16,
+                        ),
+                        label: Text(
+                          'Resolve',
                           style: GoogleFonts.manrope(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
                             fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                            color: Colors.white.withValues(alpha: 0.85),
                           ),
                         ),
-                      ],
+                      ),
+              ),
+          ],
+          flexibleSpace: FlexibleSpaceBar(
+            background: Stack(
+              fit: StackFit.expand,
+              children: [
+                // Image Gallery or Forest Background
+                if (allEvidence.isNotEmpty)
+                  _buildGalleryHeader(allEvidence)
+                else
+                  Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [_forestGreen, Color(0xFF2D5523)],
+                      ),
                     ),
                   ),
-                ],
-              ),
+                // Dark bottom gradient for text contrast
+                const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      stops: [0.3, 1.0],
+                      colors: [Colors.transparent, Color(0xDD1B3015)],
+                    ),
+                  ),
+                ),
+                // Bottom title & pills overlay
+                Positioned(
+                  bottom: 16,
+                  left: 20,
+                  right: 20,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          _StatusChip(status: status, color: statusColor),
+                          const SizedBox(width: 8),
+                          _StatusChip(
+                            status: '${risk.toUpperCase()} RISK',
+                            color: _riskColor(risk),
+                            icon: Icons.warning_amber_rounded,
+                          ),
+                          const Spacer(),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.2),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              dap,
+                              style: GoogleFonts.manrope(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'FAW Clustered Scouting Report',
+                        style: GoogleFonts.epilogue(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.white,
+                          height: 1.15,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        '$growthStage · $farmName · $fieldName',
+                        style: GoogleFonts.manrope(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.white.withValues(alpha: 0.85),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
-
-          // ─── Body Content ──────────────────────────────────────────────────
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 18, 16, 40),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 1. Status Banner
-                  _StatusBanner(
-                    status: status,
-                    color: statusColor,
-                    validatedAt: data['validatedAt'],
-                    validatedBy: data['validatedBy'],
-                    rejectionReason: data['rejectionReason'] ?? data['validationNotes'],
-                    resolutionExplanation: data['resolutionExplanation'],
-                    expertDiagnosis: data['expertDiagnosis'],
-                    advisoryMessage: data['advisoryMessage'],
-                  ),
-
-                  // 1b. Resolution Summary Record (if resolved)
-                  if (isResolved) ...[
-                    const SizedBox(height: 16),
-                    _buildResolutionSummaryCard(data),
-                  ],
-
-                  const SizedBox(height: 16),
-
-                  // 2. Key Metrics Grid
-                  _buildScoutingMetricsGrid(
-                    growthStage: growthStage,
-                    dap: dap,
-                    totalInspected: totalInspected,
-                    totalDamaged: totalDamaged,
-                    damagePercentage: damagePercentage,
-                    exceedsThreshold: exceedsThreshold,
-                    risk: risk,
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  // 3. Plant Damage Assessment Card (Detailed Damage, Symptoms & Photos)
-                  _buildPlantDamageAssessmentCard(
-                    data: data,
-                    damageImages: damageImages,
-                    totalInspected: totalInspected,
-                    totalDamaged: totalDamaged,
-                    damagePercentage: damagePercentage,
-                    exceedsThreshold: exceedsThreshold,
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  // 4. Pest Stage Counts & Observed Pest Sightings Photos
-                  _buildPestStageBreakdown(
-                    eggs: eggs,
-                    larvae: larvae,
-                    pupae: pupae,
-                    moths: moths,
-                    data: data,
-                    pestImages: pestImages,
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  // 5. Unified Verification Photo Evidence Gallery (if photos exist)
-                  if (allEvidence.isNotEmpty) ...[
-                    _ScoutingEvidenceGalleryCard(
-                      images: allEvidence,
-                      onOpenFullscreen: (list, idx) => _openFullscreenGallery(images: list, initialIndex: idx),
-                    ),
-                    const SizedBox(height: 16),
-                  ],
-
-                  // 6. RCPC Expert Validation Details (if available)
-                  if (isValidated || data['advisoryMessage'] != null || data['validationNotes'] != null) ...[
-                    _buildRcpcValidationCard(data),
-                    const SizedBox(height: 16),
-                  ],
-
-                  // 6b. Diagnostic Traceability Card
-                  _buildTraceabilityCard(data),
-                  const SizedBox(height: 16),
-
-                  // 7. Stations Inspection Breakdown (Accordion with Station Photos & Damage Scores)
-                  _buildStationsBreakdown(data['stationsData'], allEvidence),
-
-                  const SizedBox(height: 16),
-
-                  // 8. Field & Cycle Context Card
-                  _buildContextCard(data, timestamp),
-
-                  const SizedBox(height: 20),
-
-                  // 9. Resolve CTA (only for validated reports)
-                  if (isValidated && !isResolved)
-                    _ResolveCTA(
-                      isResolving: _isResolving,
-                      onNotYet: () => Navigator.pop(context),
-                      onResolve: _showResolveConfirmation,
-                    )
-                  else if (!isResolved && !isRejected)
-                    _UnvalidatedInfoCard(
-                      reportType: 'clustered',
-                      isHighLevel: exceedsThreshold,
-                    ),
-                ],
-              ),
+        ),
+        sections: [
+          ReportDetailSection('Overview', [
+            _StatusBanner(
+              status: status,
+              color: statusColor,
+              validatedAt: data['validatedAt'],
+              validatedBy: data['validatedBy'],
+              rejectionReason:
+                  data['rejectionReason'] ?? data['validationNotes'],
+              resolutionExplanation: data['resolutionExplanation'],
+              expertDiagnosis: data['expertDiagnosis'],
+              advisoryMessage: data['advisoryMessage'],
             ),
-          ),
+            _buildScoutingMapButton(data),
+            _buildScoutingMetricsGrid(
+              growthStage: growthStage,
+              dap: dap,
+              totalInspected: totalInspected,
+              totalDamaged: totalDamaged,
+              damagePercentage: damagePercentage,
+              exceedsThreshold: exceedsThreshold,
+              risk: risk,
+            ),
+            _buildContextCard(data, timestamp),
+          ]),
+          ReportDetailSection('Damage', [
+            _buildPlantDamageAssessmentCard(
+              data: data,
+              damageImages: damageImages,
+              totalInspected: totalInspected,
+              totalDamaged: totalDamaged,
+              damagePercentage: damagePercentage,
+              exceedsThreshold: exceedsThreshold,
+            ),
+          ]),
+          ReportDetailSection('Pests', [
+            _buildPestStageBreakdown(
+              eggs: eggs,
+              larvae: larvae,
+              pupae: pupae,
+              moths: moths,
+              data: data,
+              pestImages: pestImages,
+            ),
+            if (allEvidence.isNotEmpty)
+              _ScoutingEvidenceGalleryCard(
+                images: allEvidence,
+                onOpenFullscreen: (list, idx) =>
+                    _openFullscreenGallery(images: list, initialIndex: idx),
+              ),
+          ]),
+          ReportDetailSection('Stations', [
+            _buildStationsBreakdown(data['stationsData'], allEvidence),
+          ]),
+          ReportDetailSection('Review', [
+            if (isResolved) _buildResolutionSummaryCard(data),
+            if (isValidated ||
+                isResolved ||
+                data['advisoryMessage'] != null ||
+                data['validationNotes'] != null)
+              _buildRcpcValidationCard(data),
+            _buildTraceabilityCard(data),
+            if (isValidated && !isResolved)
+              _ResolveCTA(
+                isResolving: _isResolving,
+                onNotYet: () => Navigator.pop(context),
+                onResolve: _showResolveConfirmation,
+              )
+            else if (!isResolved && !isRejected)
+              _UnvalidatedInfoCard(
+                reportType: 'clustered',
+                isHighLevel: exceedsThreshold,
+              ),
+          ]),
         ],
       ),
     );
@@ -410,25 +461,32 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
 
   Widget _buildRegularView() {
     final data = _currentData;
-    final detection = (data['detection'] ?? data['originalDetection'] ?? 'Unknown Pest').toString();
+    final detection =
+        (data['detection'] ?? data['originalDetection'] ?? 'Unknown Pest')
+            .toString();
     final scientificName = (data['scientificName'] ?? '').toString();
     final risk = (data['risk'] ?? 'Unknown').toString();
     final status = (data['status'] ?? 'pending').toString();
     final confidence = (data['confidence'] ?? 0.0) as num;
-    final lifeStage = (data['lifeStage'] ?? data['originalLifeStage'] ?? 'Unknown').toString();
+    final lifeStage =
+        (data['lifeStage'] ?? data['originalLifeStage'] ?? 'Unknown')
+            .toString();
     final cropAffected = (data['cropAffected'] ?? 'Corn').toString();
     final analysis = (data['analysis'] ?? '').toString();
     final treatment = (data['treatment'] ?? '').toString();
     final historicalContext = (data['historicalContext'] ?? '').toString();
     final imageBase64 = data['imageBase64'] as String?;
-    final annotatedImageUrl = (data['annotatedImageUrl'] ?? data['annotated_url']) as String?;
-    final timestamp = data['dateConducted'] ??
+    final annotatedImageUrl =
+        (data['annotatedImageUrl'] ?? data['annotated_url']) as String?;
+    final timestamp =
+        data['dateConducted'] ??
         data['scoutingDate'] ??
         data['submittedAt'] ??
         data['timestamp'] ??
         data['createdAt'];
     final farmName = (data['farmName'] ?? 'Unknown Farm').toString();
-    final fieldName = (data['fieldName'] ?? data['areaName'] ?? 'Unknown Field').toString();
+    final fieldName = (data['fieldName'] ?? data['areaName'] ?? 'Unknown Field')
+        .toString();
     final location = data['location'] as Map<String, dynamic>?;
 
     final isResolved = status.toLowerCase() == 'resolved';
@@ -438,250 +496,244 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
 
     return Scaffold(
       backgroundColor: _cream,
-      body: CustomScrollView(
-        slivers: [
-          // ─── Sliver App Bar ───────────────────────────────────────────────
-          SliverAppBar(
-            expandedHeight: 280,
-            pinned: true,
-            backgroundColor: _forestGreen,
-            leading: Padding(
-              padding: const EdgeInsets.all(8),
-              child: CircleAvatar(
-                backgroundColor: Colors.black.withValues(alpha: 0.35),
-                child: IconButton(
-                  icon: const Icon(Icons.arrow_back_rounded, color: Colors.white, size: 20),
-                  onPressed: () => Navigator.pop(context),
+      body: ReportDetailTabs(
+        key: ValueKey('photo-${widget.reportId}'),
+        expandedHeight: 280,
+        header: SliverAppBar(
+          expandedHeight: 280,
+          pinned: true,
+          backgroundColor: _forestGreen,
+          leading: Padding(
+            padding: const EdgeInsets.all(8),
+            child: CircleAvatar(
+              backgroundColor: Colors.black.withValues(alpha: 0.35),
+              child: IconButton(
+                icon: const Icon(
+                  Icons.arrow_back_rounded,
+                  color: Colors.white,
+                  size: 20,
                 ),
+                onPressed: () => Navigator.pop(context),
               ),
             ),
-            actions: [
-              if (isValidated && !isResolved)
-                Padding(
-                  padding: const EdgeInsets.only(right: 12),
-                  child: _isResolving
-                      ? const Padding(
-                          padding: EdgeInsets.all(14),
-                          child: SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                          ),
-                        )
-                      : TextButton.icon(
-                          onPressed: _showResolveConfirmation,
-                          style: TextButton.styleFrom(
-                            backgroundColor: Colors.white.withValues(alpha: 0.2),
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                          ),
-                          icon: const Icon(Icons.check_circle_outline, color: Colors.white, size: 16),
-                          label: Text(
-                            'Resolve',
-                            style: GoogleFonts.manrope(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 13,
-                            ),
+          ),
+          actions: [
+            if (isValidated && !isResolved)
+              Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: _isResolving
+                    ? const Padding(
+                        padding: EdgeInsets.all(14),
+                        child: SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
                           ),
                         ),
-                ),
-            ],
-            flexibleSpace: FlexibleSpaceBar(
-              background: Stack(
-                fit: StackFit.expand,
-                children: [
-                  _buildHeroImage(imageBase64, annotatedImageUrl),
-                  const DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        stops: [0.35, 1.0],
-                        colors: [Colors.transparent, Color(0xDD1B3015)],
+                      )
+                    : TextButton.icon(
+                        onPressed: _showResolveConfirmation,
+                        style: TextButton.styleFrom(
+                          backgroundColor: Colors.white.withValues(alpha: 0.2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 8,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                        ),
+                        icon: const Icon(
+                          Icons.check_circle_outline,
+                          color: Colors.white,
+                          size: 16,
+                        ),
+                        label: Text(
+                          'Resolve',
+                          style: GoogleFonts.manrope(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                          ),
+                        ),
                       ),
+              ),
+          ],
+          flexibleSpace: FlexibleSpaceBar(
+            background: Stack(
+              fit: StackFit.expand,
+              children: [
+                _buildHeroImage(imageBase64, annotatedImageUrl),
+                const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      stops: [0.35, 1.0],
+                      colors: [Colors.transparent, Color(0xDD1B3015)],
                     ),
                   ),
-                  Positioned(
-                    bottom: 16,
-                    left: 20,
-                    right: 20,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            _StatusChip(status: status, color: statusColor),
-                            const SizedBox(width: 8),
-                            _StatusChip(
-                              status: risk.toUpperCase(),
-                              color: _riskColor(risk),
-                              icon: Icons.warning_amber_rounded,
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          detection,
-                          style: GoogleFonts.epilogue(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w900,
-                            color: Colors.white,
-                            height: 1.15,
-                          ),
-                        ),
-                        if (scientificName.isNotEmpty) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            scientificName,
-                            style: GoogleFonts.manrope(
-                              fontSize: 13,
-                              fontStyle: FontStyle.italic,
-                              color: Colors.white.withValues(alpha: 0.8),
-                            ),
+                ),
+                Positioned(
+                  bottom: 16,
+                  left: 20,
+                  right: 20,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          _StatusChip(status: status, color: statusColor),
+                          const SizedBox(width: 8),
+                          _StatusChip(
+                            status: risk.toUpperCase(),
+                            color: _riskColor(risk),
+                            icon: Icons.warning_amber_rounded,
                           ),
                         ],
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // ─── Body Content ──────────────────────────────────────────────────
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 18, 16, 40),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 1. Status Banner
-                  _StatusBanner(
-                    status: status,
-                    color: statusColor,
-                    validatedAt: data['validatedAt'],
-                    validatedBy: data['validatedBy'],
-                    rejectionReason: data['rejectionReason'] ?? data['validationNotes'],
-                    resolutionExplanation: data['resolutionExplanation'],
-                    expertDiagnosis: data['expertDiagnosis'],
-                    advisoryMessage: data['advisoryMessage'],
-                  ),
-
-                  // 1b. Resolution Summary Record (if resolved)
-                  if (isResolved) ...[
-                    const SizedBox(height: 16),
-                    _buildResolutionSummaryCard(data),
-                  ],
-
-                  const SizedBox(height: 16),
-
-                  // 2. RCPC Official Verification Box (if validated or has officer notes)
-                  if (isValidated || data['advisoryMessage'] != null || data['validationNotes'] != null) ...[
-                    _buildRcpcValidationCard(data),
-                    const SizedBox(height: 16),
-                  ],
-
-                  // 2b. Diagnostic Traceability Card
-                  _buildTraceabilityCard(data),
-                  const SizedBox(height: 16),
-
-                  // 3. Quick stats row
-                  _QuickStatsRow(
-                    confidence: confidence.toDouble(),
-                    lifeStage: data['correctedLifeStage'] ?? lifeStage,
-                    cropAffected: cropAffected,
-                    timestamp: timestamp,
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  // 4. Location card
-                  _InfoCard(
-                    icon: Icons.pin_drop_rounded,
-                    title: 'Location & Farm',
-                    accentColor: _gold,
-                    children: [
-                      _Row('Farm', farmName),
-                      _Row('Field', fieldName),
-                      if (location?['areaName'] != null)
-                        _Row('Area', location!['areaName']),
-                      if (location?['lat'] != null && location?['lng'] != null)
-                        _Row(
-                          'Coordinates',
-                          '${location!['lat']?.toStringAsFixed(5)}, ${location['lng']?.toStringAsFixed(5)}',
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        detection,
+                        style: GoogleFonts.epilogue(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.white,
+                          height: 1.15,
                         ),
+                      ),
+                      if (scientificName.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          scientificName,
+                          style: GoogleFonts.manrope(
+                            fontSize: 13,
+                            fontStyle: FontStyle.italic,
+                            color: Colors.white.withValues(alpha: 0.8),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
-
-                  const SizedBox(height: 14),
-
-                  // 5. AI Analysis
-                  if (analysis.isNotEmpty) ...[
-                    _ExpandableCard(
-                      icon: Icons.analytics_outlined,
-                      title: 'AI Analysis',
-                      accentColor: Colors.blue,
-                      child: MarkdownBody(
-                        data: analysis,
-                        styleSheet: _mdStyle(),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                  ],
-
-                  // 6. Treatment Plan
-                  if (treatment.isNotEmpty) ...[
-                    _ExpandableCard(
-                      icon: Icons.healing_outlined,
-                      title: 'Treatment & Management',
-                      accentColor: Colors.green,
-                      initiallyExpanded: true,
-                      child: MarkdownBody(
-                        data: treatment,
-                        styleSheet: _mdStyle(),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                  ],
-
-                  // 7. Historical Context
-                  if (historicalContext.isNotEmpty) ...[
-                    _ExpandableCard(
-                      icon: Icons.history_rounded,
-                      title: 'Historical Context',
-                      accentColor: _gold,
-                      child: Text(
-                        historicalContext,
-                        style: GoogleFonts.manrope(
-                          fontSize: 14,
-                          height: 1.65,
-                          color: Colors.grey[700],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                  ],
-
-                  // 8. Resolve CTA (only for validated reports)
-                  if (isValidated && !isResolved) ...[
-                    const SizedBox(height: 8),
-                    _ResolveCTA(
-                      isResolving: _isResolving,
-                      onNotYet: () => Navigator.pop(context),
-                      onResolve: _showResolveConfirmation,
-                    ),
-                  ] else if (!isResolved && !isRejected) ...[
-                    const SizedBox(height: 8),
-                    _UnvalidatedInfoCard(
-                      reportType: 'regular',
-                      isHighLevel: false,
-                    ),
-                  ],
-                ],
-              ),
+                ),
+              ],
             ),
           ),
+        ),
+        sections: [
+          ReportDetailSection('Overview', [
+            _StatusBanner(
+              status: status,
+              color: statusColor,
+              validatedAt: data['validatedAt'],
+              validatedBy: data['validatedBy'],
+              rejectionReason:
+                  data['rejectionReason'] ?? data['validationNotes'],
+              resolutionExplanation: data['resolutionExplanation'],
+              expertDiagnosis: data['expertDiagnosis'],
+              advisoryMessage: data['advisoryMessage'],
+            ),
+            _QuickStatsRow(
+              confidence: confidence.toDouble(),
+              lifeStage: data['correctedLifeStage'] ?? lifeStage,
+              cropAffected: cropAffected,
+              timestamp: timestamp,
+            ),
+            _InfoCard(
+              icon: Icons.pin_drop_rounded,
+              title: 'Location & Farm',
+              accentColor: _gold,
+              children: [
+                _Row('Farm', farmName),
+                _Row('Field', fieldName),
+                if (location?['areaName'] != null)
+                  _Row('Area', location!['areaName']),
+                if (location?['lat'] is num && location?['lng'] is num)
+                  _Row(
+                    'Coordinates',
+                    '${(location!['lat'] as num).toStringAsFixed(5)}, ${(location['lng'] as num).toStringAsFixed(5)}',
+                  ),
+              ],
+            ),
+          ]),
+          ReportDetailSection('Analysis', [
+            if (analysis.isNotEmpty)
+              _ExpandableCard(
+                icon: Icons.analytics_outlined,
+                title: 'AI Analysis',
+                accentColor: Colors.blue,
+                initiallyExpanded: true,
+                child: MarkdownBody(data: analysis, styleSheet: _mdStyle()),
+              ),
+            if (historicalContext.isNotEmpty)
+              _ExpandableCard(
+                icon: Icons.history_rounded,
+                title: 'Historical Context',
+                accentColor: _gold,
+                initiallyExpanded: true,
+                child: Text(
+                  historicalContext,
+                  style: GoogleFonts.manrope(
+                    fontSize: 14,
+                    height: 1.65,
+                    color: Colors.grey[700],
+                  ),
+                ),
+              ),
+            if (analysis.isEmpty && historicalContext.isEmpty)
+              _InfoCard(
+                icon: Icons.analytics_outlined,
+                title: 'Analysis',
+                accentColor: Colors.blue,
+                children: [
+                  Text(
+                    'No analysis is available for this report.',
+                    style: GoogleFonts.manrope(color: _forestGreen),
+                  ),
+                ],
+              ),
+          ]),
+          ReportDetailSection('Treatment', [
+            if (treatment.isNotEmpty)
+              _ExpandableCard(
+                icon: Icons.healing_outlined,
+                title: 'Treatment & Management',
+                accentColor: Colors.green,
+                initiallyExpanded: true,
+                child: MarkdownBody(data: treatment, styleSheet: _mdStyle()),
+              )
+            else
+              _InfoCard(
+                icon: Icons.healing_outlined,
+                title: 'Treatment & Management',
+                accentColor: Colors.green,
+                children: [
+                  Text(
+                    'No treatment plan is available for this report.',
+                    style: GoogleFonts.manrope(color: _forestGreen),
+                  ),
+                ],
+              ),
+          ]),
+          ReportDetailSection('Review', [
+            if (isResolved) _buildResolutionSummaryCard(data),
+            if (isValidated ||
+                isResolved ||
+                data['advisoryMessage'] != null ||
+                data['validationNotes'] != null)
+              _buildRcpcValidationCard(data),
+            _buildTraceabilityCard(data),
+            if (isValidated && !isResolved)
+              _ResolveCTA(
+                isResolving: _isResolving,
+                onNotYet: () => Navigator.pop(context),
+                onResolve: _showResolveConfirmation,
+              )
+            else if (!isResolved && !isRejected)
+              _UnvalidatedInfoCard(reportType: 'regular', isHighLevel: false),
+          ]),
         ],
       ),
     );
