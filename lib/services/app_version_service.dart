@@ -143,7 +143,6 @@ class AppVersionService {
 
       final data = response.data is Map ? response.data as Map : jsonDecode(response.data);
       final rawTag = (data['tag_name'] ?? '').toString().replaceFirst('v', '').trim();
-      final body = (data['body'] ?? '').toString();
 
       // Extract version and build from tag (e.g. "2.0.1+12" or "2.0.1")
       String remoteVersion = rawTag;

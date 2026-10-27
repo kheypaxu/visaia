@@ -63,7 +63,7 @@ Future<ScoutingMapData> loadScoutingMapData(ScoutingWeekReport current) async {
         }
       } catch (_) {
         notices.add(
-          'Could not load all weekly reports. Reopen this map to retry.',
+          'Could not load all weekly reports. Reopen this report to retry.',
         );
       }
     }

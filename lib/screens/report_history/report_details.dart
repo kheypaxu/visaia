@@ -1,13 +1,15 @@
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:visaia/widgets/database_image.dart';
 import 'package:visaia/widgets/report_detail_tabs.dart';
-import 'package:visaia/widgets/scouting_map_dialog.dart';
+import 'package:visaia/widgets/scouting_report_panel.dart';
+import 'package:visaia/services/scouting_map_data.dart';
 import 'package:visaia/utils/scouting_week_comparison.dart';
 
 class ReportDetailScreen extends StatefulWidget {
@@ -30,7 +32,26 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   bool _isResolving = false;
+  final _scoutingPreviousWeek = ValueNotifier<bool>(false);
+  Future<ScoutingMapData>? _scoutingFuture;
+  Map<String, dynamic>? _scoutingSource;
   late Map<String, dynamic> _currentData;
+
+  Future<ScoutingMapData> _loadScoutingData(Map<String, dynamic> data) {
+    if (_scoutingFuture == null || !mapEquals(_scoutingSource, data)) {
+      _scoutingSource = Map<String, dynamic>.from(data);
+      _scoutingFuture = loadScoutingMapData(
+        ScoutingWeekReport(widget.reportId, data),
+      );
+    }
+    return _scoutingFuture!;
+  }
+
+  @override
+  void dispose() {
+    _scoutingPreviousWeek.dispose();
+    super.dispose();
+  }
 
   // Design tokens
   static const _forestGreen = Color(0xFF1B3015);
@@ -112,54 +133,6 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
   // ══════════════════════════════════════════════════════════════════════════
   // CLUSTERED SCOUTING REPORT VIEW
   // ══════════════════════════════════════════════════════════════════════════
-
-  Widget _buildScoutingMapButton(Map<String, dynamic> data) => Material(
-    color: Colors.white,
-    borderRadius: BorderRadius.circular(20),
-    child: InkWell(
-      borderRadius: BorderRadius.circular(20),
-      onTap: () => showDialog<void>(
-        context: context,
-        builder: (_) => ScoutingMapDialog(
-          report: ScoutingWeekReport(widget.reportId, data),
-        ),
-      ),
-      child: Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: _gold.withValues(alpha: .4)),
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.map_outlined, color: _forestGreen, size: 28),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Scouting map & weekly details',
-                    style: GoogleFonts.epilogue(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      color: _forestGreen,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'View this field and the previous scouting week',
-                    style: GoogleFonts.manrope(fontSize: 12, color: _darkGreen),
-                  ),
-                ],
-              ),
-            ),
-            const Icon(Icons.chevron_right_rounded, color: _forestGreen),
-          ],
-        ),
-      ),
-    ),
-  );
 
   Widget _buildClusteredView() {
     final data = _currentData;
@@ -378,6 +351,13 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
         ),
         sections: [
           ReportDetailSection('Overview', [
+            ScoutingReportPanel(
+              key: const ValueKey('overview-scouting-map'),
+              report: ScoutingWeekReport(widget.reportId, data),
+              mode: ScoutingPanelMode.overviewMap,
+              selectedWeek: _scoutingPreviousWeek,
+              load: () => _loadScoutingData(data),
+            ),
             _StatusBanner(
               status: status,
               color: statusColor,
@@ -389,7 +369,6 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
               expertDiagnosis: data['expertDiagnosis'],
               advisoryMessage: data['advisoryMessage'],
             ),
-            _buildScoutingMapButton(data),
             _buildScoutingMetricsGrid(
               growthStage: growthStage,
               dap: dap,
@@ -400,6 +379,15 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
               risk: risk,
             ),
             _buildContextCard(data, timestamp),
+          ]),
+          ReportDetailSection('Week analysis', [
+            ScoutingReportPanel(
+              key: const ValueKey('scouting-week-analysis'),
+              report: ScoutingWeekReport(widget.reportId, data),
+              mode: ScoutingPanelMode.weekAnalysis,
+              selectedWeek: _scoutingPreviousWeek,
+              load: () => _loadScoutingData(data),
+            ),
           ]),
           ReportDetailSection('Damage', [
             _buildPlantDamageAssessmentCard(
