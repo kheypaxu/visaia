@@ -1,5 +1,11 @@
+import 'package:visaia/utils/trap_inspection_policy.dart';
 import 'dart:io';
 import 'dart:ui';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:visaia/services/firestore_image_service.dart';
+import 'package:visaia/services/local_write_service.dart';
+import 'package:visaia/widgets/success_modal.dart';
+import 'package:visaia/screens/logging_screens/trap_lists.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
@@ -13,11 +19,7 @@ import 'package:visaia/services/firestore_safe_ext.dart';
 
 // ─── Trap Condition Model ─────────────────────────────────────────────────────
 
-enum TrapCondition {
-  good,
-  needsCleaning,
-  damaged,
-}
+enum TrapCondition { good, needsCleaning, damaged }
 
 extension TrapConditionExt on TrapCondition {
   String get label {
@@ -25,7 +27,7 @@ extension TrapConditionExt on TrapCondition {
       case TrapCondition.good:
         return 'Good';
       case TrapCondition.needsCleaning:
-        return 'Needs\nCleaning';
+        return 'Needs Cleaning';
       case TrapCondition.damaged:
         return 'Damaged';
     }
@@ -69,13 +71,98 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
   int _mothCount = 0;
   TrapCondition? _selectedCondition;
   final TextEditingController _notesController = TextEditingController();
-  
+
   List<XFile> _pickedImages = [];
   bool _isSaving = false;
+  bool _saved = false;
+  bool _allowPop = false;
+  bool _dateChanged = false;
+  String? _conditionError;
+  String? _inspectionId;
+  final Map<String, String> _uploadedImages = {};
+
+  bool get _dirty =>
+      _mothCount != 0 ||
+      _selectedCondition != null ||
+      _notesController.text.isNotEmpty ||
+      _pickedImages.isNotEmpty ||
+      _dateChanged;
+
+  String? get _uid =>
+      widget.userId ??
+      FirebaseAuth.instance.currentUser?.uid ??
+      AuthCacheService().cachedUid;
+
+  Map<String, dynamic>? get _cycle {
+    for (final cycle in _availableCycles) {
+      if (cycle['id'] == _selectedCycleId) return cycle;
+    }
+    return null;
+  }
+
+  DateTime get _firstInspectionDate {
+    final traps = (_cycle?['traps'] as List?) ?? [];
+    for (final trap in traps) {
+      if (trap['name'] == _selectedTrap &&
+          trap['installationDate'] is Timestamp) {
+        return DateUtils.dateOnly(
+          (trap['installationDate'] as Timestamp).toDate(),
+        );
+      }
+    }
+    final planted = _cycle?['plantingDate'];
+    return planted is Timestamp
+        ? DateUtils.dateOnly(planted.toDate())
+        : DateTime(2020);
+  }
+
+  Future<bool> _confirmDiscard() async {
+    if (_isSaving) return false;
+    if (!_dirty || _saved) return true;
+    return await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Discard inspection?'),
+            content: const Text('Your unsaved inspection will be lost.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Keep editing'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Discard'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  Future<void> _leave() async {
+    if (!await _confirmDiscard() || !mounted) return;
+    setState(() => _allowPop = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.pop(context, _saved);
+    });
+  }
+
+  void _resetInspection() {
+    _mothCount = 0;
+    _selectedCondition = null;
+    _conditionError = null;
+    _notesController.clear();
+    _pickedImages = [];
+    _uploadedImages.clear();
+    _inspectionId = null;
+    _selectedDate = DateTime.now();
+    _dateChanged = false;
+  }
+
   bool _isLoading = true;
   bool _canInspectTraps = false;
   String? _errorMessage;
-  
+
   // Cycle selection
   String? _selectedCycleId;
   List<Map<String, dynamic>> _availableCycles = [];
@@ -115,126 +202,97 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
   }
 
   Future<void> _loadData() async {
-    setState(() => _isLoading = true);
-    
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
     try {
-      final uid = widget.userId ??
-          FirebaseAuth.instance.currentUser?.uid ??
-          AuthCacheService().cachedUid;
-      if (uid == null) {
-        setState(() {
-          _errorMessage = 'User not authenticated';
-          _isLoading = false;
-        });
-        return;
-      }
-
+      final uid = _uid;
+      if (uid == null) throw StateError('Please sign in to inspect traps.');
+      final collection = FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('cycles');
       final cycles = <Map<String, dynamic>>[];
-
-      if (widget.cycleId != null) {
-        final cycleDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(uid)
-            .collection('cycles')
-            .doc(widget.cycleId)
-            .safeGet();
-
-        if (cycleDoc.exists) {
-          final data = cycleDoc.data()!;
-          final traps = data['traps'] as List? ?? [];
-          final trapNames = traps
-              .map((t) =>
-                  (t is Map ? t['name'] : null) as String? ??
-                  'Trap ${traps.indexOf(t) + 1}')
-              .toList();
-
-          cycles.add({
-            'id': cycleDoc.id,
-            'name': data['cycleName'] ?? 'Current Cycle',
-            'fieldName': data['fieldName'] ?? '',
-            'trapsInstalled': data['trapsInstalled'] == true,
-            'trapNames': trapNames.isEmpty ? ['Trap 1'] : trapNames,
-          });
+      void addCycle(String id, Map<String, dynamic> data) {
+        final traps = (data['traps'] as List? ?? [])
+            .whereType<Map>()
+            .map((trap) => Map<String, dynamic>.from(trap))
+            .where(
+              (trap) =>
+                  trap['name'] is String &&
+                  (trap['name'] as String).trim().isNotEmpty,
+            )
+            .toList();
+        if (data['isCompleted'] == true ||
+            data['trapsInstalled'] != true ||
+            traps.isEmpty) {
+          return;
         }
-      } else {
-        // Get the active farm ID from the provider if available
-        String? activeFarmId;
-        try {
-          final farmProvider = context.read<FarmProvider>();
-          activeFarmId = farmProvider.activeFarmId;
-        } catch (_) {}
-
-        var query = FirebaseFirestore.instance
-            .collection('users')
-            .doc(uid)
-            .collection('cycles')
-            .where('isCompleted', isEqualTo: false);
-
-        if (activeFarmId != null) {
-          query = query.where('farmId', isEqualTo: activeFarmId);
-        }
-
-        final cyclesSnapshot = await query.safeGet();
-
-        for (final doc in cyclesSnapshot.docs) {
-          final data = doc.data();
-          final controlMethod = data['controlMethod'] as String?;
-          final trapsInstalled = data['trapsInstalled'] == true;
-          
-          if (trapsInstalled || controlMethod == 'biological') {
-            final traps = data['traps'] as List? ?? [];
-            final trapNames = traps
-                .map((t) =>
-                    (t is Map ? t['name'] : null) as String? ??
-                    'Trap ${traps.indexOf(t) + 1}')
-                .toList();
-            
-            cycles.add({
-              'id': doc.id,
-              'name': data['cycleName'] ?? 'Unknown Cycle',
-              'fieldName': data['fieldName'] ?? '',
-              'trapsInstalled': trapsInstalled,
-              'trapNames': trapNames.isEmpty ? ['Trap 1'] : trapNames,
-            });
-          }
-        }
+        cycles.add({
+          ...data,
+          'id': id,
+          'name': data['cycleName'] ?? 'Current Cycle',
+          'fieldName': data['fieldName'] ?? '',
+          'traps': traps,
+          'trapNames': traps.map((trap) => trap['name'] as String).toList(),
+        });
       }
 
+      if (widget.cycleId != null && widget.cycleId!.isNotEmpty) {
+        final doc = await collection.doc(widget.cycleId).safeGet();
+        if (doc.exists) addCycle(doc.id, doc.data()!);
+      } else {
+        String? farmId;
+        try {
+          farmId = context.read<FarmProvider>().activeFarmId;
+        } catch (_) {}
+        var query = collection.where('isCompleted', isEqualTo: false);
+        if (farmId != null) query = query.where('farmId', isEqualTo: farmId);
+        final result = await query.safeGet();
+        for (final doc in result.docs) {
+          addCycle(doc.id, doc.data());
+        }
+      }
+      if (!mounted) return;
       setState(() {
         _availableCycles = cycles;
-        _isLoading = false;
         _canInspectTraps = cycles.isNotEmpty;
+        _selectedCycleId = cycles.isEmpty ? null : cycles.first['id'] as String;
         if (cycles.isNotEmpty) {
-          _selectedCycleId = widget.cycleId ?? cycles.first['id'];
-          final activeCycle = cycles.firstWhere(
-            (c) => c['id'] == _selectedCycleId,
-            orElse: () => cycles.first,
-          );
-          final trapNames = (activeCycle['trapNames'] as List?) ?? ['Trap 1'];
-          if (widget.initialTrapName != null &&
-              trapNames.contains(widget.initialTrapName)) {
-            _selectedTrap = widget.initialTrapName!;
-          } else if (trapNames.isNotEmpty) {
-            _selectedTrap = trapNames.first;
-          }
-        } else {
-          _errorMessage =
-              'No active cropping cycle with pheromone traps found. Please configure traps first.';
+          final names = cycles.first['trapNames'] as List<String>;
+          _selectedTrap = names.contains(widget.initialTrapName)
+              ? widget.initialTrapName!
+              : names.first;
         }
+        _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
-        _errorMessage = 'Error loading data: $e';
+        _errorMessage = 'Could not load traps. Please try again.\n$e';
         _isLoading = false;
       });
     }
   }
 
   Future<void> _pickDate() async {
+    if (_firstInspectionDate.isAfter(DateUtils.dateOnly(DateTime.now()))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'This trap has a future installation date. Correct it before inspecting.',
+          ),
+        ),
+      );
+      return;
+    }
     final picked = await showDatePicker(
       context: context,
-      initialDate: _selectedDate,
-      firstDate: DateTime(2020),
+      initialDate: _selectedDate.isBefore(_firstInspectionDate)
+          ? _firstInspectionDate
+          : _selectedDate,
+      firstDate: _firstInspectionDate,
       lastDate: DateTime.now(),
       builder: (context, child) {
         return Theme(
@@ -253,12 +311,29 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
         );
       },
     );
-    if (picked != null) setState(() => _selectedDate = picked);
+    if (picked != null && mounted) {
+      setState(() {
+        _selectedDate = picked;
+        _dateChanged = true;
+      });
+    }
   }
 
   Future<void> _pickImages() async {
-    final List<XFile> images = await _picker.pickMultiImage(imageQuality: 80);
-    if (images.isNotEmpty) {
+    List<XFile> images;
+    try {
+      images = await _picker.pickMultiImage(imageQuality: 80);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not open photos. Please try again.'),
+          ),
+        );
+      }
+      return;
+    }
+    if (mounted && images.isNotEmpty) {
       setState(() {
         _pickedImages = [..._pickedImages, ...images];
       });
@@ -271,14 +346,14 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
 
   void _showTrapModal(BuildContext context) {
     if (_availableCycles.isEmpty) return;
-    
+
     final cycle = _availableCycles.firstWhere(
       (c) => c['id'] == _selectedCycleId,
       orElse: () => {},
     );
-    
-    final trapNames = (cycle['trapNames'] as List?) ?? ['Trap 1'];
-    
+
+    final trapNames = (cycle['trapNames'] as List?) ?? [];
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -289,70 +364,99 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
             color: Colors.white,
             borderRadius: BorderRadius.circular(20),
             boxShadow: const [
-              BoxShadow(color: Colors.black12, blurRadius: 20, offset: Offset(0, 10))
+              BoxShadow(
+                color: Colors.black12,
+                blurRadius: 20,
+                offset: Offset(0, 10),
+              ),
             ],
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Select Trap',
-                      style: GoogleFonts.inter(
-                        color: _darkGreen,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 16,
-                      ),
-                    ),
-                    GestureDetector(
-                      onTap: () => Navigator.pop(ctx),
-                      child: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: _bgColor,
-                          shape: BoxShape.circle,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Select Trap',
+                        style: GoogleFonts.inter(
+                          color: _darkGreen,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
                         ),
-                        child: const Icon(Icons.close_rounded, size: 18, color: _darkGreen),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(height: 1, color: _borderColor),
-              ...trapNames.map((trap) {
-                final isSelected = trap == _selectedTrap;
-                return GestureDetector(
-                  onTap: () {
-                    setState(() => _selectedTrap = trap);
-                    Navigator.pop(ctx);
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                    color: isSelected ? _green.withValues(alpha: 0.08) : Colors.transparent,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          trap,
-                          style: GoogleFonts.inter(
-                            color: isSelected ? _green : _darkGreen,
-                            fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                            fontSize: 14,
+                      GestureDetector(
+                        onTap: () => Navigator.pop(ctx),
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: _bgColor,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.close_rounded,
+                            size: 18,
+                            color: _darkGreen,
                           ),
                         ),
-                        if (isSelected)
-                          const Icon(Icons.check_circle_rounded, color: _green, size: 20),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                );
-              }),
-              const SizedBox(height: 16),
-            ],
+                ),
+                const Divider(height: 1, color: _borderColor),
+                ...trapNames.map((trap) {
+                  final isSelected = trap == _selectedTrap;
+                  return GestureDetector(
+                    onTap: () async {
+                      Navigator.pop(ctx);
+                      if (trap == _selectedTrap ||
+                          !await _confirmDiscard() ||
+                          !mounted) {
+                        return;
+                      }
+                      setState(() {
+                        _resetInspection();
+                        _selectedTrap = trap;
+                      });
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 14,
+                      ),
+                      color: isSelected
+                          ? _green.withValues(alpha: 0.08)
+                          : Colors.transparent,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            trap,
+                            style: GoogleFonts.inter(
+                              color: isSelected ? _green : _darkGreen,
+                              fontWeight: isSelected
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
+                              fontSize: 14,
+                            ),
+                          ),
+                          if (isSelected)
+                            const Icon(
+                              Icons.check_circle_rounded,
+                              color: _green,
+                              size: 20,
+                            ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+                const SizedBox(height: 16),
+              ],
+            ),
           ),
         );
       },
@@ -360,126 +464,155 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
   }
 
   Future<void> _saveInspection() async {
-    if (_selectedCycleId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select a cycle first')),
-      );
-      return;
-    }
-
+    if (_isSaving || _selectedCycleId == null) return;
     if (_selectedCondition == null) {
+      setState(
+        () => _conditionError = 'Select the trap condition before saving.',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select trap condition')),
+        const SnackBar(
+          content: Text('Select the trap condition before saving.'),
+        ),
       );
       return;
     }
-
+    if (DateUtils.dateOnly(_selectedDate).isBefore(_firstInspectionDate)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Inspection date cannot be before trap installation.'),
+        ),
+      );
+      return;
+    }
     setState(() => _isSaving = true);
-
     try {
-      final uid = FirebaseAuth.instance.currentUser?.uid ?? AuthCacheService().cachedUid;
-      if (uid == null) throw Exception('User not authenticated');
-
-      // Save inspection to Firestore
-      final inspectionData = {
+      final uid = _uid;
+      if (uid == null) throw StateError('Please sign in again.');
+      final db = FirebaseFirestore.instance;
+      final cycleRef = db
+          .collection('users')
+          .doc(uid)
+          .collection('cycles')
+          .doc(_selectedCycleId);
+      final cycleDoc = await cycleRef.safeGet();
+      final data = cycleDoc.data();
+      final traps = (data?['traps'] as List? ?? [])
+          .whereType<Map>()
+          .map((t) => Map<String, dynamic>.from(t))
+          .toList();
+      final index = traps.indexWhere((t) => t['name'] == _selectedTrap);
+      if (data == null ||
+          data['isCompleted'] == true ||
+          data['trapsInstalled'] != true ||
+          index < 0) {
+        throw StateError(
+          'This trap is no longer available. Reopen the inspection to refresh.',
+        );
+      }
+      final installed = traps[index]['installationDate'];
+      if (installed is Timestamp &&
+          DateUtils.dateOnly(
+            _selectedDate,
+          ).isBefore(DateUtils.dateOnly(installed.toDate()))) {
+        throw StateError('Inspection date cannot be before trap installation.');
+      }
+      final planting = data['plantingDate'];
+      if (planting is! Timestamp) {
+        throw StateError(
+          'This cycle needs a planting date before an inspection can be logged.',
+        );
+      }
+      final dayIndex = trapInspectionDayIndex(_selectedDate, planting.toDate());
+      if (dayIndex < 0) {
+        throw StateError('Inspection date cannot be before planting.');
+      }
+      final images = <String>[];
+      for (final image in _pickedImages) {
+        var reference = _uploadedImages[image.path];
+        if (reference == null) {
+          final bytes =
+              await FlutterImageCompress.compressWithFile(
+                image.path,
+                minWidth: 640,
+                minHeight: 640,
+                quality: 45,
+                format: CompressFormat.jpeg,
+              ) ??
+              await image.readAsBytes();
+          reference = await FirestoreImageService.upload(
+            bytes: bytes,
+            userId: uid,
+            cycleId: _selectedCycleId!,
+            category: 'trap_inspection',
+          );
+          _uploadedImages[image.path] = reference;
+        }
+        images.add(reference);
+      }
+      final inspectionRef = cycleRef
+          .collection('trapInspections')
+          .doc(_inspectionId);
+      _inspectionId = inspectionRef.id;
+      final date = Timestamp.fromDate(_selectedDate);
+      final batch = db.batch();
+      batch.set(inspectionRef, {
         'trapName': _selectedTrap,
         'mothCount': _mothCount,
         'condition': _selectedCondition!.label,
         'conditionIcon': _selectedCondition!.icon.codePoint,
-        'notes': _notesController.text,
-        'date': Timestamp.fromDate(_selectedDate),
+        'notes': _notesController.text.trim(),
+        'date': date,
         'timestamp': FieldValue.serverTimestamp(),
-        'images': _pickedImages.map((img) => img.path).toList(),
+        'images': images,
         'cycleId': _selectedCycleId,
-      };
-
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .collection('cycles')
-          .doc(_selectedCycleId)
-          .collection('trapInspections')
-          .add(inspectionData);
-
-      // Also add to daily log
-      DocumentSnapshot<Map<String, dynamic>>? cycleDoc;
-      try {
-        cycleDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(uid)
-            .collection('cycles')
-            .doc(_selectedCycleId)
-            .safeGet();
-      } catch (e) {
-        debugPrint('Error getting cycleDoc for trap inspection (offline): $e');
-      }
-      
-      final plantingDate = (cycleDoc?.data()?['plantingDate'] as Timestamp?)?.toDate();
-      if (plantingDate != null) {
-        final dayIndex = _selectedDate.difference(plantingDate).inDays;
-        if (dayIndex >= 0) {
-          final dayId = 'day_${(dayIndex + 1).toString().padLeft(2, '0')}';
-          await FirebaseFirestore.instance
-              .collection('users')
-              .doc(uid)
-              .collection('cycles')
-              .doc(_selectedCycleId)
-              .collection('dailyLogs')
-              .doc(dayId)
-              .collection('activities')
-              .add({
-            'type': 'Trap Inspection: $_selectedTrap',
-            'notes': 'Inspected $_selectedTrap. Found $_mothCount moths. Condition: ${_selectedCondition!.label}',
-            'images': _pickedImages.map((img) => img.path).toList(),
-            'completed': true,
-            'timestamp': FieldValue.serverTimestamp(),
-            'date': Timestamp.fromDate(_selectedDate),
-          });
-        }
-      }
-
-      // Also update traps metadata in cycle document
-      if (cycleDoc != null && cycleDoc.exists) {
-        final existingTraps = List<Map<String, dynamic>>.from(
-          (cycleDoc.data()?['traps'] as List? ?? []).map((e) => Map<String, dynamic>.from(e as Map)),
-        );
-        for (var t in existingTraps) {
-          if (t['name'] == _selectedTrap) {
-            t['lastInspectedAt'] = Timestamp.fromDate(_selectedDate);
-            t['lastMothCount'] = _mothCount;
-            t['lastCondition'] = _selectedCondition!.label;
-          }
-        }
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(uid)
-            .collection('cycles')
-            .doc(_selectedCycleId)
-            .update({
-          'traps': existingTraps,
-          'lastTrapInspectionDate': Timestamp.fromDate(_selectedDate),
+      });
+      final dayId = 'day_${(dayIndex + 1).toString().padLeft(2, '0')}';
+      batch.set(
+        cycleRef
+            .collection('dailyLogs')
+            .doc(dayId)
+            .collection('activities')
+            .doc(inspectionRef.id),
+        {
+          'type': 'Trap Inspection: $_selectedTrap',
+          'notes':
+              'Inspected $_selectedTrap. Found $_mothCount moths. Condition: ${_selectedCondition!.label}.'
+              '${_notesController.text.trim().isEmpty ? '' : '\n${_notesController.text.trim()}'}',
+          'images': images,
+          'completed': true,
+          'completedAt': FieldValue.serverTimestamp(),
+          'timestamp': FieldValue.serverTimestamp(),
+          'date': date,
+          'inspectionId': inspectionRef.id,
+        },
+      );
+      final previous = traps[index]['lastInspectedAt'];
+      if (shouldUpdateTrapInspection(
+        _selectedDate,
+        previous is Timestamp ? previous.toDate() : null,
+      )) {
+        traps[index].addAll({
+          'lastInspectedAt': date,
+          'lastMothCount': _mothCount,
+          'lastCondition': _selectedCondition!.label,
+        });
+        final lastCycleDate = data['lastTrapInspectionDate'];
+        batch.update(cycleRef, {
+          'traps': traps,
+          if (shouldUpdateTrapInspection(
+            _selectedDate,
+            lastCycleDate is Timestamp ? lastCycleDate.toDate() : null,
+          ))
+            'lastTrapInspectionDate': date,
         });
       }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Trap inspection saved successfully!'),
-            backgroundColor: _green,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            margin: const EdgeInsets.all(16),
-          ),
-        );
-        Navigator.pop(context);
-      }
+      await LocalWriteService.run(inspectionRef, batch.commit);
+      if (!mounted) return;
+      setState(() => _saved = true);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error saving: $e'),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text('Could not save inspection: $e')),
         );
       }
     } finally {
@@ -491,436 +624,627 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
 
-    return Scaffold(
-      backgroundColor: _bgColor,
-      appBar: AppBar(
-        backgroundColor: _darkGreen,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded,
-              color: Colors.white, size: 20),
-          onPressed: () => Navigator.pop(context),
+    if (_saved) {
+      return PopScope(
+        canPop: _allowPop,
+        onPopInvokedWithResult: (didPop, result) {
+          if (!didPop) _leave();
+        },
+        child: Stack(
+          children: [
+            Scaffold(backgroundColor: _bgColor),
+            SuccessModal(
+              title: 'Inspection Saved!',
+              subtitle: 'Your inspection for $_selectedTrap has been saved.',
+              buttonText: 'Done',
+              onClose: _leave,
+            ),
+          ],
         ),
-        title: Text(
-          'Inspect Trap',
-          style: GoogleFonts.inter(
-            color: Colors.white,
-            fontWeight: FontWeight.w700,
-            fontSize: 18,
-          ),
-        ),
-        centerTitle: true,
-        actions: [
-          // Show active farm name in app bar
-          Consumer<FarmProvider>(
-            builder: (context, farmProvider, child) {
-              final farmName = farmProvider.activeFarmName;
-              if (farmName != null) {
-                return Padding(
-                  padding: const EdgeInsets.only(right: 16),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      farmName,
-                      style: GoogleFonts.inter(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
+      );
+    }
+    return PopScope(
+      canPop: _allowPop,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) _leave();
+      },
+      child: Scaffold(
+        backgroundColor: _bgColor,
+        bottomNavigationBar:
+            !_isLoading && _errorMessage == null && _canInspectTraps
+            ? Container(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                color: _bgColor,
+                child: SafeArea(
+                  top: false,
+                  child: SizedBox(
+                    height: 54,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [_darkGreen, _green],
+                        ),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: ElevatedButton.icon(
+                        onPressed: _isSaving ? null : _saveInspection,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.transparent,
+                          disabledBackgroundColor: Colors.transparent,
+                          shadowColor: Colors.transparent,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        icon: _isSaving
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.save_rounded),
+                        label: Text(
+                          _isSaving
+                              ? 'Saving inspection...'
+                              : 'Save Inspection',
+                        ),
                       ),
                     ),
                   ),
-                );
-              }
-              return const SizedBox.shrink();
-            },
-          ),
-        ],
-      ),
-      body: FadeTransition(
-        opacity: _fadeAnimation,
-        child: _isLoading
-            ? const Center(
-                child: CircularProgressIndicator(color: Color(0xFF1A5C30)),
+                ),
               )
-            : _errorMessage != null
-                ? _buildErrorState()
-                : !_canInspectTraps
+            : null,
+        body: FadeTransition(
+          opacity: _fadeAnimation,
+          child: CustomScrollView(
+            slivers: [
+              SliverAppBar(
+                pinned: true,
+                expandedHeight:
+                    168 +
+                    (MediaQuery.textScalerOf(context).scale(100) - 100) * 2,
+                backgroundColor: _darkGreen,
+                leading: IconButton(
+                  tooltip: 'Back',
+                  icon: const Icon(
+                    Icons.arrow_back_ios_new_rounded,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                  onPressed: _isSaving ? null : _leave,
+                ),
+                flexibleSpace: FlexibleSpaceBar(
+                  background: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Image.asset('assets/images/bg.png', fit: BoxFit.cover),
+                      Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              _darkGreen.withValues(alpha: 0.78),
+                              _green.withValues(alpha: 0.72),
+                            ],
+                          ),
+                        ),
+                      ),
+                      SafeArea(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 48, 20, 16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Inspect Trap',
+                                style: GoogleFonts.inter(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 22,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                'Record moth catches and trap condition for the current growth cycle.',
+                                style: GoogleFonts.inter(
+                                  color: Colors.white.withValues(alpha: 0.88),
+                                  fontSize: 12,
+                                  height: 1.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: _isLoading
+                    ? const Center(
+                        child: CircularProgressIndicator(
+                          color: Color(0xFF1A5C30),
+                        ),
+                      )
+                    : _errorMessage != null
+                    ? _buildErrorState()
+                    : !_canInspectTraps
                     ? _buildLockedState()
-                    : SingleChildScrollView(
-                        padding: EdgeInsets.fromLTRB(16, 20, 16, bottomPadding + 20),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // ── Cycle Selector ──────────────────────────
-                            _SectionLabel(label: 'Select Cycle'),
-                            const SizedBox(height: 8),
-                            _buildCycleSelector(),
-                            const SizedBox(height: 20),
+                    : AbsorbPointer(
+                        absorbing: _isSaving,
+                        child: Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            16,
+                            20,
+                            16,
+                            bottomPadding + 20,
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // ── Cycle Selector ──────────────────────────
+                              _SectionLabel(label: 'Growth Cycle'),
+                              const SizedBox(height: 8),
+                              _buildCycleSelector(),
+                              const SizedBox(height: 20),
 
-                            // ── Inspection Details Row ────────────────
-                            Row(
-                              children: [
-                                // Inspection Date
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      _SectionLabel(label: 'Inspection Date'),
-                                      const SizedBox(height: 8),
-                                      _FormCard(
-                                        child: GestureDetector(
-                                          onTap: _pickDate,
-                                          child: Row(
-                                            children: [
-                                              Container(
-                                                padding: const EdgeInsets.all(9),
-                                                decoration: BoxDecoration(
-                                                  color: _green.withValues(alpha: 0.09),
-                                                  borderRadius: BorderRadius.circular(10),
-                                                ),
-                                                child: const Icon(Icons.calendar_today_rounded, color: _green, size: 18),
-                                              ),
-                                              const SizedBox(width: 12),
-                                              Expanded(
-                                                child: Column(
-                                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                                  children: [
-                                                    Text(
-                                                      DateFormat('EEEE').format(_selectedDate),
-                                                      style: GoogleFonts.inter(color: _mutedText, fontSize: 10, fontWeight: FontWeight.w500),
-                                                    ),
-                                                    Text(
-                                                      DateFormat('MMM d, yyyy').format(_selectedDate),
-                                                      style: GoogleFonts.inter(color: _darkGreen, fontSize: 14, fontWeight: FontWeight.w700),
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                // Trap Name
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      _SectionLabel(label: 'Trap Name'),
-                                      const SizedBox(height: 8),
-                                      _FormCard(
-                                        child: GestureDetector(
-                                          onTap: () => _showTrapModal(context),
-                                          child: Row(
-                                            children: [
-                                              Container(
-                                                padding: const EdgeInsets.all(9),
-                                                decoration: BoxDecoration(
-                                                  color: _green.withValues(alpha: 0.09),
-                                                  borderRadius: BorderRadius.circular(10),
-                                                ),
-                                                child: const Icon(Icons.location_on_outlined, color: _green, size: 18),
-                                              ),
-                                              const SizedBox(width: 12),
-                                              Expanded(
-                                                child: Text(
-                                                  _selectedTrap,
-                                                  style: GoogleFonts.inter(color: _darkGreen, fontSize: 14, fontWeight: FontWeight.w700),
-                                                  overflow: TextOverflow.ellipsis,
-                                                ),
-                                              ),
-                                              const Icon(Icons.expand_more_rounded, color: _mutedText, size: 20),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-
-                            const SizedBox(height: 24),
-
-                            // ── Moth Population Counter ──────────────
-                            _SectionLabel(label: 'Moth Population Data'),
-                            const SizedBox(height: 8),
-                            _FormCard(
-                              padding: const EdgeInsets.symmetric(vertical: 24),
-                              child: Stack(
-                                alignment: Alignment.center,
+                              // ── Inspection Details Row ────────────────
+                              Column(
                                 children: [
-                                  Positioned(
-                                    right: -10,
-                                    top: -10,
-                                    child: Opacity(
-                                      opacity: 0.04,
-                                      child: Icon(
-                                        Icons.pest_control_outlined,
-                                        color: _green,
-                                        size: 140,
-                                      ),
+                                  // Inspection Date
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        _SectionLabel(label: 'Inspection Date'),
+                                        const SizedBox(height: 8),
+                                        _FormCard(
+                                          child: GestureDetector(
+                                            onTap: _pickDate,
+                                            child: Row(
+                                              children: [
+                                                Container(
+                                                  padding: const EdgeInsets.all(
+                                                    9,
+                                                  ),
+                                                  decoration: BoxDecoration(
+                                                    color: _green.withValues(
+                                                      alpha: 0.09,
+                                                    ),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          10,
+                                                        ),
+                                                  ),
+                                                  child: const Icon(
+                                                    Icons
+                                                        .calendar_today_rounded,
+                                                    color: _green,
+                                                    size: 18,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 12),
+                                                Expanded(
+                                                  child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .start,
+                                                    children: [
+                                                      Text(
+                                                        DateFormat(
+                                                          'EEEE',
+                                                        ).format(_selectedDate),
+                                                        style:
+                                                            GoogleFonts.inter(
+                                                              color: _mutedText,
+                                                              fontSize: 10,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w500,
+                                                            ),
+                                                      ),
+                                                      Text(
+                                                        DateFormat(
+                                                          'MMM d, yyyy',
+                                                        ).format(_selectedDate),
+                                                        style:
+                                                            GoogleFonts.inter(
+                                                              color: _darkGreen,
+                                                              fontSize: 14,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w700,
+                                                            ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      _CounterButton(
-                                        icon: Icons.remove_rounded,
-                                        onTap: () {
-                                          if (_mothCount > 0) {
-                                            setState(() => _mothCount--);
-                                          }
-                                        },
-                                      ),
-                                      const SizedBox(width: 40),
-                                      Text(
-                                        '$_mothCount',
-                                        style: GoogleFonts.inter(
-                                          color: _darkGreen,
-                                          fontWeight: FontWeight.w800,
-                                          fontSize: 42,
-                                          letterSpacing: -1,
+                                  const SizedBox(height: 20),
+                                  // Trap Name
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        _SectionLabel(label: 'Trap Name'),
+                                        const SizedBox(height: 8),
+                                        _FormCard(
+                                          child: GestureDetector(
+                                            onTap: () =>
+                                                _showTrapModal(context),
+                                            child: Row(
+                                              children: [
+                                                Container(
+                                                  padding: const EdgeInsets.all(
+                                                    9,
+                                                  ),
+                                                  decoration: BoxDecoration(
+                                                    color: _green.withValues(
+                                                      alpha: 0.09,
+                                                    ),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          10,
+                                                        ),
+                                                  ),
+                                                  child: const Icon(
+                                                    Icons.location_on_outlined,
+                                                    color: _green,
+                                                    size: 18,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 12),
+                                                Expanded(
+                                                  child: Text(
+                                                    _selectedTrap,
+                                                    style: GoogleFonts.inter(
+                                                      color: _darkGreen,
+                                                      fontSize: 14,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                    ),
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                                const Icon(
+                                                  Icons.expand_more_rounded,
+                                                  color: _mutedText,
+                                                  size: 20,
+                                                ),
+                                              ],
+                                            ),
+                                          ),
                                         ),
-                                      ),
-                                      const SizedBox(width: 40),
-                                      _CounterButton(
-                                        icon: Icons.add_rounded,
-                                        onTap: () => setState(() => _mothCount++),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
                                 ],
                               ),
-                            ),
 
-                            const SizedBox(height: 24),
+                              const SizedBox(height: 24),
 
-                            // ── Trap Condition ────────────────────────
-                            _SectionLabel(label: 'Trap Condition'),
-                            const SizedBox(height: 8),
-                            Row(
-                              children: TrapCondition.values.map((condition) {
-                                final isSelected = _selectedCondition == condition;
-                                return Expanded(
-                                  child: Padding(
-                                    padding: EdgeInsets.only(
-                                      left: condition != TrapCondition.good ? 6.0 : 0,
-                                      right: condition != TrapCondition.damaged ? 6.0 : 0,
+                              // ── Moth Population Counter ──────────────
+                              _SectionLabel(label: 'Moth Population Data'),
+                              const SizedBox(height: 8),
+                              _FormCard(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 24,
+                                ),
+                                child: Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    Positioned(
+                                      right: -10,
+                                      top: -10,
+                                      child: Opacity(
+                                        opacity: 0.04,
+                                        child: Icon(
+                                          Icons.pest_control_outlined,
+                                          color: _green,
+                                          size: 140,
+                                        ),
+                                      ),
                                     ),
-                                    child: GestureDetector(
-                                      onTap: () => setState(() => _selectedCondition = condition),
-                                      child: AnimatedContainer(
-                                        duration: const Duration(milliseconds: 200),
-                                        padding: const EdgeInsets.symmetric(vertical: 16),
-                                        decoration: BoxDecoration(
-                                          color: isSelected ? _darkGreen : Colors.white,
-                                          borderRadius: BorderRadius.circular(14),
-                                          border: Border.all(
-                                            color: isSelected ? _darkGreen : _borderColor,
-                                            width: 1.5,
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        _CounterButton(
+                                          icon: Icons.remove_rounded,
+                                          onTap: () {
+                                            if (_mothCount > 0) {
+                                              setState(() => _mothCount--);
+                                            }
+                                          },
+                                        ),
+                                        const SizedBox(width: 40),
+                                        Text(
+                                          '$_mothCount',
+                                          style: GoogleFonts.inter(
+                                            color: _darkGreen,
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 42,
+                                            letterSpacing: -1,
                                           ),
-                                          boxShadow: isSelected
-                                              ? [
-                                                  BoxShadow(
-                                                    color: _darkGreen.withValues(alpha: 0.2),
-                                                    blurRadius: 8,
-                                                    offset: const Offset(0, 3),
-                                                  )
-                                                ]
-                                              : null,
                                         ),
-                                        child: Column(
-                                          children: [
-                                            Icon(
-                                              condition.icon,
-                                              color: isSelected ? Colors.white : _darkGreen,
-                                              size: 24,
-                                            ),
-                                            const SizedBox(height: 8),
-                                            Text(
-                                              condition.label,
-                                              textAlign: TextAlign.center,
-                                              style: GoogleFonts.inter(
-                                                color: isSelected ? Colors.white : _darkGreen,
-                                                fontSize: 10.5,
-                                                fontWeight: FontWeight.w700,
-                                                height: 1.3,
-                                              ),
-                                            ),
-                                          ],
+                                        const SizedBox(width: 40),
+                                        _CounterButton(
+                                          icon: Icons.add_rounded,
+                                          onTap: () =>
+                                              setState(() => _mothCount++),
                                         ),
-                                      ),
+                                      ],
                                     ),
-                                  ),
-                                );
-                              }).toList(),
-                            ),
-
-                            const SizedBox(height: 24),
-
-                            // ── Upload Photo ──────────────────────────
-                            _SectionLabel(label: 'Upload Photo'),
-                            const SizedBox(height: 8),
-                            GestureDetector(
-                              onTap: _pickImages,
-                              child: CustomPaint(
-                                painter: _DashedBorderPainter(color: _borderColor),
-                                child: Container(
-                                  width: double.infinity,
-                                  height: 140,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(Icons.camera_alt_outlined, color: _mutedText.withValues(alpha: 0.6), size: 36),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        'Tap to upload trap photos',
-                                        style: GoogleFonts.inter(
-                                          color: _mutedText,
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                                  ],
                                 ),
                               ),
-                            ),
-                            
-                            // Uploaded Images Grid
-                            if (_pickedImages.isNotEmpty) ...[
-                              const SizedBox(height: 12),
-                              Wrap(
-                                spacing: 10,
-                                runSpacing: 10,
-                                children: _pickedImages.asMap().entries.map((entry) {
-                                  final index = entry.key;
-                                  final file = entry.value;
-                                  return Stack(
-                                    children: [
-                                      Container(
-                                        width: 90,
-                                        height: 90,
-                                        decoration: BoxDecoration(
-                                          borderRadius: BorderRadius.circular(14),
-                                          border: Border.all(color: _borderColor, width: 1.2),
-                                          image: DecorationImage(
-                                            image: FileImage(File(file.path)),
-                                            fit: BoxFit.cover,
-                                          ),
-                                        ),
+
+                              const SizedBox(height: 24),
+
+                              // ── Trap Condition ────────────────────────
+                              _SectionLabel(label: 'Trap Condition'),
+                              if (_conditionError != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 8),
+                                  child: Text(
+                                    _conditionError!,
+                                    style: const TextStyle(color: Colors.red),
+                                  ),
+                                ),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: TrapCondition.values.map((condition) {
+                                  final isSelected =
+                                      _selectedCondition == condition;
+                                  return Expanded(
+                                    child: Padding(
+                                      padding: EdgeInsets.only(
+                                        left: condition != TrapCondition.good
+                                            ? 6.0
+                                            : 0,
+                                        right:
+                                            condition != TrapCondition.damaged
+                                            ? 6.0
+                                            : 0,
                                       ),
-                                      Positioned(
-                                        top: 4,
-                                        right: 4,
-                                        child: GestureDetector(
-                                          onTap: () => _removeImage(index),
-                                          child: Container(
-                                            padding: const EdgeInsets.all(2),
-                                            decoration: const BoxDecoration(
-                                              color: Colors.white,
-                                              shape: BoxShape.circle,
-                                              boxShadow: [
-                                                BoxShadow(color: Colors.black12, blurRadius: 4)
-                                              ],
+                                      child: GestureDetector(
+                                        onTap: () => setState(() {
+                                          _selectedCondition = condition;
+                                          _conditionError = null;
+                                        }),
+                                        child: AnimatedContainer(
+                                          duration: const Duration(
+                                            milliseconds: 200,
+                                          ),
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 16,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: isSelected
+                                                ? _darkGreen
+                                                : Colors.white,
+                                            borderRadius: BorderRadius.circular(
+                                              14,
                                             ),
-                                            child: const Icon(Icons.close_rounded, size: 14, color: Colors.red),
+                                            border: Border.all(
+                                              color: isSelected
+                                                  ? _darkGreen
+                                                  : _borderColor,
+                                              width: 1.5,
+                                            ),
+                                            boxShadow: isSelected
+                                                ? [
+                                                    BoxShadow(
+                                                      color: _darkGreen
+                                                          .withValues(
+                                                            alpha: 0.2,
+                                                          ),
+                                                      blurRadius: 8,
+                                                      offset: const Offset(
+                                                        0,
+                                                        3,
+                                                      ),
+                                                    ),
+                                                  ]
+                                                : null,
+                                          ),
+                                          child: Column(
+                                            children: [
+                                              Icon(
+                                                condition.icon,
+                                                color: isSelected
+                                                    ? Colors.white
+                                                    : _darkGreen,
+                                                size: 24,
+                                              ),
+                                              const SizedBox(height: 8),
+                                              Text(
+                                                condition.label,
+                                                textAlign: TextAlign.center,
+                                                style: GoogleFonts.inter(
+                                                  color: isSelected
+                                                      ? Colors.white
+                                                      : _darkGreen,
+                                                  fontSize: 10.5,
+                                                  fontWeight: FontWeight.w700,
+                                                  height: 1.3,
+                                                ),
+                                              ),
+                                            ],
                                           ),
                                         ),
                                       ),
-                                    ],
+                                    ),
                                   );
                                 }).toList(),
                               ),
-                            ],
 
-                            const SizedBox(height: 24),
+                              const SizedBox(height: 24),
 
-                            // ── Field Notes ───────────────────────────
-                            _SectionLabel(label: 'Field Notes'),
-                            const SizedBox(height: 8),
-                            _FormCard(
-                              padding: EdgeInsets.zero,
-                              child: TextField(
-                                controller: _notesController,
-                                maxLines: 5,
-                                style: GoogleFonts.inter(
-                                  color: _darkGreen,
-                                  fontSize: 14,
-                                  height: 1.5,
-                                ),
-                                decoration: InputDecoration(
-                                  hintText:
-                                      'Any additional observations about the trap location or surrounding area…',
-                                  hintStyle: GoogleFonts.inter(
-                                    color: _mutedText,
-                                    fontSize: 13,
+                              // ── Upload Photo ──────────────────────────
+                              _SectionLabel(label: 'Photos (Optional)'),
+                              const SizedBox(height: 8),
+                              GestureDetector(
+                                onTap: _pickImages,
+                                child: CustomPaint(
+                                  painter: _DashedBorderPainter(
+                                    color: _borderColor,
                                   ),
-                                  contentPadding: const EdgeInsets.all(16),
-                                  border: InputBorder.none,
-                                ),
-                              ),
-                            ),
-
-                            const SizedBox(height: 32),
-
-                            // ── Save Button ───────────────────────────────────
-                            if (_canInspectTraps)
-                              SizedBox(
-                                width: double.infinity,
-                                height: 54,
-                                child: ElevatedButton(
-                                  onPressed: _isSaving ? null : _saveInspection,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: _green,
-                                    shape: RoundedRectangleBorder(
+                                  child: Container(
+                                    width: double.infinity,
+                                    height: 140,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
                                       borderRadius: BorderRadius.circular(16),
                                     ),
-                                    elevation: 0,
-                                  ),
-                                  child: _isSaving
-                                      ? const SizedBox(
-                                          width: 22,
-                                          height: 22,
-                                          child: CircularProgressIndicator(
-                                              color: Colors.white, strokeWidth: 2.5),
-                                        )
-                                      : Row(
-                                          mainAxisAlignment: MainAxisAlignment.center,
-                                          children: [
-                                            const Icon(Icons.save_rounded,
-                                                color: Colors.white, size: 18),
-                                            const SizedBox(width: 8),
-                                            Text(
-                                              'Save Inspection',
-                                              style: GoogleFonts.inter(
-                                                color: Colors.white,
-                                                fontWeight: FontWeight.w700,
-                                                fontSize: 15,
-                                                letterSpacing: 0.2,
-                                              ),
-                                            ),
-                                          ],
+                                    child: Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.camera_alt_outlined,
+                                          color: _mutedText.withValues(
+                                            alpha: 0.6,
+                                          ),
+                                          size: 36,
                                         ),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          'Tap to upload trap photos',
+                                          style: GoogleFonts.inter(
+                                            color: _mutedText,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                 ),
                               ),
 
-                            const SizedBox(height: 20),
-                          ],
+                              // Uploaded Images Grid
+                              if (_pickedImages.isNotEmpty) ...[
+                                const SizedBox(height: 12),
+                                Wrap(
+                                  spacing: 10,
+                                  runSpacing: 10,
+                                  children: _pickedImages.asMap().entries.map((
+                                    entry,
+                                  ) {
+                                    final index = entry.key;
+                                    final file = entry.value;
+                                    return Stack(
+                                      children: [
+                                        Container(
+                                          width: 90,
+                                          height: 90,
+                                          decoration: BoxDecoration(
+                                            borderRadius: BorderRadius.circular(
+                                              14,
+                                            ),
+                                            border: Border.all(
+                                              color: _borderColor,
+                                              width: 1.2,
+                                            ),
+                                            image: DecorationImage(
+                                              image: FileImage(File(file.path)),
+                                              fit: BoxFit.cover,
+                                            ),
+                                          ),
+                                        ),
+                                        Positioned(
+                                          top: 4,
+                                          right: 4,
+                                          child: GestureDetector(
+                                            onTap: () => _removeImage(index),
+                                            child: Container(
+                                              constraints: const BoxConstraints(
+                                                minWidth: 48,
+                                                minHeight: 48,
+                                              ),
+                                              padding: const EdgeInsets.all(2),
+                                              decoration: const BoxDecoration(
+                                                color: Colors.white,
+                                                shape: BoxShape.circle,
+                                                boxShadow: [
+                                                  BoxShadow(
+                                                    color: Colors.black12,
+                                                    blurRadius: 4,
+                                                  ),
+                                                ],
+                                              ),
+                                              child: const Icon(
+                                                Icons.close_rounded,
+                                                size: 14,
+                                                color: Colors.red,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  }).toList(),
+                                ),
+                              ],
+
+                              const SizedBox(height: 24),
+
+                              // ── Field Notes ───────────────────────────
+                              _SectionLabel(label: 'Field Notes (Optional)'),
+                              const SizedBox(height: 8),
+                              _FormCard(
+                                padding: EdgeInsets.zero,
+                                child: TextField(
+                                  controller: _notesController,
+                                  maxLines: 5,
+                                  style: GoogleFonts.inter(
+                                    color: _darkGreen,
+                                    fontSize: 14,
+                                    height: 1.5,
+                                  ),
+                                  decoration: InputDecoration(
+                                    hintText:
+                                        'Any additional observations about the trap location or surrounding area…',
+                                    hintStyle: GoogleFonts.inter(
+                                      color: _mutedText,
+                                      fontSize: 13,
+                                    ),
+                                    contentPadding: const EdgeInsets.all(16),
+                                    border: InputBorder.none,
+                                  ),
+                                ),
+                              ),
+
+                              const SizedBox(height: 32),
+
+                              // ── Save Button ───────────────────────────────────
+                              const SizedBox(height: 20),
+                            ],
+                          ),
                         ),
                       ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -972,8 +1296,7 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
             ),
             const SizedBox(height: 12),
             Text(
-              'You need to have biological control selected and traps installed in a cycle to inspect traps.\n\n'
-              'Go to Monitoring → Select a cycle → Choose Biological Control → Install traps',
+              'Install pheromone traps in an active growth cycle before recording an inspection. Open Monitoring to select a cycle and install traps.',
               textAlign: TextAlign.center,
               style: GoogleFonts.inter(
                 fontSize: 14,
@@ -983,14 +1306,33 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
             ),
             const SizedBox(height: 32),
             ElevatedButton.icon(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () async {
+                if (widget.cycleId == null || _uid == null) {
+                  _leave();
+                  return;
+                }
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => TrapSetupScreen(
+                      cycleId: widget.cycleId!,
+                      userId: _uid!,
+                    ),
+                  ),
+                );
+                if (mounted) _loadData();
+              },
               icon: const Icon(Icons.arrow_back, color: Colors.white),
-              label: const Text('Go Back', style: TextStyle(
-                color: Colors.white,
-              ),),
+              label: Text(
+                widget.cycleId == null ? 'Go Back' : 'Install Traps',
+                style: TextStyle(color: Colors.white),
+              ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: _green,
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 32,
+                  vertical: 14,
+                ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -1040,6 +1382,7 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
         child: DropdownButton<String>(
           value: _selectedCycleId,
           isExpanded: true,
+          itemHeight: 64,
           hint: const Text('Select a cycle'),
           icon: const Icon(Icons.expand_more, color: Color(0xFF0C503C)),
           items: _availableCycles.map((cycle) {
@@ -1050,6 +1393,8 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
                 children: [
                   Text(
                     cycle['name'],
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: GoogleFonts.inter(
                       fontWeight: FontWeight.w600,
                       fontSize: 14,
@@ -1058,21 +1403,29 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
                   ),
                   Text(
                     cycle['fieldName'] ?? '',
-                    style: GoogleFonts.inter(
-                      fontSize: 12,
-                      color: _mutedText,
-                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.inter(fontSize: 12, color: _mutedText),
                   ),
                 ],
               ),
             );
           }).toList(),
-          onChanged: (value) {
+          onChanged: (value) async {
+            if (value == null ||
+                value == _selectedCycleId ||
+                !await _confirmDiscard() ||
+                !mounted) {
+              return;
+            }
             setState(() {
+              _resetInspection();
               _selectedCycleId = value;
-              final cycle = _availableCycles.firstWhere((c) => c['id'] == value);
-              final trapNames = cycle['trapNames'] as List? ?? ['Trap 1'];
-              _selectedTrap = trapNames.isNotEmpty ? trapNames.first : 'Trap 1';
+              final cycle = _availableCycles.firstWhere(
+                (c) => c['id'] == value,
+              );
+              final trapNames = cycle['trapNames'] as List;
+              _selectedTrap = trapNames.first as String;
             });
           },
         ),
@@ -1109,13 +1462,18 @@ class _FormCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: padding ?? const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+      padding:
+          padding ?? const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFDDEEE4), width: 1.2),
         boxShadow: const [
-          BoxShadow(color: Color(0x08000000), blurRadius: 6, offset: Offset(0, 2)),
+          BoxShadow(
+            color: Color(0x08000000),
+            blurRadius: 6,
+            offset: Offset(0, 2),
+          ),
         ],
       ),
       child: child,
@@ -1134,8 +1492,8 @@ class _CounterButton extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 40,
-        height: 40,
+        width: 48,
+        height: 48,
         decoration: BoxDecoration(
           color: const Color(0xFF1A5C30).withValues(alpha: 0.1),
           shape: BoxShape.circle,
@@ -1162,10 +1520,12 @@ class _DashedBorderPainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
 
     final path = Path()
-      ..addRRect(RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, size.width, size.height),
-        const Radius.circular(16),
-      ));
+      ..addRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(0, 0, size.width, size.height),
+          const Radius.circular(16),
+        ),
+      );
 
     for (PathMetric metric in path.computeMetrics()) {
       double distance = 0.0;

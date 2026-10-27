@@ -2,7 +2,7 @@ name: visaia
 description: "A new Flutter project."
 publish_to: "none"
 
-version: 2.0.2+85
+version: 2.0.2+86
 
 environment:
   sdk: ^3.9.2
@@ -84,6 +84,7 @@ flutter:
     - assets/images/nobg-gardo.png
     - assets/images/zigzag.png
     - assets/images/map/
+
 
 
 

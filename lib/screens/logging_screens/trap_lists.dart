@@ -541,6 +541,9 @@ Widget _buildAddTrapDialog(BuildContext context) {
           'installationDate': Timestamp.fromDate(trap.installationDate),
           'nextLureDate': Timestamp.fromDate(trap.nextLureDate),
           'notes': trap.notes,
+          if (trap.lastInspectedAt != null) 'lastInspectedAt': Timestamp.fromDate(trap.lastInspectedAt!),
+          if (trap.lastMothCount != null) 'lastMothCount': trap.lastMothCount,
+          if (trap.lastCondition != null) 'lastCondition': trap.lastCondition,
         };
       }).toList();
 

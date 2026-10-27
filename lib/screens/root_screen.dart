@@ -126,9 +126,10 @@ class _AddLogModal extends StatelessWidget {
             title: 'Inspect Trap',
             description: 'Weekly pheromone trap check',
             onTap: () {
+              Navigator.pop(context);
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const InspectTrapScreen()),
+                MaterialPageRoute(builder: (context) => InspectTrapScreen(userId: uid)),
               );
             },
           ),
