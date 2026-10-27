@@ -22,6 +22,7 @@ import 'package:visaia/screens/logging_screens/field_scouting_screen.dart';
 import 'dart:convert';
 import 'firebase_options.dart';
 import 'package:visaia/widgets/app_version_gate.dart';
+import 'package:visaia/widgets/pending_detection_list.dart';
 
 final appNavigatorKey = GlobalKey<NavigatorState>();
 String? _pendingPush;
@@ -30,7 +31,9 @@ bool _pushAwaitingSignIn = false;
 
 Future<void> _openPendingPush() async {
   final payload = _pendingPush;
-  if (_handlingPush || payload == null || appNavigatorKey.currentState == null) {
+  if (_handlingPush ||
+      payload == null ||
+      appNavigatorKey.currentState == null) {
     return;
   }
   _handlingPush = true;
@@ -83,7 +86,18 @@ Future<void> _openPendingPush() async {
     }
     _pushAwaitingSignIn = false;
     final cycleId = data['cycleId'] as String? ?? '';
-    if (data['type'] == 'daily_log_reminder' && cycleId.isNotEmpty) {
+    if (data['type'] == 'ai_result_ready') {
+      final service = OfflineSyncService();
+      await service.init();
+      final item = service.itemById(data['detectionId'] as String? ?? '');
+      if (item != null && item.isReady) {
+        await PendingDetectionList.openResult(
+          appNavigatorKey.currentContext!,
+          item,
+          navigator: appNavigatorKey.currentState!,
+        );
+      }
+    } else if (data['type'] == 'daily_log_reminder' && cycleId.isNotEmpty) {
       appNavigatorKey.currentState!.push(
         MaterialPageRoute<void>(
           builder: (_) => DailyLogFormScreen(
@@ -178,6 +192,8 @@ void main() async {
         if (appNavigatorKey.currentState != null) _openPendingPush();
       },
     );
+    syncService.onAnalysisReady = (item) => PushNotificationService.instance
+        .notifyAnalysisReady(detectionId: item.id, ownerUid: item.userId);
   } catch (error) {
     debugPrint('Push notifications unavailable: $error');
   }

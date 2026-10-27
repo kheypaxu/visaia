@@ -72,6 +72,16 @@ network transitions still require the device checks above.
 
 ## Slow analysis and connectivity checks
 
+- Android displays an "AI result ready to review" local notification after a
+  queued detection's full result is saved locally. Notifications must be allowed
+  and the account retained on the device. Tap to open the owned queued result;
+  an already submitted/removed detection does not open a stale result. Verify
+  account switching still requires the owner's sign-in and hides result details.
+- The queue currently runs in the app process, with no OS background upload
+  worker. Closing/killing it before connectivity returns leaves the photo queued
+  until reopening. Background suspension can also interrupt an active request.
+  This local notification does not introduce server-side job completion push.
+
 - Delay `/predict` headers and its response body beyond 30 seconds (including a
   multi-minute Moondream run). Keep the upload open and verify the original
   result appears without creating an offline queue item.

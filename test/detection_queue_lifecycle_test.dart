@@ -86,6 +86,35 @@ void main() {
   });
   tearDown(() async => directory.delete(recursive: true));
 
+  test('notifies once after the review result is persisted', () async {
+    final service = create();
+    final item = await enqueue(service);
+    final notified = <String>[];
+    service.onAnalysisReady = (ready) async {
+      final restored = create();
+      await restored.init();
+      expect(restored.itemById(ready.id)?.isReady, isTrue);
+      notified.add(ready.id);
+    };
+    online = true;
+    await service.syncAll();
+    await service.syncAll();
+    expect(notified, [item.id]);
+  });
+
+  test('notification failure preserves a completed result', () async {
+    final service = create();
+    final item = await enqueue(service);
+    service.onAnalysisReady = (_) async =>
+        throw StateError('Notifications denied');
+    online = true;
+    await service.syncAll();
+    expect(item.status, 'ready');
+    expect(item.errorMessage, isNull);
+    await service.syncAll();
+    expect(analyses, 1);
+  });
+
   test(
     'offline upload becomes a durable review result, not a report',
     () async {

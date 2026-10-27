@@ -97,6 +97,30 @@ class PushNotificationService {
   bool get supported =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
+  Future<void> notifyAnalysisReady({
+    required String detectionId,
+    required String ownerUid,
+  }) async {
+    if (!supported) return;
+    await _display(
+      RemoteMessage(
+        data: {
+          'eventId': 'ai_result_ready_$detectionId',
+          'type': 'ai_result_ready',
+          'farmerId': ownerUid,
+          'detectionId': detectionId,
+          'title': 'AI result ready to review',
+          'body':
+              'Your pest photo has been analyzed. Tap to review and assign your result.',
+          'expiresAt': DateTime.now()
+              .add(const Duration(days: 30))
+              .millisecondsSinceEpoch
+              .toString(),
+        },
+      ),
+    );
+  }
+
   Future<void> init({required void Function(String?) onTap}) async {
     if (!supported) return;
     FirebaseMessaging.onBackgroundMessage(visaiaBackgroundMessage);

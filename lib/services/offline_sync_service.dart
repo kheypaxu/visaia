@@ -153,6 +153,7 @@ class OfflineSyncService {
        _documentsDirectoryOverride = documentsDirectory;
 
   final Map<String, Future<void>> _submissions = {};
+  Future<void> Function(QueuedOfflineItem)? onAnalysisReady;
   String? Function()? _currentOwnerOverride;
   bool Function()? _onlineOverride;
   Future<AnalysisResult> Function(File, VoidCallback)? _analyzeOverride;
@@ -473,6 +474,12 @@ class OfflineSyncService {
           item.status = 'ready';
           item.errorMessage = null;
           await _saveQueue();
+          // Notification failures must never turn a persisted result into a failure.
+          try {
+            await onAnalysisReady?.call(item);
+          } catch (error) {
+            debugPrint('AI result notification unavailable: $error');
+          }
         } catch (error) {
           item.status = 'failed';
           item.errorMessage = error.toString();
