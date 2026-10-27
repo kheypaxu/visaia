@@ -4,7 +4,8 @@ import 'package:visaia/utils/chemical_task_policy.dart';
 void main() {
   bool eligible(
     int week, {
-    int damaged = 5,
+    int damaged = 7,
+    int inspected = 50,
     bool completed = true,
     String? method = 'chemical',
     int? start = 3,
@@ -16,7 +17,11 @@ void main() {
       weekNumber: week,
       isFutureWeek: future,
       stations: [
-        {'completed': completed, 'plantsInspected': 50, 'damaged': damaged},
+        {
+          'completed': completed,
+          'plantsInspected': inspected,
+          'damaged': damaged,
+        },
       ],
     );
   }
@@ -31,10 +36,18 @@ void main() {
     'low week suppresses application; a later high week qualifies again',
     () {
       expect(eligible(3), isTrue);
-      expect(eligible(4, damaged: 4), isFalse);
-      expect(eligible(5, damaged: 6), isTrue);
+      expect(eligible(4, damaged: 6), isFalse);
+      expect(eligible(5, damaged: 7), isTrue);
     },
   );
+
+  test('chemical eligibility uses the inclusive 12.05 percent boundary', () {
+    expect(eligible(3, damaged: 240, inspected: 2000), isFalse);
+    expect(eligible(3, damaged: 241, inspected: 2000), isTrue);
+    expect(eligible(3, damaged: 242, inspected: 2000), isTrue);
+    expect(eligible(3, damaged: 6), isFalse); // 12% of 50 plants.
+    expect(eligible(3, damaged: 7), isTrue); // 14% of 50 plants.
+  });
 
   test(
     'requires completed scouting, chemical selection, and a known start',

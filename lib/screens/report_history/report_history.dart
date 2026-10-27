@@ -9,6 +9,9 @@ import 'package:visaia/core/providers/farm_provider.dart';
 import 'package:visaia/screens/report_history/report_details.dart';
 import 'package:visaia/services/auth_cache_service.dart';
 import 'package:visaia/widgets/database_image.dart';
+import 'package:visaia/utils/scouting_display_date.dart';
+import 'package:visaia/services/scouting_date_context.dart';
+import 'package:visaia/utils/scouting_threshold.dart';
 
 // ══════════════════════════════════════════════════════════════════════════════
 // UNIFIED REPORT MODEL
@@ -158,79 +161,14 @@ class UnifiedReportItem {
     final risk = (data['riskLevel'] ?? data['severityLevel'] ?? (data['isHighLevel'] == true ? 'High' : 'Moderate')).toString();
     final status = (data['status'] ?? 'pending').toString();
 
-    final dynamic rawPlanting = data['plantingDate'] ??
-        (data['cycleInfo'] is Map ? data['cycleInfo']['plantingDate'] : null);
-    DateTime? planting;
-    if (rawPlanting is Timestamp) {
-      planting = rawPlanting.toDate();
-    } else if (rawPlanting is DateTime) {
-      planting = rawPlanting;
-    } else if (rawPlanting is int) {
-      planting = DateTime.fromMillisecondsSinceEpoch(rawPlanting);
-    } else if (rawPlanting is String) {
-      planting = DateTime.tryParse(rawPlanting);
-    }
-
-    int? extractInt(dynamic val) {
-      if (val == null) return null;
-      if (val is num) return val.toInt();
-      if (val is String) {
-        final match = RegExp(r'\d+').firstMatch(val);
-        if (match != null) return int.tryParse(match.group(0)!);
-      }
-      return null;
-    }
-
-    final int? weekNumber = extractInt(data['weekNumber']);
-    final int? dapVal = extractInt(data['dap']);
-
-    final rawTs = data['reportDate'] ??
-        data['timestamp'] ??
-        data['createdAt'] ??
-        data['submittedAt'] ??
-        data['dateConducted'] ??
-        data['scoutingDate'];
-    DateTime fallback = DateTime.now();
-    if (rawTs is Timestamp) {
-      fallback = rawTs.toDate();
-    } else if (rawTs is DateTime) {
-      fallback = rawTs;
-    } else if (rawTs is String) {
-      fallback = DateTime.tryParse(rawTs) ?? DateTime.now();
-    }
-
-    DateTime? effectivePlanting = planting;
-    if (effectivePlanting == null && dapVal != null && dapVal > 0) {
-      effectivePlanting = fallback.subtract(Duration(days: dapVal));
-    }
-
-    DateTime ts = fallback;
-    if (effectivePlanting != null) {
-      int? weekIndex;
-      if (weekNumber != null && weekNumber >= 1) {
-        weekIndex = weekNumber - 1;
-      } else if (dapVal != null && dapVal > 0) {
-        weekIndex = (dapVal - 1) ~/ 7;
-      } else if (dapVal == 0) {
-        weekIndex = 0;
-      }
-
-      if (weekIndex != null) {
-        final nextWeek = DateTime(
-          effectivePlanting.year,
-          effectivePlanting.month,
-          effectivePlanting.day + (weekIndex + 1) * 7,
-        );
-        ts = nextWeek.subtract(const Duration(microseconds: 1));
-      }
-    }
+    final ts = resolveScoutingDisplayDate(data);
 
     final totalInspected = data['totalInspected'] is num ? (data['totalInspected'] as num).toInt() : 100;
     final totalDamaged = data['totalDamaged'] is num ? (data['totalDamaged'] as num).toInt() : 0;
     final damagePercentage = data['damagePercentage'] is num
         ? (data['damagePercentage'] as num).toDouble()
         : (totalInspected > 0 ? (totalDamaged / totalInspected) * 100 : 0.0);
-    final exceedsThreshold = data['exceedsThreshold'] == true || damagePercentage >= 10.0;
+    final exceedsThreshold = data['exceedsThreshold'] == true || meetsScoutingDamageThreshold(damagePercentage);
 
     // Pick first available image from capturedImages, damagePhotos, or stationsData
     String? firstImage;
@@ -401,67 +339,102 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
     List<QueryDocumentSnapshot> clusteredFarmerDocs = [];
     List<QueryDocumentSnapshot> clusteredUserDocs = [];
 
-    void emit() {
-      if (controller.isClosed) return;
-      final Map<String, UnifiedReportItem> itemsMap = {};
+    final dateContext = ScoutingDateContext();
+    var generation = 0;
+    var cancelled = false;
 
-      // 1. Regular reports
-      for (final doc in reportsDocs) {
-        final data = doc.data() as Map<String, dynamic>;
-        if (data['status'] == 'deleted') continue;
-        itemsMap[doc.id] = UnifiedReportItem.fromRegularReport(doc.id, data);
+    Future<void> emit() async {
+      if (controller.isClosed || cancelled) return;
+      final revision = ++generation;
+      try {
+        final Map<String, UnifiedReportItem> itemsMap = {};
+
+        // 1. Regular reports
+        for (final doc in reportsDocs) {
+          final data = doc.data() as Map<String, dynamic>;
+          if (data['status'] == 'deleted') continue;
+          itemsMap[doc.id] = UnifiedReportItem.fromRegularReport(doc.id, data);
+        }
+
+        // Resolve cycle context before publishing dates; ignore stale async results.
+        final clustered = {
+          for (final doc in [...clusteredFarmerDocs, ...clusteredUserDocs])
+            doc.id: doc,
+        };
+        final resolved = await Future.wait(
+          clustered.values.map((doc) async {
+            final data = doc.data() as Map<String, dynamic>;
+            if (data['status'] == 'deleted') return null;
+            final enriched = await dateContext.withPlantingDate(
+              data,
+              fallbackOwnerId: uid,
+            );
+            return UnifiedReportItem.fromClusteredReport(doc.id, enriched);
+          }),
+        );
+        if (cancelled || controller.isClosed || revision != generation) return;
+        for (final item in resolved.whereType<UnifiedReportItem>()) {
+          itemsMap[item.id] = item;
+        }
+        final items = itemsMap.values.toList()
+          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        _lastLoadedReports = items;
+        controller.add(items);
+      } catch (error, stack) {
+        if (!cancelled && !controller.isClosed && revision == generation) {
+          controller.addError(error, stack);
+        }
       }
-
-      // 2. Clustered reports
-      final allClustered = [...clusteredFarmerDocs, ...clusteredUserDocs];
-      for (final doc in allClustered) {
-        final data = doc.data() as Map<String, dynamic>;
-        if (data['status'] == 'deleted') continue;
-        itemsMap[doc.id] = UnifiedReportItem.fromClusteredReport(doc.id, data);
-      }
-
-      final items = itemsMap.values.toList()
-        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-      _lastLoadedReports = items;
-      controller.add(items);
     }
 
     controller = StreamController<List<UnifiedReportItem>>.broadcast(
       onListen: () {
+        cancelled = false;
         subReports = _firestore
             .collection('reports')
             .where('farmerId', isEqualTo: uid)
             .snapshots()
-            .listen((snap) {
-          reportsDocs = snap.docs;
-          emit();
-        }, onError: (e) {
-          if (!controller.isClosed) controller.addError(e);
-        });
+            .listen(
+              (snap) {
+                reportsDocs = snap.docs;
+                emit();
+              },
+              onError: (e) {
+                if (!controller.isClosed) controller.addError(e);
+              },
+            );
 
         subClusteredFarmer = _firestore
             .collection('clustered_reports')
             .where('farmerId', isEqualTo: uid)
             .snapshots()
-            .listen((snap) {
-          clusteredFarmerDocs = snap.docs;
-          emit();
-        }, onError: (e) {
-          if (!controller.isClosed) controller.addError(e);
-        });
+            .listen(
+              (snap) {
+                clusteredFarmerDocs = snap.docs;
+                emit();
+              },
+              onError: (e) {
+                if (!controller.isClosed) controller.addError(e);
+              },
+            );
 
         subClusteredUser = _firestore
             .collection('clustered_reports')
             .where('userId', isEqualTo: uid)
             .snapshots()
-            .listen((snap) {
-          clusteredUserDocs = snap.docs;
-          emit();
-        }, onError: (e) {
-          if (!controller.isClosed) controller.addError(e);
-        });
+            .listen(
+              (snap) {
+                clusteredUserDocs = snap.docs;
+                emit();
+              },
+              onError: (e) {
+                if (!controller.isClosed) controller.addError(e);
+              },
+            );
       },
       onCancel: () {
+        cancelled = true;
+        generation++;
         subReports?.cancel();
         subClusteredFarmer?.cancel();
         subClusteredUser?.cancel();
@@ -1249,7 +1222,7 @@ class ReportCard extends StatelessWidget {
                     Icon(Icons.schedule_rounded, size: 12, color: Colors.grey[400]),
                     const SizedBox(width: 4),
                     Text(
-                      _fmtDate(item.timestamp),
+                      isClustered ? DateFormat('MMM d, yyyy').format(item.timestamp) : _fmtDate(item.timestamp),
                       style: GoogleFonts.manrope(
                         fontSize: 11,
                         color: Colors.grey[500],

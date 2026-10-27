@@ -1,3 +1,5 @@
+import 'package:visaia/utils/scouting_threshold.dart';
+
 /// Whether this week's completed scouting qualifies for chemical tasks.
 bool isChemicalTaskEligible({
   required String? controlMethod,
@@ -23,5 +25,6 @@ bool isChemicalTaskEligible({
     (sum, station) => sum + (station['damaged'] as int? ?? 0),
   );
   // Matches the existing High/Low clustered-report boundary.
-  return inspected > 0 && damaged * 100 >= inspected * 10;
+  return inspected > 0 &&
+      meetsScoutingDamageThreshold(damaged * 100 / inspected);
 }

@@ -23,6 +23,19 @@ void main() {
     'totalInspected': 100,
     'totalDamaged': 5,
     'totals': {'eggs': 1, 'larvae': 3, 'pupae': 0, 'moths': 1},
+    'reportDate': '2026-10-22T10:30:00',
+    'stationsData': [
+      {
+        'title': 'Station 1',
+        'plantsInspected': 20,
+        'damaged': 1,
+        'eggMasses': 1,
+        'larvae': 3,
+        'pupae': 0,
+        'moths': 1,
+        'notes': 'Current station notes',
+      },
+    ],
   });
   final previous = ScoutingWeekReport('previous', {
     'weekNumber': 2,
@@ -31,6 +44,17 @@ void main() {
     'location': {'lat': 11, 'lng': 123},
     'damagePercentage': 20,
     'isHighLevel': true,
+    'stationsData': [
+      {
+        'title': 'Previous station',
+        'plantsInspected': 20,
+        'damaged': 4,
+        'eggMasses': 3,
+        'larvae': 5,
+        'pupae': 1,
+        'moths': 2,
+      },
+    ],
   });
 
   Future<void> mount(
@@ -148,6 +172,87 @@ void main() {
     }
   });
 
+  testWidgets(
+    'analysis map modal filters markers and remembers selected week',
+    (tester) async {
+      await mount(
+        tester,
+        ScoutingMapData(current: current, previous: previous),
+      );
+      await openAnalysis(tester);
+      await tester.tap(find.byKey(const ValueKey('open-week-map')));
+      await tester.pumpAndSettle();
+      final dialog = find.byType(Dialog);
+      expect(dialog, findsOneWidget);
+      MarkerLayer layer() => tester.widget<MarkerLayer>(
+        find.descendant(of: dialog, matching: find.byType(MarkerLayer)),
+      );
+      expect(layer().markers.last.point, const LatLng(10, 122));
+      await tester.tap(
+        find.descendant(of: dialog, matching: find.text('Last Week (Week 2)')),
+      );
+      await tester.pumpAndSettle();
+      expect(layer().markers.last.point, const LatLng(11, 123));
+      expect(
+        find.descendant(of: dialog, matching: find.text('DAP 7')),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.descendant(
+          of: dialog,
+          matching: find.text('Current Week (Week 3)'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(layer().markers.last.point, const LatLng(10, 122));
+      await tester.tap(
+        find.descendant(of: dialog, matching: find.text('Last Week (Week 2)')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Close week map'));
+      await tester.pumpAndSettle();
+      expect(dialog, findsNothing);
+      expect(find.text('Previous growth'), findsOneWidget);
+      expect(find.text('Previous station'), findsOneWidget);
+      await tester.tap(find.text('Overview'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<MarkerLayer>(find.byType(MarkerLayer)).markers.last.point,
+        const LatLng(11, 123),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'station rows expand individually and report metadata stays visible',
+    (tester) async {
+      await mount(
+        tester,
+        ScoutingMapData(current: current, previous: previous),
+      );
+      await openAnalysis(tester);
+      expect(find.text('Station summary'), findsOneWidget);
+      expect(find.text('20 inspected · 1 damaged'), findsOneWidget);
+      expect(find.text('Report date'), findsOneWidget);
+      expect(
+        find.widgetWithText(ExpansionTile, 'Report details'),
+        findsNothing,
+      );
+      final station = find.widgetWithText(ExpansionTile, 'Station 1');
+      await tester.ensureVisible(find.text('Station 1'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Station 1'));
+      await tester.pumpAndSettle();
+      expect(find.text('Current station notes'), findsOneWidget);
+      expect(
+        find.descendant(of: station, matching: find.byType(Image)),
+        findsNWidgets(4),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('legacy missing coordinates and week remain usable', (
     tester,
   ) async {
@@ -196,6 +301,13 @@ void main() {
       await openAnalysis(tester);
       expect(find.text('Current growth'), findsOneWidget);
       expect(tester.takeException(), isNull);
+      await tester.ensureVisible(find.byKey(const ValueKey('open-week-map')));
+      await tester.tap(find.byKey(const ValueKey('open-week-map')));
+      await tester.pumpAndSettle();
+      expect(find.byType(Dialog), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.byTooltip('Close week map'));
+      await tester.pumpAndSettle();
     }
   });
 

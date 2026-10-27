@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:visaia/services/connectivity_service.dart';
 import 'package:visaia/services/scouting_map_data.dart';
 import 'package:visaia/utils/scouting_week_comparison.dart';
+import 'package:visaia/utils/scouting_threshold.dart';
 
 const _forestGreen = Color(0xFF1B3015);
 const _gold = Color(0xFFC8A84B);
@@ -136,6 +137,30 @@ class _ScoutingReportPanelState extends State<ScoutingReportPanel> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _text('Past & current week analysis', bold: true),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            key: const ValueKey('open-week-map'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _forestGreen,
+              backgroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+              side: BorderSide(color: _gold.withValues(alpha: .5)),
+            ),
+            onPressed: () => _showWeekMap(data),
+            icon: Image.asset(
+              'assets/images/map/clustered_report.png',
+              width: 24,
+              height: 30,
+              excludeFromSemantics: true,
+            ),
+            label: Text(
+              'Compare weeks on map',
+              style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+            ),
+          ),
           const SizedBox(height: 12),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -187,25 +212,187 @@ class _ScoutingReportPanelState extends State<ScoutingReportPanel> {
       Padding(padding: const EdgeInsets.only(top: 8), child: _text(notice)),
   ];
 
-  Widget _weekButton(String label, bool previous, bool enabled) => Semantics(
-    selected: _previous == previous,
+  Future<void> _showWeekMap(ScoutingMapData data) async {
+    final selection = widget.selectedWeek ?? ValueNotifier<bool>(_previous);
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => Dialog(
+          backgroundColor: _cream,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 16,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 640,
+              maxHeight: MediaQuery.sizeOf(dialogContext).height * .92,
+            ),
+            child: ValueListenableBuilder<bool>(
+              valueListenable: selection,
+              builder: (context, previous, _) {
+                final report = previous && data.previous != null
+                    ? data.previous!
+                    : data.current;
+                final week = data.current.week;
+                void select(bool value) {
+                  selection.value = value;
+                  if (widget.selectedWeek == null && mounted) {
+                    setState(() {
+                      _localPrevious = value;
+                      _tileError = false;
+                    });
+                  }
+                }
+
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Compare scouting weeks',
+                              style: GoogleFonts.epilogue(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: _forestGreen,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Close week map',
+                            onPressed: () => Navigator.pop(dialogContext),
+                            icon: const Icon(Icons.close, color: _forestGreen),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: _weekButton(
+                              week != null && week > 1
+                                  ? 'Last Week (Week ${week - 1})'
+                                  : 'Last Week',
+                              true,
+                              data.previous != null,
+                              selected: previous,
+                              onSelect: select,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _weekButton(
+                              week == null
+                                  ? 'Current Week'
+                                  : 'Current Week (Week $week)',
+                              false,
+                              true,
+                              selected: previous,
+                              onSelect: select,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: [
+                                _badge('DAP ${report.dap ?? "—"}'),
+                                _badge('${report.level ?? "Unknown"} level'),
+                                _badge(
+                                  report.damagePercentage == null
+                                      ? 'Damage unavailable'
+                                      : '${_number(report.damagePercentage)}% damage',
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            if (data.previous == null)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: _text(
+                                  week == 1
+                                      ? 'Week 1 has no previous week.'
+                                      : 'The previous week report is unavailable.',
+                                ),
+                              ),
+                            ScoutingReportPanel(
+                              report: data.current,
+                              mode: ScoutingPanelMode.overviewMap,
+                              selectedWeek: selection,
+                              showTiles: widget.showTiles,
+                              load: () async => data,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (widget.selectedWeek == null) selection.dispose();
+    }
+  }
+
+  Widget _weekButton(
+    String label,
+    bool previous,
+    bool enabled, {
+    bool? selected,
+    ValueChanged<bool>? onSelect,
+  }) => Semantics(
+    selected: (selected ?? _previous) == previous,
     child: OutlinedButton(
       style: OutlinedButton.styleFrom(
         minimumSize: const Size(0, 52),
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-        backgroundColor: _previous == previous ? _forestGreen : Colors.white,
-        foregroundColor: _previous == previous ? Colors.white : _forestGreen,
+        backgroundColor: (selected ?? _previous) == previous
+            ? _forestGreen
+            : Colors.white,
+        foregroundColor: (selected ?? _previous) == previous
+            ? Colors.white
+            : _forestGreen,
         side: BorderSide(
-          color: _previous == previous ? _gold : const Color(0xFFD8DDD4),
+          color: (selected ?? _previous) == previous
+              ? _gold
+              : const Color(0xFFD8DDD4),
         ),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
       onPressed: enabled
-          ? () => setState(() {
-              _localPrevious = previous;
-              widget.selectedWeek?.value = previous;
-              _tileError = false;
-            })
+          ? () {
+              if (onSelect != null) {
+                onSelect(previous);
+                return;
+              }
+              setState(() {
+                _localPrevious = previous;
+                widget.selectedWeek?.value = previous;
+                _tileError = false;
+              });
+            }
           : null,
       child: Text(
         label,
@@ -443,57 +630,217 @@ class _ScoutingReportPanelState extends State<ScoutingReportPanel> {
         ),
       ),
       const SizedBox(height: 10),
-      _expansion(
-        'Station summary (${r.stations.length})',
-        [
-          if (r.stations.isEmpty) _text('Station records are unavailable.'),
-          for (var i = 0; i < r.stations.length; i++)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
+      _stationSummary(r),
+      const SizedBox(height: 12),
+      _reportDetails(r),
+    ],
+  );
+
+  Widget _sectionTitle(IconData icon, String title, {String? caption}) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: _cream,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, size: 20, color: _forestGreen),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _text(
-                    (r.stations[i]['title'] ?? 'Station ${i + 1}').toString(),
-                    bold: true,
-                  ),
-                  _text(
-                    '${_number(scoutingInt(r.stations[i]["plantsInspected"]))} inspected · ${_number(scoutingInt(r.stations[i]["damaged"]))} damaged',
-                  ),
-                  _text(
-                    'Egg masses ${_number(scoutingInt(r.stations[i]["eggMasses"]))} · Larvae ${_number(scoutingInt(r.stations[i]["larvae"]))} · Pupae ${_number(scoutingInt(r.stations[i]["pupae"]))} · Moths ${_number(scoutingInt(r.stations[i]["moths"]))}',
-                  ),
+                  _text(title, bold: true),
+                  if (caption != null)
+                    Text(
+                      caption,
+                      style: GoogleFonts.manrope(
+                        fontSize: 12,
+                        color: const Color(0xFF596653),
+                        height: 1.4,
+                      ),
+                    ),
                 ],
               ),
             ),
-        ],
-        key: ValueKey('stations-${r.id}'),
+          ],
+        ),
+      );
+
+  Widget _stationSummary(ScoutingWeekReport report) => _card(
+    Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _sectionTitle(
+          Icons.grid_view_rounded,
+          'Station summary',
+          caption:
+              '${report.stations.length} ${report.stations.length == 1 ? "station" : "stations"} · tap a station for pest counts',
+        ),
+        if (report.stations.isEmpty) _text('Station records are unavailable.'),
+        for (var i = 0; i < report.stations.length; i++) _stationRow(report, i),
+      ],
+    ),
+  );
+
+  Widget _stationRow(ScoutingWeekReport report, int index) {
+    final station = report.stations[index];
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: _cream.withValues(alpha: .6),
+        borderRadius: BorderRadius.circular(12),
       ),
-      const SizedBox(height: 10),
-      _expansion('Report details', [
-        _line('Severity', r.severity),
-        _line(
-          'Threshold',
-          r.level == null
-              ? 'Unavailable'
-              : r.levelIsEstimated
-              ? '10% damage fallback · ${r.level == "High" ? "exceeded" : "below threshold"}'
-              : '${r.level == "High" ? "Exceeded" : "Below threshold"} · saved classification; numeric cutoff not recorded',
-        ),
-        _line(
-          'Report date',
-          r.reportDate == null
-              ? 'Unavailable'
-              : DateFormat('MMM d, yyyy · h:mm a').format(r.reportDate!),
-        ),
-        if (r.submittedAt != null)
-          _line(
-            'Submitted',
-            DateFormat('MMM d, yyyy · h:mm a').format(r.submittedAt!),
+      child: ExpansionTile(
+        key: ValueKey('station-${report.id}-$index'),
+        tilePadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+        childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        shape: const Border(),
+        collapsedShape: const Border(),
+        iconColor: _forestGreen,
+        collapsedIconColor: _forestGreen,
+        leading: CircleAvatar(
+          radius: 17,
+          backgroundColor: Colors.white,
+          child: Text(
+            '${index + 1}',
+            style: GoogleFonts.manrope(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: _forestGreen,
+            ),
           ),
-        _line('Status', (r.data['status'] ?? 'Unavailable').toString()),
-      ], key: ValueKey('metadata-${r.id}')),
-    ],
+        ),
+        title: _text(
+          (station['title'] ?? 'Station ${index + 1}').toString(),
+          bold: true,
+        ),
+        subtitle: Text(
+          '${_number(scoutingInt(station["plantsInspected"]))} inspected · ${_number(scoutingInt(station["damaged"]))} damaged',
+          style: GoogleFonts.manrope(
+            fontSize: 12,
+            color: const Color(0xFF596653),
+            height: 1.4,
+          ),
+        ),
+        children: [
+          const Divider(height: 16, color: Color(0xFFE0E5DA)),
+          _pestCounts(
+            ScoutingWeekReport('station', {
+              'totals': {
+                'eggs': scoutingInt(station['eggMasses']),
+                for (final key in ['larvae', 'pupae', 'moths'])
+                  key: scoutingInt(station[key]),
+              },
+            }),
+          ),
+          if (station['notes'] is String &&
+              (station['notes'] as String).trim().isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: _text(station['notes'] as String),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _reportDetails(ScoutingWeekReport report) => _card(
+    Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _sectionTitle(
+          Icons.description_outlined,
+          'Report details',
+          caption: 'Week ${report.week ?? "—"} · DAP ${report.dap ?? "—"}',
+        ),
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            _badge(
+              'Status: ${(report.data['status'] ?? 'Unavailable').toString()}',
+            ),
+            _badge('Severity: ${report.severity}'),
+          ],
+        ),
+        const SizedBox(height: 12),
+        _metadataRow(
+          Icons.event_outlined,
+          'Report date',
+          report.reportDate == null
+              ? 'Unavailable'
+              : DateFormat('MMM d, yyyy · h:mm a').format(report.reportDate!),
+        ),
+        if (report.submittedAt != null)
+          _metadataRow(
+            Icons.schedule_rounded,
+            'Submitted',
+            DateFormat('MMM d, yyyy · h:mm a').format(report.submittedAt!),
+          ),
+        const SizedBox(height: 4),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: _cream,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _text('Damage threshold', bold: true),
+              _text(
+                report.level == null
+                    ? 'Unavailable'
+                    : report.levelIsEstimated
+                    ? '$scoutingDamageThresholdPercent% fallback · ${report.level == "High" ? "exceeded" : "below threshold"}'
+                    : '${report.level == "High" ? "Exceeded" : "Below threshold"} · saved report classification',
+              ),
+              if (!report.levelIsEstimated && report.level != null)
+                Text(
+                  'Numeric cutoff was not recorded.',
+                  style: GoogleFonts.manrope(
+                    fontSize: 12,
+                    color: const Color(0xFF596653),
+                    height: 1.4,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _metadataRow(IconData icon, String label, String value) => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 20, color: const Color(0xFF596653)),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: GoogleFonts.manrope(
+                  fontSize: 12,
+                  color: const Color(0xFF596653),
+                ),
+              ),
+              _text(value, bold: true),
+            ],
+          ),
+        ),
+      ],
+    ),
   );
 
   Widget _badge(String label) => Container(

@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:visaia/utils/growth_stage.dart';
+import 'package:visaia/utils/scouting_threshold.dart';
 
 Map<String, dynamic> scoutingMap(dynamic value) => value is Map
     ? {
@@ -132,7 +133,7 @@ class ScoutingWeekReport {
       savedLevel ??
       (damagePercentage == null
           ? null
-          : (damagePercentage! >= 10 ? 'High' : 'Low'));
+          : (meetsScoutingDamageThreshold(damagePercentage!) ? 'High' : 'Low'));
 
   bool get levelIsEstimated => savedLevel == null;
   String get severity =>

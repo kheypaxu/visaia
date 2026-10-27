@@ -160,9 +160,20 @@ void main() {
       report('r', {'isHighLevel': false, 'damagePercentage': 20}).level,
       'Low',
     );
-    expect(report('r', {'damagePercentage': 10}).level, 'High');
+    expect(report('r', {'damagePercentage': 10}).level, 'Low');
     expect(report('r', {'damagePercentage': 10}).levelIsEstimated, isTrue);
     expect(report('r', {}).level, isNull);
+  });
+
+  test('fallback High/Low boundary matches Monitoring at 12.05 percent', () {
+    for (final percentage in [10, 12, 12.04, 12.0499]) {
+      expect(report('r', {'damagePercentage': percentage}).level, 'Low');
+    }
+    for (final percentage in [12.05, 12.0501, 13, 100]) {
+      expect(report('r', {'damagePercentage': percentage}).level, 'High');
+    }
+    expect(report('r', {'damagePercentage': double.nan}).level, isNull);
+    expect(report('r', {'damagePercentage': double.infinity}).level, isNull);
   });
 
   test('report coordinates are validated and zero coordinates retained', () {

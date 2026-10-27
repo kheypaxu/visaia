@@ -11,6 +11,9 @@ import 'package:visaia/widgets/report_detail_tabs.dart';
 import 'package:visaia/widgets/scouting_report_panel.dart';
 import 'package:visaia/services/scouting_map_data.dart';
 import 'package:visaia/utils/scouting_week_comparison.dart';
+import 'package:visaia/utils/scouting_threshold.dart';
+import 'package:visaia/utils/scouting_display_date.dart';
+import 'package:visaia/services/scouting_date_context.dart';
 
 class ReportDetailScreen extends StatefulWidget {
   final String reportId;
@@ -32,6 +35,8 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   bool _isResolving = false;
+  final _dateContext = ScoutingDateContext();
+  bool _loadingPlantingDate = false;
   final _scoutingPreviousWeek = ValueNotifier<bool>(false);
   Future<ScoutingMapData>? _scoutingFuture;
   Map<String, dynamic>? _scoutingSource;
@@ -77,32 +82,22 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
   }
 
   Future<void> _loadPlantingDateIfMissing() async {
-    if (_currentData['plantingDate'] != null) return;
-    final cycleId = _currentData['cycleId']?.toString();
-    final userId = (_currentData['userId'] ?? _currentData['farmerId'] ?? _auth.currentUser?.uid)?.toString();
-    if (cycleId == null || cycleId.isEmpty) return;
-
+    if (_loadingPlantingDate ||
+        parseScoutingDate(_currentData['plantingDate']) != null) {
+      return;
+    }
+    _loadingPlantingDate = true;
     try {
-      if (userId != null && userId.isNotEmpty) {
-        final cycleDoc = await _firestore.collection('users').doc(userId).collection('cycles').doc(cycleId).get();
-        if (cycleDoc.exists && cycleDoc.data()?['plantingDate'] != null) {
-          if (mounted) {
-            setState(() {
-              _currentData['plantingDate'] = cycleDoc.data()!['plantingDate'];
-            });
-          }
-          return;
-        }
+      final enriched = await _dateContext.withPlantingDate(
+        _currentData,
+        fallbackOwnerId: _auth.currentUser?.uid,
+      );
+      if (mounted && parseScoutingDate(enriched['plantingDate']) != null) {
+        setState(() => _currentData['plantingDate'] = enriched['plantingDate']);
       }
-      final rootCycleDoc = await _firestore.collection('cycles').doc(cycleId).get();
-      if (rootCycleDoc.exists && rootCycleDoc.data()?['plantingDate'] != null) {
-        if (mounted) {
-          setState(() {
-            _currentData['plantingDate'] = rootCycleDoc.data()!['plantingDate'];
-          });
-        }
-      }
-    } catch (_) {}
+    } finally {
+      _loadingPlantingDate = false;
+    }
   }
 
   @override
@@ -157,7 +152,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
         ? (data['damagePercentage'] as num).toDouble()
         : (totalInspected > 0 ? (totalDamaged / totalInspected) * 100 : 0.0);
     final exceedsThreshold =
-        data['exceedsThreshold'] == true || damagePercentage >= 10.0;
+        data['exceedsThreshold'] == true || meetsScoutingDamageThreshold(damagePercentage);
 
     final totals =
         (data['correctedTotals'] as Map<String, dynamic>?) ??
@@ -816,7 +811,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
               child: _MetricTile(
                 label: 'Economic Threshold',
                 value: exceedsThreshold ? 'EXCEEDED' : 'NORMAL',
-                subtext: exceedsThreshold ? 'Action threshold ≥ 10%' : 'Below threshold',
+                subtext: exceedsThreshold ? 'Action threshold ≥ $scoutingDamageThresholdPercent%' : 'Below threshold',
                 icon: exceedsThreshold ? Icons.warning_rounded : Icons.check_circle_rounded,
                 accentColor: exceedsThreshold ? Colors.red : Colors.green,
               ),
@@ -975,8 +970,8 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
                     children: [
                       Text(
                         exceedsThreshold
-                            ? 'ACTION THRESHOLD EXCEEDED (≥ 10%)'
-                            : 'BELOW ECONOMIC THRESHOLD (< 10%)',
+                            ? 'ACTION THRESHOLD EXCEEDED (≥ $scoutingDamageThresholdPercent%)'
+                            : 'BELOW ECONOMIC THRESHOLD (< $scoutingDamageThresholdPercent%)',
                         style: GoogleFonts.manrope(
                           fontSize: 12.5,
                           fontWeight: FontWeight.w800,
@@ -2491,7 +2486,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
         : (totalInspected > 0 ? (totalDamaged / totalInspected) * 100 : 0.0);
     final bool isHigh = _currentData['exceedsThreshold'] == true ||
         _currentData['isHighLevel'] == true ||
-        damagePercentage >= 10.0 ||
+        meetsScoutingDamageThreshold(damagePercentage) ||
         (_currentData['riskLevel'] ?? _currentData['severityLevel'] ?? '')
             .toString()
             .toLowerCase()
@@ -3242,71 +3237,11 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
     );
   }
 
-  int? _extractInt(dynamic val) {
-    if (val == null) return null;
-    if (val is num) return val.toInt();
-    if (val is String) {
-      final match = RegExp(r'\d+').firstMatch(val);
-      if (match != null) return int.tryParse(match.group(0)!);
-    }
-    return null;
-  }
-
-  DateTime? _parseDateTime(dynamic val) {
-    if (val == null) return null;
-    if (val is Timestamp) return val.toDate();
-    if (val is DateTime) return val;
-    if (val is int) return DateTime.fromMillisecondsSinceEpoch(val);
-    if (val is String) return DateTime.tryParse(val);
-    return null;
-  }
-
-  DateTime _resolveScoutingDate(Map<String, dynamic> data) {
-    final dynamic rawPlanting = data['plantingDate'] ??
-        _currentData['plantingDate'] ??
-        (data['cycleInfo'] is Map ? data['cycleInfo']['plantingDate'] : null);
-    final planting = _parseDateTime(rawPlanting);
-
-    final int? weekNumber = _extractInt(data['weekNumber']);
-    final int? dap = _extractInt(data['dap']);
-
-    final fallback = _parseDateTime(
-      data['reportDate'] ??
-      data['timestamp'] ??
-      data['createdAt'] ??
-      data['submittedAt'] ??
-      data['dateConducted'] ??
-      data['scoutingDate']
-    );
-
-    DateTime? effectivePlanting = planting;
-    if (effectivePlanting == null && dap != null && dap > 0 && fallback != null) {
-      effectivePlanting = fallback.subtract(Duration(days: dap));
-    }
-
-    if (effectivePlanting != null) {
-      int? weekIndex;
-      if (weekNumber != null && weekNumber >= 1) {
-        weekIndex = weekNumber - 1;
-      } else if (dap != null && dap > 0) {
-        weekIndex = (dap - 1) ~/ 7;
-      } else if (dap == 0) {
-        weekIndex = 0;
-      }
-
-      if (weekIndex != null) {
-        // Last day of that DAP week (7-day period starting from planting date)
-        final nextWeek = DateTime(
-          effectivePlanting.year,
-          effectivePlanting.month,
-          effectivePlanting.day + (weekIndex + 1) * 7,
-        );
-        return nextWeek.subtract(const Duration(microseconds: 1));
-      }
-    }
-
-    return fallback ?? DateTime.now();
-  }
+  DateTime _resolveScoutingDate(Map<String, dynamic> data) =>
+      resolveScoutingDisplayDate(
+        data,
+        cyclePlantingDate: parseScoutingDate(_currentData['plantingDate']),
+      );
 
   DateTime _resolveResolvedDate(Map<String, dynamic> data) {
     final dapWeekEnd = _resolveScoutingDate(data);

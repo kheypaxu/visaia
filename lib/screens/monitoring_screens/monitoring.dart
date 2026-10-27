@@ -16,6 +16,7 @@ import 'package:visaia/screens/logging_screens/trap_guide.dart';
 import 'package:visaia/screens/logging_screens/inspect_trap_screen.dart';
 import 'package:visaia/utils/growth_stage.dart';
 import 'package:visaia/utils/scouting_report_date.dart';
+import 'package:visaia/utils/scouting_threshold.dart';
 import 'package:visaia/utils/chemical_task_policy.dart';
 import 'package:visaia/widgets/database_image.dart';
 import 'package:visaia/services/auth_cache_service.dart';
@@ -515,7 +516,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
       {
         'title': 'Spray if Pest Threshold Met',
         'requiresChemicalEligibility': true,
-        'description': 'If pest damage exceeds economic threshold (>20% leaf damage), apply insecticide.',
+        'description': 'If inspected plant damage reaches $scoutingDamageThresholdPercent%, apply insecticide.',
         'icon': Icons.bug_report,
         'category': 'Pest Control',
       },
@@ -758,7 +759,7 @@ Future<void> _checkThresholdAfterCompletion() async {
   if (!await _createClusteredReport() || !mounted) return;
   await _loadAllWeeksStatus();
 
-  if (damagePercent >= 12.05) {
+  if (meetsScoutingDamageThreshold(damagePercent)) {
     _wasThresholdTriggered = true;
     _showControlMethodModalWithResult(damagePercent, totalDamaged, totalInspected);
   } else {
@@ -1373,7 +1374,7 @@ Future<void> _loadCycleData() async {
         setState(() {
           _stationData = stations;
           _expandedStationIndex = -1;
-          _wasThresholdTriggered = damagePercent >= 12.05;
+          _wasThresholdTriggered = meetsScoutingDamageThreshold(damagePercent);
           _recommendedTaskState[weekIndex] = loadedTaskState;
           _loadedWeekIndex = weekIndex;
         });
@@ -5334,7 +5335,7 @@ Future<bool> _createClusteredReport() async {
   try {
     int totalInspected = _stationData.fold(0, (acc, s) => acc + (s['plantsInspected'] as int? ?? 0));
     double damagePercent = totalInspected > 0 ? (_totalDamaged / totalInspected) * 100 : 0.0;
-    final bool exceedsThreshold = damagePercent >= 12.05;
+    final bool exceedsThreshold = meetsScoutingDamageThreshold(damagePercent);
     final String reportLevel = exceedsThreshold ? 'High' : 'Low';
     final String severityLevel = exceedsThreshold ? 'High Level' : 'Low Level';
 
