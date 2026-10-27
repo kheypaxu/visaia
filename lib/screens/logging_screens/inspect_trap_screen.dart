@@ -1345,6 +1345,37 @@ class _InspectTrapScreenState extends State<InspectTrapScreen>
   }
 
   Widget _buildCycleSelector() {
+    if (widget.cycleId != null && widget.cycleId!.isNotEmpty) {
+      return _FormCard(
+        child: Row(
+          children: [
+            const Icon(Icons.agriculture, color: _green),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _cycle?['name'] as String? ?? 'Current Cycle',
+                    style: GoogleFonts.inter(
+                      color: _darkGreen,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if ((_cycle?['fieldName'] as String? ?? '').isNotEmpty)
+                    Text(
+                      _cycle!['fieldName'] as String,
+                      style: GoogleFonts.inter(color: _mutedText, fontSize: 12),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     if (_availableCycles.isEmpty) {
       return Container(
         padding: const EdgeInsets.all(16),

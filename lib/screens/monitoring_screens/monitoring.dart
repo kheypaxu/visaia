@@ -1,3 +1,4 @@
+import 'package:visaia/screens/logging_screens/installed_traps_screen.dart';
 import 'package:visaia/services/local_write_service.dart';
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -1977,11 +1978,9 @@ if (isBiological) {
                     await Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => TrapSetupScreen(
+                        builder: (context) => InstalledTrapsScreen(
                           cycleId: widget.cycleId,
                           userId: _userId,
-                          initialStep: 2,
-                          viewOnly: true,
                         ),
                       ),
                     );

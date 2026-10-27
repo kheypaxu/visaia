@@ -1,3 +1,4 @@
+import 'package:visaia/screens/logging_screens/installed_traps_screen.dart';
 import 'package:visaia/services/local_write_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -18,6 +19,7 @@ class TrapSetupScreen extends StatefulWidget {
   final String cycleId;
   final String userId;
   final int initialStep; // 0 = Step 1 (Quantity), 2 = Step 3 (Review)
+  final bool addingTrap;
   final bool viewOnly; // If true, shows traps in view-only mode
 
   const TrapSetupScreen({
@@ -26,6 +28,7 @@ class TrapSetupScreen extends StatefulWidget {
     required this.userId,
     this.initialStep = 0,
     this.viewOnly = false,
+    this.addingTrap = false,
   });
 
   @override
@@ -174,7 +177,7 @@ class _TrapSetupScreenState extends State<TrapSetupScreen> {
           _placedTraps.addAll(loadedPlacements);
           _traps.clear();
           _traps.addAll(loadedTraps);
-          _trapCount = loadedTraps.length;
+          _trapCount = loadedTraps.length + (widget.addingTrap ? 1 : 0);
         }
         _isLoadingField = false;
       });
@@ -453,6 +456,7 @@ Widget _buildAddTrapDialog(BuildContext context) {
     }
 
     if (_currentStep < _totalSteps - 1) {
+      if (_currentStep == 1) _generateTrapItems();
       setState(() => _currentStep++);
     } else {
       _completeSetup();
@@ -636,6 +640,9 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
   // ========================
   @override
   Widget build(BuildContext context) {
+    if (widget.viewOnly) {
+      return InstalledTrapsScreen(cycleId: widget.cycleId, userId: widget.userId);
+    }
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAF9),
       appBar: _buildAppBar(),
@@ -1773,34 +1780,19 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
   }
 
   void _generateTrapItems() {
-    final sides = [
-      'North Side',
-      'North-East Side',
-      'East Side',
-      'South-East Side',
-      'South Side',
-      'South-West Side',
-      'West Side',
-      'North-West Side',
-    ];
-
-    setState(() {
-      _traps = _placedTraps.asMap().entries.map((entry) {
-        final index = entry.key;
-        final placement = entry.value;
-        final sideIndex = index % sides.length;
-
-        return TrapItem(
-          id: 'trap_${index + 1}',
-          name: 'Trap ${index + 1}',
-          zone: sides[sideIndex],
-          position: placement.position,
-          installationDate: DateTime.now(),
-          nextLureDate: DateTime.now().add(const Duration(days: 42)),
-          notes: '',
-        );
-      }).toList();
-    });
+    final existing = List<TrapItem>.from(_traps);
+    _traps = _placedTraps.asMap().entries.map((entry) {
+      final placement = entry.value;
+      for (final trap in existing) {
+        if (trap.position == placement.position) return trap;
+      }
+      final now = placement.placedAt;
+      return TrapItem(
+        id: 'trap_${entry.key + 1}', name: 'Trap ${entry.key + 1}',
+        zone: 'Field location', position: placement.position,
+        installationDate: now, nextLureDate: now.add(const Duration(days: 42)), notes: '',
+      );
+    }).toList();
   }
 
   // ========================
@@ -2011,12 +2003,14 @@ class TrapItem {
 // ========================
 class TrapCard extends StatelessWidget {
   final TrapItem trap;
+  final bool editableNotes;
   final Function(String) onNotesChanged;
   final VoidCallback? onInspectTap;
 
   const TrapCard({
     super.key,
     required this.trap,
+    this.editableNotes = true,
     required this.onNotesChanged,
     this.onInspectTap,
   });
@@ -2266,7 +2260,10 @@ class TrapCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 6),
-            TextFormField(
+            if (!editableNotes)
+              Text(trap.notes.isEmpty ? 'No location notes recorded.' : trap.notes,
+                style: GoogleFonts.inter(fontSize: 13, color: const Color(0xFF555555)))
+            else TextFormField(
               initialValue: trap.notes,
               onChanged: onNotesChanged,
               decoration: InputDecoration(
