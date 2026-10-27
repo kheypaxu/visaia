@@ -63,6 +63,8 @@ class PendingDetectionList extends StatelessWidget {
           );
         }
         return ListView.separated(
+          // Keep scroll offsets separate from ExpansionTile's stored bool.
+          key: const PageStorageKey<String>('pending-detection-list-scroll'),
           padding: const EdgeInsets.all(12),
           itemCount: items.length,
           separatorBuilder: (_, index) => const SizedBox(height: 8),

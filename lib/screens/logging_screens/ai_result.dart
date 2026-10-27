@@ -319,7 +319,7 @@ class _AIResultScreenState extends State<AIResultScreen>
 
   // ── Save to Firestore ─────────────────────────────────────────────────────
   Future<void> _saveToReports(BuildContext context) async {
-    if (_isSaving) return;
+    if (_isSaving || _discarding) return;
     if (_assignedCycleId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -352,7 +352,7 @@ class _AIResultScreenState extends State<AIResultScreen>
       ));
       return;
     }
-    if (!context.mounted || _isSaving) return;
+    if (!context.mounted || _isSaving || _discarding) return;
     _isSaving = true;
 
     try {
@@ -1919,6 +1919,48 @@ class _AIResultScreenState extends State<AIResultScreen>
   }
 
   // ── Action Buttons ──────────────────────────────────────────────────────
+  bool _discarding = false;
+
+  Future<void> _discardDetection() async {
+    final id = widget.queuedDetectionId;
+    if (id == null || _discarding || _isSaving) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Discard this detection?'),
+        content: const Text(
+          'This removes the queued photo and AI result from this phone. You cannot undo this.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Keep detection'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Discard'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted || _isSaving) return;
+    setState(() => _discarding = true);
+    try {
+      await OfflineSyncService().removeItem(id);
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      Navigator.pop(context);
+      messenger.showSnackBar(const SnackBar(content: Text('Detection discarded')));
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not discard detection: $error')));
+      }
+    } finally {
+      if (mounted) setState(() => _discarding = false);
+    }
+  }
+
   Widget _buildActionButtons(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -1934,6 +1976,19 @@ class _AIResultScreenState extends State<AIResultScreen>
       ),
       child: Column(
         children: [
+          if (widget.queuedDetectionId != null)
+            SizedBox(
+              width: double.infinity,
+              child: TextButton.icon(
+                onPressed: _discarding || _isSaving ? null : _discardDetection,
+                style: TextButton.styleFrom(
+                  foregroundColor: Theme.of(context).colorScheme.error,
+                  minimumSize: const Size(48, 48),
+                ),
+                icon: const Icon(Icons.delete_outline),
+                label: Text(_discarding ? 'Discarding…' : 'Discard detection'),
+              ),
+            ),
           Row(
             children: [
               Expanded(

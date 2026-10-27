@@ -648,12 +648,21 @@ class OfflineSyncService {
     if (isSyncing.value || _submissions.containsKey(id)) {
       throw StateError('Wait for the current sync to finish');
     }
+    if (item.submission != null) {
+      throw StateError('An earlier report save is awaiting confirmation. Retry saving before removing this detection.');
+    }
     _queue.remove(item);
     try {
       await _saveQueue();
     } catch (_) {
       _queue.add(item);
       rethrow;
+    }
+    try {
+      final image = File(item.imagePath);
+      if (await image.exists()) await image.delete();
+    } catch (error) {
+      debugPrint('Could not remove discarded detection photo: $error');
     }
   }
 }

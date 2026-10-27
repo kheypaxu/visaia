@@ -86,6 +86,30 @@ void main() {
   });
   tearDown(() async => directory.delete(recursive: true));
 
+  test('discard removes a ready detection and its photo durably', () async {
+    final service = create();
+    final item = await enqueue(service);
+    online = true;
+    await service.syncAll();
+    online = false;
+    await service.removeItem(item.id);
+    expect(service.itemById(item.id), isNull);
+    expect(await File(item.imagePath).exists(), isFalse);
+    final restored = create();
+    await restored.init();
+    expect(restored.queue, isEmpty);
+    expect(commits, 0);
+  });
+
+  test('discard preserves a report with an unconfirmed save', () async {
+    final service = create();
+    final item = await enqueue(service);
+    item.submission = {'cycleId': 'cycle-1'};
+    await expectLater(service.removeItem(item.id), throwsStateError);
+    expect(service.itemById(item.id), same(item));
+    expect(await File(item.imagePath).exists(), isTrue);
+  });
+
   test('notifies once after the review result is persisted', () async {
     final service = create();
     final item = await enqueue(service);
