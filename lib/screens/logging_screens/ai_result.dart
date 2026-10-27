@@ -5,9 +5,11 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:visaia/screens/logging_screens/assign_pest_detected.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'dart:convert';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:visaia/services/auth_cache_service.dart';
+import 'package:visaia/services/offline_sync_service.dart';
+import 'package:visaia/services/connectivity_service.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:visaia/services/firestore_safe_ext.dart';
 import 'package:visaia/utils/geo_utils.dart';
 
@@ -31,6 +33,7 @@ class AIResultScreen extends StatefulWidget {
   final String? fieldName;
   final String? farmId;
   final String? farmName;
+  final String? queuedDetectionId;
 
   const AIResultScreen({
     super.key,
@@ -53,6 +56,7 @@ class AIResultScreen extends StatefulWidget {
     this.fieldName,
     this.farmId,
     this.farmName,
+    this.queuedDetectionId,
   });
 
   @override
@@ -61,6 +65,7 @@ class AIResultScreen extends StatefulWidget {
 
 class _AIResultScreenState extends State<AIResultScreen>
     with SingleTickerProviderStateMixin {
+  bool _isSaving = false;
   // ── State variable for assigned cycle & field ──────────────────────────────
   String? _assignedCycleId;
   String? _assignedCycleName;
@@ -101,6 +106,25 @@ class _AIResultScreenState extends State<AIResultScreen>
     _reportLatitude = widget.latitude;
     _reportLongitude = widget.longitude;
     _reportAreaName = widget.areaName;
+    final queuedId = widget.queuedDetectionId;
+    final pending = queuedId == null ? null
+        : OfflineSyncService().itemById(queuedId)?.submission;
+    if (pending != null) {
+      _assignedCycleId = pending['cycleId'] as String?;
+      _assignedCycleName = pending['cycleName'] as String?;
+      _assignedWeekNumber = (pending['weekNumber'] as num?)?.toInt();
+      _assignedStation = (pending['station'] as num?)?.toInt();
+      _assignedDap = (pending['dap'] as num?)?.toInt();
+      _assignedGrowthStage = pending['growthStage'] as String?;
+      _assignedFieldId = pending['fieldId'] as String?;
+      _assignedFieldName = pending['fieldName'] as String?;
+      _assignedFarmId = pending['farmId'] as String?;
+      _assignedFarmName = pending['farmName'] as String?;
+      final location = pending['location'] as Map?;
+      _reportLatitude = (location?['lat'] as num?)?.toDouble();
+      _reportLongitude = (location?['lng'] as num?)?.toDouble();
+      _reportAreaName = location?['areaName'] as String?;
+    }
   }
 
   Future<void> _resolveFieldCoordinates(String fieldId) async {
@@ -295,6 +319,7 @@ class _AIResultScreenState extends State<AIResultScreen>
 
   // ── Save to Firestore ─────────────────────────────────────────────────────
   Future<void> _saveToReports(BuildContext context) async {
+    if (_isSaving) return;
     if (_assignedCycleId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -318,22 +343,33 @@ class _AIResultScreenState extends State<AIResultScreen>
       return;
     }
 
+    if (widget.queuedDetectionId != null &&
+        (FirebaseAuth.instance.currentUser?.uid != widget.userId ||
+         !await ConnectivityService().checkConnection())) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Sign in and connect to the internet to save this report. Your AI result remains in Pending detections.'),
+      ));
+      return;
+    }
+    if (!context.mounted || _isSaving) return;
+    _isSaving = true;
+
     try {
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (context) => const Center(
-          child: CircularProgressIndicator(
+        builder: (context) => const PopScope(
+          canPop: false,
+          child: Center(child: CircularProgressIndicator(
             valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1A5C30)),
-          ),
+          )),
         ),
       );
 
       String? base64Image;
-      if (widget.imageFile != null) {
-        final bytes = await widget.imageFile!.readAsBytes();
-        final base64String = base64Encode(bytes);
-        base64Image = 'data:image/jpeg;base64,$base64String';
+      if (widget.imageFile != null && widget.queuedDetectionId == null) {
+        base64Image = await OfflineSyncService.encodeReportImage(widget.imageFile!);
       }
 
       // Get the calculated risk level
@@ -375,10 +411,19 @@ class _AIResultScreenState extends State<AIResultScreen>
         'lng': _reportLongitude ?? widget.longitude ?? 0.0,
       };
 
-      final docRef = await FirebaseFirestore.instance
-          .collection('reports')
-          .addLocally(reportData);
+      final String reportId;
+      if (widget.queuedDetectionId != null) {
+        reportId = await OfflineSyncService().submitReviewedReport(
+          widget.queuedDetectionId!, reportData,
+        );
+      } else {
+        final docRef = await FirebaseFirestore.instance
+            .collection('reports')
+            .addLocally(reportData);
+        reportId = docRef.id;
+      }
 
+      if (!context.mounted) return;
       Navigator.pop(context);
 
       if (context.mounted) {
@@ -390,7 +435,7 @@ class _AIResultScreenState extends State<AIResultScreen>
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Report saved successfully! ID: ${docRef.id.substring(0, 8)}...',
+                    'Report saved successfully! ID: ${reportId.substring(0, 8)}...',
                     style: const TextStyle(fontSize: 13),
                   ),
                 ),
@@ -402,6 +447,9 @@ class _AIResultScreenState extends State<AIResultScreen>
             duration: const Duration(seconds: 3),
           ),
         );
+        if (widget.queuedDetectionId != null && context.mounted) {
+          Navigator.pop(context, true);
+        }
       }
     } catch (e) {
       if (context.mounted) Navigator.pop(context);
@@ -426,6 +474,8 @@ class _AIResultScreenState extends State<AIResultScreen>
           ),
         );
       }
+    } finally {
+      _isSaving = false;
     }
   }
 
@@ -1903,7 +1953,7 @@ class _AIResultScreenState extends State<AIResultScreen>
                             color: _green, size: 16),
                         const SizedBox(width: 6),
                         Text(
-                          'Retake',
+                          widget.queuedDetectionId == null ? 'Retake' : 'Back',
                           style: GoogleFonts.manrope(
                             color: _green,
                             fontWeight: FontWeight.w700,
@@ -1920,6 +1970,13 @@ class _AIResultScreenState extends State<AIResultScreen>
                 flex: 2,
                 child: GestureDetector(
                   onTap: () async {
+                    final queuedId = widget.queuedDetectionId;
+                    if (queuedId != null && OfflineSyncService().itemById(queuedId)?.submission != null) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text('Your earlier save is awaiting confirmation. Its cycle assignment is preserved; retry saving from Sync details.'),
+                      ));
+                      return;
+                    }
                     final returnedData = await Navigator.push<Map<String, dynamic>>(
                       context,
                       MaterialPageRoute(

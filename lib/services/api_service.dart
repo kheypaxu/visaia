@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
@@ -54,6 +55,66 @@ class AnalysisResult {
     required this.cropAffected,
     required this.confidence,
   });
+
+  Map<String, dynamic> toJson() => {
+    'pestName': pestName,
+    'scientificName': scientificName,
+    'lifeStage': lifeStage,
+    'analysis': analysis,
+    'treatment': treatment,
+    'boxes': boxes
+        .map(
+          (b) => {
+            'x': b.x,
+            'y': b.y,
+            'width': b.width,
+            'height': b.height,
+            'class': b.className,
+            'confidence': b.confidence,
+          },
+        )
+        .toList(),
+    'riskLevel': riskLevel,
+    'filename': filename,
+    'annotatedImageUrl': annotatedImageUrl,
+    'historicalContext': historicalContext,
+    'cropAffected': cropAffected,
+    'confidence': confidence,
+  };
+
+  factory AnalysisResult.fromJson(Map<String, dynamic> json) => AnalysisResult(
+    pestName: json['pestName'] as String,
+    scientificName: json['scientificName'] as String,
+    lifeStage: json['lifeStage'] as String,
+    analysis: json['analysis'] as String,
+    treatment: json['treatment'] as String,
+    boxes: (json['boxes'] as List? ?? [])
+        .map((b) => BoundingBox.fromJson(Map<String, dynamic>.from(b as Map)))
+        .toList(),
+    riskLevel: json['riskLevel'] as String,
+    filename: json['filename'] as String? ?? '',
+    annotatedImageUrl: json['annotatedImageUrl'] as String?,
+    historicalContext: json['historicalContext'] as String? ?? '',
+    cropAffected: json['cropAffected'] as String? ?? 'Maize',
+    confidence: (json['confidence'] as num).toDouble(),
+  );
+}
+
+class _AnalysisMultipartRequest extends http.MultipartRequest {
+  _AnalysisMultipartRequest(super.method, super.url, this.onImageSent);
+  final VoidCallback? onImageSent;
+
+  @override
+  http.ByteStream finalize() => http.ByteStream(
+    super.finalize().transform(
+      StreamTransformer<List<int>, List<int>>.fromHandlers(
+        handleDone: (sink) {
+          onImageSent?.call();
+          sink.close();
+        },
+      ),
+    ),
+  );
 }
 
 class ApiService {
@@ -95,12 +156,14 @@ class ApiService {
   static Future<AnalysisResult> sendImage(
     File imageFile, {
     http.Client? client,
+    VoidCallback? onImageSent,
   }) async {
     try {
       debugPrint('Sending request to $baseUrl/predict');
-      var request = http.MultipartRequest(
+      var request = _AnalysisMultipartRequest(
         'POST',
         Uri.parse('$baseUrl/predict'),
+        onImageSent,
       );
       request.files.add(
         await http.MultipartFile.fromPath('image', imageFile.path),
@@ -117,6 +180,15 @@ class ApiService {
       }
 
       final decoded = json.decode(response.body);
+      if (decoded is! Map<String, dynamic> ||
+          decoded['pest'] is! String ||
+          (decoded['pest'] as String).trim().isEmpty ||
+          decoded['analysis'] == null ||
+          decoded['treatment'] == null) {
+        throw const FormatException(
+          'The analysis server returned an incomplete result',
+        );
+      }
       debugPrint('API Response: $decoded');
 
       String? getAbsoluteImageUrl(String? relativePath) {

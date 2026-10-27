@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:visaia/services/local_write_service.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -31,6 +30,32 @@ class QueuedOfflineItem {
   final int timestamp;
   String status; // 'pending', 'syncing', 'failed', 'synced'
   String? errorMessage;
+  AnalysisResult? result;
+  Map<String, dynamic>? submission;
+
+  bool get isReady => result != null && status != 'submitted';
+  bool get needsSync =>
+      status != 'submitted' && (result == null || submission != null);
+  String get statusLabel {
+    switch (status) {
+      case 'uploading':
+        return 'Uploading photo';
+      case 'analyzing':
+        return 'Waiting for AI result';
+      case 'ready':
+        return 'Ready to review';
+      case 'submitting':
+        return 'Saving report';
+      case 'failed':
+        return submission != null
+            ? 'Report save needs retry'
+            : 'Analysis needs retry';
+      case 'submitted':
+        return 'Report saved';
+      default:
+        return 'Waiting to sync';
+    }
+  }
 
   QueuedOfflineItem({
     required this.id,
@@ -50,6 +75,8 @@ class QueuedOfflineItem {
     required this.timestamp,
     this.status = 'pending',
     this.errorMessage,
+    this.result,
+    this.submission,
   });
 
   Map<String, dynamic> toJson() => {
@@ -70,6 +97,8 @@ class QueuedOfflineItem {
     'timestamp': timestamp,
     'status': status,
     'errorMessage': errorMessage,
+    'result': result?.toJson(),
+    'submission': submission,
   };
 
   factory QueuedOfflineItem.fromJson(Map<String, dynamic> json) =>
@@ -92,6 +121,14 @@ class QueuedOfflineItem {
             json['timestamp'] as int? ?? DateTime.now().millisecondsSinceEpoch,
         status: json['status'] as String? ?? 'pending',
         errorMessage: json['errorMessage'] as String?,
+        result: json['result'] is Map
+            ? AnalysisResult.fromJson(
+                Map<String, dynamic>.from(json['result'] as Map),
+              )
+            : null,
+        submission: json['submission'] is Map
+            ? Map<String, dynamic>.from(json['submission'] as Map)
+            : null,
       );
 }
 
@@ -102,19 +139,46 @@ class OfflineSyncService {
   factory OfflineSyncService() => _instance;
   OfflineSyncService._internal();
 
+  @visibleForTesting
+  OfflineSyncService.forTesting({
+    required String? Function() currentOwner,
+    required bool Function() online,
+    required Future<AnalysisResult> Function(File, VoidCallback) analyze,
+    required Future<void> Function(QueuedOfflineItem) commitReport,
+    required Future<Directory> Function() documentsDirectory,
+  }) : _currentOwnerOverride = currentOwner,
+       _onlineOverride = online,
+       _analyzeOverride = analyze,
+       _commitOverride = commitReport,
+       _documentsDirectoryOverride = documentsDirectory;
+
+  final Map<String, Future<void>> _submissions = {};
+  String? Function()? _currentOwnerOverride;
+  bool Function()? _onlineOverride;
+  Future<AnalysisResult> Function(File, VoidCallback)? _analyzeOverride;
+  Future<void> Function(QueuedOfflineItem)? _commitOverride;
+  Future<Directory> Function()? _documentsDirectoryOverride;
+  String? get _authenticatedOwner => _currentOwnerOverride != null
+      ? _currentOwnerOverride!()
+      : FirebaseAuth.instance.currentUser?.uid;
+  bool get _online => _onlineOverride?.call() ?? ConnectivityService().isOnline;
+
   static const String _queuePrefsKey = 'visaia_offline_sync_queue_v1';
 
   final ValueNotifier<int> pendingSyncCount = ValueNotifier<int>(0);
   final ValueNotifier<bool> isSyncing = ValueNotifier<bool>(false);
   final ValueNotifier<String?> syncStatusMessage = ValueNotifier<String?>(null);
+  final ValueNotifier<int> queueRevision = ValueNotifier<int>(0);
 
   final List<QueuedOfflineItem> _queue = [];
+  Future<void> _persistenceTail = Future<void>.value();
 
   String? _activeUserId;
 
   /// Returns the current active user ID from explicit context, Firebase Auth,
   /// or authenticated offline cache session.
   String? get currentUserId {
+    if (_currentOwnerOverride != null) return _currentOwnerOverride!();
     if (_activeUserId != null && _activeUserId!.isNotEmpty) {
       return _activeUserId;
     }
@@ -160,21 +224,29 @@ class OfflineSyncService {
   int getPendingCount([String? forUserId]) {
     final uid = forUserId ?? currentUserId;
     if (uid == null || uid.isEmpty) return 0;
-    return _queue.where((i) => i.userId == uid && i.status != 'synced').length;
+    return _queue
+        .where(
+          (i) =>
+              i.userId == uid &&
+              i.status != 'synced' &&
+              i.status != 'submitted',
+        )
+        .length;
   }
 
   void _updatePendingCount() {
     pendingSyncCount.value = getPendingCount();
+    queueRevision.value++;
   }
 
-  bool _isInitialized = false;
+  Future<void>? _initializing;
   Timer? _retryTimer;
 
-  Future<void> init() async {
-    if (_isInitialized) return;
-    _isInitialized = true;
+  Future<void> init() => _initializing ??= _initialize();
 
+  Future<void> _initialize() async {
     await _loadQueue();
+    if (_currentOwnerOverride != null) return;
     _retryTimer ??= Timer.periodic(const Duration(seconds: 45), (_) {
       if (ConnectivityService().isOnline && getPendingCount() > 0) {
         unawaited(syncAll());
@@ -232,7 +304,20 @@ class OfflineSyncService {
         try {
           final decoded = jsonDecode(raw) as Map<String, dynamic>;
           final item = QueuedOfflineItem.fromJson(decoded);
-          if (item.status != 'synced') _queue.add(item);
+          if (item.status == 'synced' || item.status == 'submitted') continue;
+          // In-flight network operations cannot survive process termination.
+          // Completed inference and an attempted report save do survive.
+          if ([
+            'syncing',
+            'uploading',
+            'analyzing',
+            'submitting',
+          ].contains(item.status)) {
+            item.status = item.result != null
+                ? (item.submission != null ? 'failed' : 'ready')
+                : 'pending';
+          }
+          _queue.add(item);
         } catch (e) {
           debugPrint('Error parsing queued item: $e');
         }
@@ -243,7 +328,13 @@ class OfflineSyncService {
     }
   }
 
-  Future<void> _saveQueue() async {
+  Future<void> _saveQueue() {
+    final operation = _persistenceTail.then((_) => _writeQueue());
+    _persistenceTail = operation.catchError((Object error) {});
+    return operation;
+  }
+
+  Future<void> _writeQueue() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final stringList = _queue
@@ -261,20 +352,21 @@ class OfflineSyncService {
 
   /// Copies an image file into the app's persistent offline queue directory.
   Future<String> persistOfflineImage(File imageFile) async {
-    final appDir = await getApplicationDocumentsDirectory();
+    final appDir =
+        await (_documentsDirectoryOverride ??
+            getApplicationDocumentsDirectory)();
     final queueDir = Directory('${appDir.path}/offline_queue');
     if (!await queueDir.exists()) {
       await queueDir.create(recursive: true);
     }
 
     final filename =
-        'pest_${DateTime.now().millisecondsSinceEpoch}_${imageFile.path.split(Platform.pathSeparator).last}';
+        'pest_${DateTime.now().microsecondsSinceEpoch}_${imageFile.uri.pathSegments.last}';
     final savedFile = await imageFile.copy('${queueDir.path}/$filename');
     return savedFile.path;
   }
 
-  /// Enqueues a pest report recorded offline.
-  /// Also creates a document in Firestore (which Firestore persists in its offline cache).
+  /// Stores a detection locally. A regular report is created only after review.
   Future<QueuedOfflineItem> enqueuePestReport({
     required File imageFile,
     required String userId,
@@ -289,16 +381,10 @@ class OfflineSyncService {
     String? farmerName,
   }) async {
     await init();
-
-    if (userId.isEmpty) throw StateError('Sign in before saving a report');
+    if (userId.isEmpty) throw StateError('Sign in before saving a detection');
     final persistentPath = await persistOfflineImage(imageFile);
-    final itemId = 'offline_rep_${DateTime.now().millisecondsSinceEpoch}';
-
-    final docRef = FirebaseFirestore.instance.collection('reports').doc();
-
     final item = QueuedOfflineItem(
-      id: itemId,
-      docId: docRef.id,
+      id: 'offline_rep_${DateTime.now().microsecondsSinceEpoch}',
       type: 'pest_report',
       imagePath: persistentPath,
       userId: userId,
@@ -313,7 +399,6 @@ class OfflineSyncService {
       areaName: areaName,
       timestamp: DateTime.now().millisecondsSinceEpoch,
     );
-
     _activeUserId = userId;
     _queue.add(item);
     try {
@@ -322,265 +407,246 @@ class OfflineSyncService {
       _queue.remove(item);
       rethrow;
     }
-
-    // Create a local Firestore report record (Firestore queues this write offline)
-    try {
-      await docRef.setLocally({
-        'farmerId': userId,
-        'farmerName': farmerName ?? 'Farmer',
-        'farmId': farmId,
-        'farmName': farmName,
-        'fieldId': fieldId,
-        'fieldName': fieldName,
-        'cycleId': cycleId,
-        'pestName': 'Queued for AI Analysis',
-        'scientificName': 'Pending online sync',
-        'severity': 'Moderate',
-        'riskLevel': 'Medium',
-        'confidence': 0,
-        'stage': 'Pending',
-        'crop': 'Maize',
-        'analysis':
-            'Recorded offline. Detailed AI analysis and treatment plan will be generated once connected to internet.',
-        'treatment': 'Synchronizing with AI server when online...',
-        'status': 'pending_offline_sync',
-        'timestamp': FieldValue.serverTimestamp(),
-        'isOfflineRecord': true,
-        'location': {'lat': latitude, 'lng': longitude, 'areaName': areaName},
-        'lat': latitude,
-        'lng': longitude,
-      });
-    } catch (e) {
-      debugPrint('Note: Firestore doc write queued offline: $e');
-    }
-
-    // A backend failure while Wi-Fi remains connected also needs a retry.
-    if (ConnectivityService().isOnline) {
-      unawaited(syncAll(forUserId: userId));
-    }
-
-    debugPrint(
-      '📦 Pest report queued for offline sync (ID: $itemId, User: $userId)',
-    );
+    if (_online) unawaited(syncAll(forUserId: userId));
     return item;
   }
 
-  /// Synchronizes queued offline items belonging to the active user (or specified user) with the AI backend and Firestore.
+  int get readyCount => queue.where((i) => i.isReady).length;
+  bool get hasSyncWork => queue.any((i) => i.needsSync);
+
+  QueuedOfflineItem? itemById(String id) {
+    for (final item in queue) {
+      if (item.id == id) return item;
+    }
+    return null;
+  }
+
+  void _requireOwner(QueuedOfflineItem item) {
+    if (_authenticatedOwner != item.userId || currentUserId != item.userId) {
+      throw StateError('Sign in to the account that owns this detection');
+    }
+  }
+
   Future<void> syncAll({String? forUserId}) async {
-    if (isSyncing.value) return;
-    if (!ConnectivityService().isOnline) {
-      debugPrint('Cannot sync: Device is currently offline.');
+    if (isSyncing.value || !_online) return;
+    final uid = forUserId ?? currentUserId;
+    if (uid == null || uid != _authenticatedOwner || uid != currentUserId) {
       return;
     }
-
-    final targetUserId = forUserId ?? currentUserId;
-    if (targetUserId == null || targetUserId.isEmpty) {
-      debugPrint('Cannot sync: No authenticated user session active.');
-      return;
-    }
-
-    // Only process items that belong to the active user
-    final pendingItems = _queue
-        .where((i) => i.userId == targetUserId && i.status != 'synced')
-        .toList();
-    if (pendingItems.isEmpty) return;
-
+    final items = _queue.where((i) => i.userId == uid && i.needsSync).toList();
+    if (items.isEmpty) return;
     isSyncing.value = true;
-    syncStatusMessage.value =
-        'Syncing ${pendingItems.length} offline item(s)...';
-
-    int successCount = 0;
     try {
-      for (final item in pendingItems) {
-        item.status = 'syncing';
-        await _saveQueue();
-
-        try {
-          if (item.type == 'pest_report') {
-            await _processPestReportItem(item);
-            item.status = 'synced';
-            item.errorMessage = null;
-            successCount++;
-          }
-        } catch (e) {
-          debugPrint('Failed to sync item ${item.id}: $e');
-          item.status = 'failed';
-          item.errorMessage = e.toString();
+      for (final item in items) {
+        if (!_online || _authenticatedOwner != uid || currentUserId != uid) {
+          break;
         }
-        await _saveQueue();
-        // Persist the synced state before removing the only local photo.
-        if (item.status == 'synced') {
-          try {
-            final image = File(item.imagePath);
-            if (await image.exists()) await image.delete();
-          } catch (_) {}
+        if (_submissions.containsKey(item.id)) continue;
+        try {
+          if (item.submission != null) {
+            await _submitItem(item);
+            continue;
+          }
+          if (item.type != 'pest_report') {
+            throw StateError('Unsupported queued detection type: ${item.type}');
+          }
+          final image = File(item.imagePath);
+          if (!await image.exists()) {
+            throw StateError('Saved photo is missing on this device');
+          }
+          item.status = 'uploading';
+          item.errorMessage = null;
+          syncStatusMessage.value = 'Uploading photo';
+          await _saveQueue();
+          void imageSent() {
+            item.status = 'analyzing';
+            syncStatusMessage.value = 'Waiting for AI result';
+            _updatePendingCount();
+          }
+
+          // Only persist "ready" after the complete result has been received.
+          // Keep the photo; the user still needs to review and assign it.
+          final result = await (_analyzeOverride != null
+              ? _analyzeOverride!(image, imageSent)
+              : ApiService.sendImage(image, onImageSent: imageSent));
+          item.result = result;
+          item.status = 'ready';
+          item.errorMessage = null;
+          await _saveQueue();
+        } catch (error) {
+          item.status = 'failed';
+          item.errorMessage = error.toString();
+          await _saveQueue();
         }
       }
-
-      // Clean up successfully synced items from queue
-      _queue.removeWhere((item) => item.status == 'synced');
-      await _saveQueue();
-
-      syncStatusMessage.value = successCount > 0
-          ? 'Successfully synced $successCount offline report(s)!'
+      syncStatusMessage.value = readyCount > 0
+          ? '$readyCount AI result(s) ready to review'
           : null;
-
-      debugPrint(
-        '✅ Sync finished for user $targetUserId: $successCount synced successfully.',
-      );
     } catch (error) {
       syncStatusMessage.value =
-          'Sync paused. Your reports remain on this device.';
-      debugPrint('Could not persist sync progress: $error');
+          'Sync paused. Your detections remain on this device.';
+      debugPrint('Could not persist detection progress: $error');
     } finally {
       isSyncing.value = false;
     }
   }
 
-  Future<void> _processPestReportItem(QueuedOfflineItem item) async {
-    if (FirebaseAuth.instance.currentUser?.uid != item.userId) {
-      throw StateError('Sign in to the account that owns this queued report');
+  /// Called only after explicit review, assignment and Save in AIResultScreen.
+  /// Preserve assignment before networking so interrupted saves can retry safely.
+  Future<String> submitReviewedReport(
+    String id,
+    Map<String, dynamic> data,
+  ) async {
+    final item = itemById(id);
+    if (item == null || item.result == null) {
+      throw StateError('This detection is no longer available');
     }
-    final imageFile = File(item.imagePath);
-    if (!await imageFile.exists()) {
-      throw Exception('Queued image file not found on device');
+    _requireOwner(item);
+    if (!_online) {
+      throw StateError('Connect to the internet to save your report');
     }
-
-    // 1. Send image to AI backend
-    final result = await ApiService.sendImage(imageFile);
-
-    // 2. Compress image for Firestore document storage if cycle is present
-    String? firestoreImageRef;
-    String? imageBase64;
-    try {
-      Uint8List? compressedBytes = await FlutterImageCompress.compressWithFile(
-        imageFile.path,
-        minWidth: 640,
-        minHeight: 640,
-        quality: 45,
-        format: CompressFormat.jpeg,
+    if ((data['cycleId'] as String? ?? '').isEmpty) {
+      throw StateError(
+        'Assign this detection to a farming cycle before saving',
       );
+    }
+    if (_submissions.containsKey(id)) {
+      throw StateError('This report is already being saved');
+    }
+    final submission = Map<String, dynamic>.from(data)
+      ..remove('timestamp')
+      ..remove('imageBase64');
+    submission['farmerId'] = item.userId;
+    submission['sourceQueueId'] = item.id;
+    submission['submittedAtMs'] = DateTime.now().millisecondsSinceEpoch;
+    submission['observedAtMs'] = item.timestamp;
+    // Freeze the payload on the first attempt. A late server ACK must not let a
+    // retry create a second report or change a previously submitted assignment.
+    item.submission ??= submission;
+    await _saveQueue();
+    await _submitItem(item);
+    return item.id;
+  }
 
-      if (compressedBytes != null) {
-        imageBase64 = base64Encode(compressedBytes);
-        if (imageBase64.length > 850000) {
-          throw StateError(
-            'Pest image is too large; please choose a smaller image',
-          );
-        }
+  Future<void> _submitItem(QueuedOfflineItem item) {
+    final ongoing = _submissions[item.id];
+    if (ongoing != null) return ongoing;
+    final operation = _performSubmit(item);
+    _submissions[item.id] = operation;
+    return operation;
+  }
+
+  Future<void> _performSubmit(QueuedOfflineItem item) async {
+    try {
+      _requireOwner(item);
+      item.status = 'submitting';
+      item.errorMessage = null;
+      await _saveQueue();
+      if (_commitOverride != null) {
+        await _commitOverride!(item);
+      } else {
+        await _commitReport(item);
       }
-      if (compressedBytes != null &&
-          item.cycleId != null &&
-          item.cycleId!.isNotEmpty) {
-        final encoded = base64Encode(compressedBytes);
-        final imgRef = FirebaseFirestore.instance
-            .collection('users')
-            .doc(item.userId)
-            .collection('cycles')
-            .doc(item.cycleId)
-            .collection('images')
-            .doc(item.id);
-
-        await imgRef
-            .set({
-              'data': encoded,
-              'contentType': 'image/jpeg',
-              'category': 'pest_report',
-              'createdAt': FieldValue.serverTimestamp(),
-            })
-            .timeout(const Duration(seconds: 20));
-        firestoreImageRef = 'firestore-image://${imgRef.path}';
+      item.status = 'submitted';
+      // If persistence fails, keep the image and stable identity for recovery.
+      await _saveQueue();
+      _queue.remove(item);
+      _updatePendingCount();
+      try {
+        final image = File(item.imagePath);
+        if (await image.exists()) await image.delete();
+      } catch (error) {
+        debugPrint('Could not remove submitted detection photo: $error');
       }
-    } catch (e) {
-      debugPrint('Warning: Could not compress/store Firestore image ref: $e');
-      if ((imageBase64?.length ?? 0) > 850000) rethrow;
-    }
-
-    if (imageBase64 == null) {
-      throw StateError('Could not preserve the pest image; it remains queued');
-    }
-
-    // 3. Map severity
-    final risk = result.riskLevel.toLowerCase();
-    final severity = (risk == 'high' || risk == 'critical' || risk == 'severe')
-        ? 'High'
-        : (risk == 'medium' || risk == 'moderate')
-        ? 'Medium'
-        : 'Low';
-
-    if (FirebaseAuth.instance.currentUser?.uid != item.userId) {
-      throw StateError('Account changed; this report remains queued');
-    }
-    // 4. Update the Firestore report
-    final reportData = {
-      'pestName': result.pestName,
-      'scientificName': result.scientificName,
-      'riskLevel': result.riskLevel,
-      'severity': severity,
-      'confidence': (result.confidence * 100).round(),
-      'stage': result.lifeStage,
-      'crop': result.cropAffected.isNotEmpty ? result.cropAffected : 'Maize',
-      'analysis': result.analysis,
-      'treatment': result.treatment,
-      'annotatedImageUrl': result.annotatedImageUrl,
-      'firestoreImageRef': firestoreImageRef,
-      if (firestoreImageRef == null) 'imageBase64': imageBase64,
-      'farmerId': item.userId,
-      'farmerName': item.farmerName ?? 'Farmer',
-      'farmId': item.farmId,
-      'cycleId': item.cycleId,
-      'timestamp': Timestamp.fromMillisecondsSinceEpoch(item.timestamp),
-      'location': {
-        'lat': item.latitude,
-        'lng': item.longitude,
-        'areaName': item.areaName,
-      },
-      'status': 'pending', // update from pending_offline_sync to normal pending
-      'isOfflineRecord': false,
-      'syncedAt': FieldValue.serverTimestamp(),
-    };
-
-    if (item.docId != null && item.docId!.isNotEmpty) {
-      await FirebaseFirestore.instance
-          .collection('reports')
-          .doc(item.docId)
-          .set({
-            ...reportData,
-            if (item.farmName != null) 'farmName': item.farmName,
-            if (item.fieldId != null) 'fieldId': item.fieldId,
-            if (item.fieldName != null) 'fieldName': item.fieldName,
-            'lat': item.latitude,
-            'lng': item.longitude,
-          }, SetOptions(merge: true))
-          .timeout(const Duration(seconds: 20));
-    } else {
-      await FirebaseFirestore.instance
-          .collection('reports')
-          .doc(item.id)
-          .set({
-            ...reportData,
-            'farmerId': item.userId,
-            'farmId': item.farmId,
-            'farmName': item.farmName,
-            'fieldId': item.fieldId,
-            'fieldName': item.fieldName,
-            'cycleId': item.cycleId,
-            'timestamp': FieldValue.serverTimestamp(),
-            'location': {
-              'lat': item.latitude,
-              'lng': item.longitude,
-              'areaName': item.areaName,
-            },
-            'lat': item.latitude,
-            'lng': item.longitude,
-          })
-          .timeout(const Duration(seconds: 20));
+    } catch (error) {
+      item.status = 'failed';
+      item.errorMessage = error.toString();
+      await _saveQueue();
+      rethrow;
+    } finally {
+      _submissions.remove(item.id);
     }
   }
 
-  /// Remove a specific item from queue manually
+  Future<void> _commitReport(QueuedOfflineItem item) async {
+    _requireOwner(item);
+    final ref = FirebaseFirestore.instance.collection('reports').doc(item.id);
+    // Confirm an earlier attempt before writing again, including late ACKs and
+    // already validated reports. Legacy placeholders keep their identity and
+    // are linked below; their rules forbid changing cycle ownership/assignment.
+    try {
+      final existing = await ref
+          .get(const GetOptions(source: Source.server))
+          .timeout(const Duration(seconds: 20));
+      final data = existing.data();
+      if (data != null &&
+          data['farmerId'] == item.userId &&
+          data['sourceQueueId'] == item.id) {
+        return;
+      }
+      if (data != null) {
+        throw StateError(
+          'An existing report needs review before it can be replaced',
+        );
+      }
+    } on FirebaseException catch (error) {
+      // Owner-read rules can reject reads of an as-yet nonexistent document.
+      // Creation still goes through the existing ownership/security rules.
+      if (error.code != 'permission-denied') rethrow;
+    }
+    final image = await encodeReportImage(File(item.imagePath));
+    _requireOwner(item);
+    final data = Map<String, dynamic>.from(item.submission!);
+    final submittedAtMs = data.remove('submittedAtMs') as int;
+    final observedAtMs = data.remove('observedAtMs') as int;
+    await ref
+        .set({
+          ...data,
+          'imageBase64': image,
+          'farmerId': item.userId,
+          'sourceQueueId': item.id,
+          if (item.docId != null) 'legacyOfflineReportId': item.docId,
+          'timestamp': Timestamp.fromMillisecondsSinceEpoch(submittedAtMs),
+          'observedAt': Timestamp.fromMillisecondsSinceEpoch(observedAtMs),
+          'status': 'pending',
+          'isOfflineRecord': false,
+        })
+        .timeout(const Duration(seconds: 20));
+  }
+
+  /// One portable data-URL format for the online and reviewed-offline save paths.
+  static Future<String> encodeReportImage(File image) async {
+    Uint8List? bytes;
+    for (final quality in [65, 45, 25]) {
+      bytes = await FlutterImageCompress.compressWithFile(
+        image.path,
+        minWidth: 640,
+        minHeight: 640,
+        quality: quality,
+        format: CompressFormat.jpeg,
+      );
+      if (bytes != null && bytes.length < 500000) {
+        return 'data:image/jpeg;base64,${base64Encode(bytes)}';
+      }
+    }
+    throw StateError(
+      'Could not prepare a small enough photo. Your detection is still saved.',
+    );
+  }
+
+  /// Explicit removal is blocked while analysis or submission owns the item.
   Future<void> removeItem(String id) async {
-    _queue.removeWhere((item) => item.id == id);
-    await _saveQueue();
+    final item = itemById(id);
+    if (item == null) return;
+    if (isSyncing.value || _submissions.containsKey(id)) {
+      throw StateError('Wait for the current sync to finish');
+    }
+    _queue.remove(item);
+    try {
+      await _saveQueue();
+    } catch (_) {
+      _queue.add(item);
+      rethrow;
+    }
   }
 }

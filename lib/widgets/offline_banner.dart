@@ -45,7 +45,7 @@ class _OfflineBannerState extends State<OfflineBanner> {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: LocalWriteService.pendingCount,
+      animation: Listenable.merge([LocalWriteService.pendingCount, _syncService.queueRevision]),
       builder: (context, _) => ValueListenableBuilder<bool>(
         valueListenable: _connectivityService.isOnlineNotifier,
         builder: (context, isOnline, _) {
@@ -104,6 +104,11 @@ class _OfflineBannerState extends State<OfflineBanner> {
       textColor = const Color(0xFFFFD599);
       icon = Icons.wifi_off_rounded;
       message = 'Offline Mode • Actions saved to device';
+    } else if (_syncService.readyCount > 0) {
+      bgColor = const Color(0xFF0F5132);
+      textColor = Colors.white;
+      icon = Icons.fact_check_outlined;
+      message = '${_syncService.readyCount} AI result(s) ready to review';
     } else if (pendingCount > 0) {
       bgColor = const Color(0xFF1E3A8A);
       textColor = Colors.white;
@@ -160,7 +165,7 @@ class _OfflineBannerState extends State<OfflineBanner> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      '$pendingCount Queued',
+                      'View details',
                       style: GoogleFonts.inter(
                         color: textColor,
                         fontSize: 10,

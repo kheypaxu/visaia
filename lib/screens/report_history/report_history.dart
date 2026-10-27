@@ -9,6 +9,7 @@ import 'package:visaia/core/providers/farm_provider.dart';
 import 'package:visaia/screens/report_history/report_details.dart';
 import 'package:visaia/services/auth_cache_service.dart';
 import 'package:visaia/widgets/database_image.dart';
+import 'package:visaia/widgets/pending_detection_list.dart';
 import 'package:visaia/utils/scouting_display_date.dart';
 import 'package:visaia/services/scouting_date_context.dart';
 import 'package:visaia/utils/scouting_threshold.dart';
@@ -294,10 +295,6 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
 
   String _selectedFilter = 'All';
   String _selectedType = 'All'; // 'All', 'AI Scans', 'Scouting'
-  String _searchQuery = '';
-  bool _isSearchOpen = false;
-  final TextEditingController _searchController = TextEditingController();
-  final FocusNode _searchFocusNode = FocusNode();
 
   Stream<List<UnifiedReportItem>>? _unifiedStream;
   String? _currentStreamUid;
@@ -316,12 +313,6 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
   static const _cream = Color(0xFFF8F5EF);
   static const _textMuted = Color(0xFF8A9B8F);
 
-  @override
-  void dispose() {
-    _searchController.dispose();
-    _searchFocusNode.dispose();
-    super.dispose();
-  }
 
   // ─── Combined Stream for reports + clustered_reports ───────────────────────
   Stream<List<UnifiedReportItem>> _getUnifiedStream(String uid) {
@@ -457,7 +448,9 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
 
     return Scaffold(
       backgroundColor: _cream,
-      body: StreamBuilder<List<UnifiedReportItem>>(
+      body: Column(children: [
+        const PendingDetectionsSection(),
+        Expanded(child: StreamBuilder<List<UnifiedReportItem>>(
         stream: _getUnifiedStream(uid),
         initialData: _lastLoadedReports,
         builder: (context, snapshot) {
@@ -486,17 +479,13 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
           final resolvedCount = farmFiltered.where((r) => r.status.toLowerCase() == 'resolved').length;
           final rejectedCount = farmFiltered.where((r) => r.status.toLowerCase() == 'rejected').length;
 
-          // Filter by status, type, and search
+          // Filter by status and type
           final displayedReports = _applyFilters(farmFiltered);
 
           return Column(
             children: [
               // ─── Header ──────────────────────────────────────────────
-              _buildHeader(
-                totalCount: farmFiltered.length,
-                pendingCount: pendingCount,
-                validatedCount: validatedCount,
-              ),
+              _buildHeader(),
 
               // ─── Compact Space-Efficient Filter Bar ──────────────────
               _buildCompactFilterBar(
@@ -528,148 +517,28 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
             ],
           );
         },
-      ),
+        )),
+      ]),
     );
   }
 
   // ─── Header ────────────────────────────────────────────────────────────────
 
-  Widget _buildHeader({
-    required int totalCount,
-    required int pendingCount,
-    required int validatedCount,
-  }) {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: _forestGreen,
-        borderRadius: BorderRadius.circular(22),
-        boxShadow: [
-          BoxShadow(
-            color: _forestGreen.withValues(alpha: 0.18),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
-          ),
-        ],
+  Widget _buildHeader() => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+    child: Align(
+      alignment: Alignment.centerLeft,
+      child: Text(
+        'Report History',
+        style: GoogleFonts.epilogue(
+          fontSize: 24,
+          fontWeight: FontWeight.w800,
+          color: _forestGreen,
+          letterSpacing: -0.4,
+        ),
       ),
-      child: Column(
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(13),
-                ),
-                child: const Icon(Icons.history_rounded, color: Colors.white, size: 22),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Report History',
-                      style: GoogleFonts.epilogue(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.white,
-                        letterSpacing: -0.4,
-                      ),
-                    ),
-                    Text(
-                      'Scouting & AI detections synced with RCPC',
-                      style: GoogleFonts.manrope(
-                        fontSize: 12,
-                        color: Colors.white.withValues(alpha: 0.7),
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              // Search toggle button
-              IconButton(
-                style: IconButton.styleFrom(
-                  backgroundColor: _isSearchOpen
-                      ? Colors.white.withValues(alpha: 0.25)
-                      : Colors.white.withValues(alpha: 0.12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  padding: const EdgeInsets.all(8),
-                ),
-                icon: Icon(
-                  _isSearchOpen ? Icons.close_rounded : Icons.search_rounded,
-                  color: Colors.white,
-                  size: 18,
-                ),
-                onPressed: () {
-                  setState(() {
-                    _isSearchOpen = !_isSearchOpen;
-                    if (_isSearchOpen) {
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        _searchFocusNode.requestFocus();
-                      });
-                    } else {
-                      _searchQuery = '';
-                      _searchController.clear();
-                      _searchFocusNode.unfocus();
-                    }
-                  });
-                },
-              ),
-            ],
-          ),
-
-          // Search Field (if open)
-          if (_isSearchOpen) ...[
-            const SizedBox(height: 12),
-            Container(
-              height: 40,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: TextField(
-                controller: _searchController,
-                focusNode: _searchFocusNode,
-                autofocus: false,
-                style: GoogleFonts.manrope(color: Colors.white, fontSize: 13),
-                cursorColor: Colors.white,
-                decoration: InputDecoration(
-                  hintText: 'Search by pest, farm, stage, or notes...',
-                  hintStyle: GoogleFonts.manrope(
-                    color: Colors.white.withValues(alpha: 0.5),
-                    fontSize: 12.5,
-                  ),
-                  prefixIcon: const Icon(Icons.search_rounded, color: Colors.white70, size: 18),
-                  suffixIcon: _searchQuery.isNotEmpty
-                      ? IconButton(
-                          icon: const Icon(Icons.clear_rounded, color: Colors.white70, size: 16),
-                          onPressed: () {
-                            setState(() {
-                              _searchQuery = '';
-                              _searchController.clear();
-                            });
-                          },
-                        )
-                      : null,
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                ),
-                onChanged: (val) => setState(() => _searchQuery = val.trim()),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  // ─── Compact Space-Efficient Filter Bar ────────────────────────────────────
+    ),
+  );
 
   Widget _buildCompactFilterBar({
     required int totalCount,
@@ -857,20 +726,6 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
       result = result.where((item) => item.reportType == 'clustered').toList();
     }
 
-    // 3. Search Filter
-    if (_searchQuery.isNotEmpty) {
-      final q = _searchQuery.toLowerCase();
-      result = result.where((item) {
-        return item.title.toLowerCase().contains(q) ||
-            (item.subtitle?.toLowerCase().contains(q) ?? false) ||
-            item.farmName.toLowerCase().contains(q) ||
-            item.fieldName.toLowerCase().contains(q) ||
-            (item.growthStage?.toLowerCase().contains(q) ?? false) ||
-            (item.cropAffected?.toLowerCase().contains(q) ?? false) ||
-            (item.validationNotes?.toLowerCase().contains(q) ?? false);
-      }).toList();
-    }
-
     return result;
   }
 
@@ -907,10 +762,6 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
       headline = 'No ${_selectedFilter.toLowerCase()} reports';
       sub = 'Change the filter tab above to view other reports.';
       icon = Icons.filter_list_rounded;
-    } else if (_searchQuery.isNotEmpty) {
-      headline = 'No results found';
-      sub = 'No reports matched "$_searchQuery".';
-      icon = Icons.search_off_rounded;
     }
 
     return Center(

@@ -640,7 +640,7 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
             actions: [
               // Pending sync queue button
               ValueListenableBuilder<int>(
-                valueListenable: _syncService.pendingSyncCount,
+                valueListenable: _syncService.queueRevision,
                 builder: (context, pendingCount, _) {
                   // Only display sync button if the currently logged-in account has pending uploads
                   final userPendingCount = _syncService.getPendingCount(userId);
@@ -669,7 +669,9 @@ class _RootLayoutState extends State<RootLayout> with TickerProviderStateMixin {
                               size: 14, color: Color(0xFFB45309)),
                           const SizedBox(width: 4),
                           Text(
-                            '$userPendingCount',
+                            _syncService.readyCount > 0
+                                ? '${_syncService.readyCount} ready'
+                                : '$userPendingCount pending',
                             style: GoogleFonts.inter(
                               color: const Color(0xFFB45309),
                               fontSize: 11,

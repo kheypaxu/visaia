@@ -325,7 +325,7 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Saved to Offline Queue',
+                  'Detection saved on this device',
                   style: GoogleFonts.inter(
                     fontWeight: FontWeight.w800,
                     fontSize: 16,
@@ -336,7 +336,7 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
             ],
           ),
           content: Text(
-            'Your pest observation has been saved locally.\n\nVISAAIA will automatically send the photo for AI identification and treatment recommendations once your network is restored.',
+            'Your photo will be analyzed when you reconnect. Track progress in the header sync details or Report History > Pending detections.\n\nWhen ready, open the AI result, assign it to a cycle, and save your report.',
             style: GoogleFonts.inter(
               fontSize: 13,
               height: 1.45,
