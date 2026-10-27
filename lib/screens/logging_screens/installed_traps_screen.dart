@@ -150,7 +150,7 @@ class _InstalledTrapsScreenState extends State<InstalledTrapsScreen> {
         builder: (_) => TrapSetupScreen(
           cycleId: widget.cycleId,
           userId: widget.userId,
-          initialStep: 1,
+          initialStep: 0,
           addingTrap: true,
         ),
       ),
@@ -394,13 +394,13 @@ class _InstalledTrapsScreenState extends State<InstalledTrapsScreen> {
 class InstalledTrapMap extends StatefulWidget {
   final List<TrapItem> traps;
   final List<LatLng> boundaries;
-  final ValueChanged<TrapItem> onInspect;
+  final ValueChanged<TrapItem>? onInspect;
   final bool fullscreen;
   const InstalledTrapMap({
     super.key,
     required this.traps,
     required this.boundaries,
-    required this.onInspect,
+    this.onInspect,
     this.fullscreen = false,
   });
 
@@ -428,6 +428,17 @@ class _InstalledTrapMapState extends State<InstalledTrapMap> {
       _controller.fitCamera(fit);
     } else if (_points.isNotEmpty) {
       _controller.move(_points.first, 17);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant InstalledTrapMap oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.traps != widget.traps ||
+        oldWidget.boundaries != widget.boundaries) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _recenter();
+      });
     }
   }
 
@@ -477,14 +488,20 @@ class _InstalledTrapMapState extends State<InstalledTrapMap> {
                       width: 48,
                       height: 48,
                       child: Tooltip(
-                        message: 'Inspect ${entry.value.name}',
+                        message: widget.onInspect == null
+                            ? entry.value.name
+                            : 'Inspect ${entry.value.name}',
                         child: FilledButton(
                           style: FilledButton.styleFrom(
                             padding: EdgeInsets.zero,
                             shape: const CircleBorder(),
                             backgroundColor: const Color(0xFF0C503C),
+                            disabledBackgroundColor: const Color(0xFF0C503C),
+                            disabledForegroundColor: Colors.white,
                           ),
-                          onPressed: () => widget.onInspect(entry.value),
+                          onPressed: widget.onInspect == null
+                              ? null
+                              : () => widget.onInspect!(entry.value),
                           child: Text('${entry.key + 1}'),
                         ),
                       ),
@@ -508,18 +525,27 @@ class _InstalledTrapMapState extends State<InstalledTrapMap> {
                     tooltip: 'Open full map',
                     icon: const Icon(Icons.fullscreen),
                     onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (mapContext) => Scaffold(
-                            appBar: AppBar(title: const Text('Trap Locations')),
+                      showDialog<void>(
+                        context: context,
+                        builder: (mapContext) => Dialog.fullscreen(
+                          child: Scaffold(
+                            appBar: AppBar(
+                              title: const Text('Trap Locations'),
+                              leading: IconButton(
+                                tooltip: 'Close map',
+                                icon: const Icon(Icons.close),
+                                onPressed: () => Navigator.pop(mapContext),
+                              ),
+                            ),
                             body: InstalledTrapMap(
                               traps: widget.traps,
                               boundaries: widget.boundaries,
-                              onInspect: (trap) {
-                                Navigator.pop(mapContext);
-                                widget.onInspect(trap);
-                              },
+                              onInspect: widget.onInspect == null
+                                  ? null
+                                  : (trap) {
+                                      Navigator.pop(mapContext);
+                                      widget.onInspect!(trap);
+                                    },
                               fullscreen: true,
                             ),
                           ),

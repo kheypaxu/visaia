@@ -1,3 +1,4 @@
+import 'package:visaia/utils/trap_setup_plan.dart';
 import 'package:visaia/screens/logging_screens/installed_traps_screen.dart';
 import 'package:visaia/services/local_write_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -10,7 +11,7 @@ import 'package:visaia/services/firestore_safe_ext.dart';
 import 'package:visaia/screens/logging_screens/inspect_trap_screen.dart';
 
 /// Trap Setup Screen - Complete flow with map placement
-/// 
+///
 /// This screen handles the entire trap setup process:
 /// Step 1: Select number of traps
 /// Step 2: Place traps on the field map
@@ -41,7 +42,13 @@ class _TrapSetupScreenState extends State<TrapSetupScreen> {
   final int _totalSteps = 3;
 
   // Step 1: Quantity
-  int _trapCount = 1;
+  final _plan = TrapSetupPlan();
+  int get _trapCount => _plan.targetCount;
+  bool _notesDirty = false;
+  bool _allowExit = false;
+  bool _isConfirming = false;
+  bool get _hasDraft =>
+      _notesDirty || _placedTraps.length > _plan.installedCount;
 
   // Step 2: Map placement
   final List<TrapPlacement> _placedTraps = [];
@@ -61,11 +68,20 @@ class _TrapSetupScreenState extends State<TrapSetupScreen> {
     _fetchFieldData();
   }
 
+  @override
+  void dispose() {
+    _mapController.dispose();
+    super.dispose();
+  }
+
   // ========================
   // DATA FETCHING
   // ========================
   Future<void> _fetchFieldData() async {
-    setState(() => _isLoadingField = true);
+    setState(() {
+      _isLoadingField = true;
+      _fieldError = null;
+    });
 
     try {
       final cycleDoc = await FirebaseFirestore.instance
@@ -149,23 +165,24 @@ class _TrapSetupScreenState extends State<TrapSetupScreen> {
               : null;
           final lastCond = t['lastCondition'] as String?;
 
-          loadedPlacements.add(TrapPlacement(
-            position: pos,
-            placedAt: installDate,
-          ));
+          loadedPlacements.add(
+            TrapPlacement(position: pos, placedAt: installDate),
+          );
 
-          loadedTraps.add(TrapItem(
-            id: 'trap_${i + 1}',
-            name: name,
-            zone: zone,
-            position: pos,
-            installationDate: installDate,
-            nextLureDate: nextLure,
-            notes: notes,
-            lastInspectedAt: lastInspected,
-            lastMothCount: lastMoths,
-            lastCondition: lastCond,
-          ));
+          loadedTraps.add(
+            TrapItem(
+              id: 'trap_${i + 1}',
+              name: name,
+              zone: zone,
+              position: pos,
+              installationDate: installDate,
+              nextLureDate: nextLure,
+              notes: notes,
+              lastInspectedAt: lastInspected,
+              lastMothCount: lastMoths,
+              lastCondition: lastCond,
+            ),
+          );
         }
       }
 
@@ -177,7 +194,7 @@ class _TrapSetupScreenState extends State<TrapSetupScreen> {
           _placedTraps.addAll(loadedPlacements);
           _traps.clear();
           _traps.addAll(loadedTraps);
-          _trapCount = loadedTraps.length + (widget.addingTrap ? 1 : 0);
+          _plan.loadInstalled(loadedTraps.length);
         }
         _isLoadingField = false;
       });
@@ -234,10 +251,11 @@ class _TrapSetupScreenState extends State<TrapSetupScreen> {
             ((j * (dashLength + gapLength)) + dashLength) / distance;
 
         dashedLines.add([
-          LatLng(start.latitude + dy * startStep,
-              start.longitude + dx * startStep),
-          LatLng(start.latitude + dy * endStep,
-              start.longitude + dx * endStep),
+          LatLng(
+            start.latitude + dy * startStep,
+            start.longitude + dx * startStep,
+          ),
+          LatLng(start.latitude + dy * endStep, start.longitude + dx * endStep),
         ]);
       }
     }
@@ -245,196 +263,63 @@ class _TrapSetupScreenState extends State<TrapSetupScreen> {
   }
 
   // ========================
-// ADD NEW TRAP
-// ========================
-void _addNewTrap() {
-  // Show dialog to add trap details
-  showDialog(
-    context: context,
-    barrierDismissible: true,
-    builder: (context) => _buildAddTrapDialog(context),
-  );
-}
-
-Widget _buildAddTrapDialog(BuildContext context) {
-  final TextEditingController nameController = TextEditingController();
-  final TextEditingController notesController = TextEditingController();
-  String selectedSide = 'North Side';
-
-  final List<String> sides = [
-    'North Side',
-    'North-East Side',
-    'East Side',
-    'South-East Side',
-    'South Side',
-    'South-West Side',
-    'West Side',
-    'North-West Side',
-  ];
-
-  return AlertDialog(
-    shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(20),
-    ),
-    title: Text(
-      'Add New Trap',
-      style: GoogleFonts.inter(
-        fontSize: 20,
-        fontWeight: FontWeight.w700,
-        color: const Color(0xFF0F5234),
-      ),
-    ),
-    content: SingleChildScrollView(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Enter trap details',
-            style: GoogleFonts.inter(
-              fontSize: 14,
-              color: const Color(0xFF666666),
-            ),
-          ),
-          const SizedBox(height: 20),
-          // Trap Name
-          TextFormField(
-            controller: nameController,
-            decoration: InputDecoration(
-              labelText: 'Trap Name',
-              hintText: 'e.g., Trap 1',
-              filled: true,
-              fillColor: const Color(0xFFF5F7F5),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 14,
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          // Zone/Side Dropdown
-          DropdownButtonFormField<String>(
-            value: selectedSide,
-            decoration: InputDecoration(
-              labelText: 'Zone / Side',
-              filled: true,
-              fillColor: const Color(0xFFF5F7F5),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 14,
-              ),
-            ),
-            items: sides.map((String side) {
-              return DropdownMenuItem<String>(
-                value: side,
-                child: Text(side),
-              );
-            }).toList(),
-            onChanged: (String? newValue) {
-              if (newValue != null) {
-                selectedSide = newValue;
-              }
-            },
-          ),
-          const SizedBox(height: 16),
-          // Location Notes
-          TextFormField(
-            controller: notesController,
-            decoration: InputDecoration(
-              labelText: 'Location Notes',
-              hintText: 'e.g., Near the old oak tree...',
-              filled: true,
-              fillColor: const Color(0xFFF5F7F5),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 14,
-              ),
-            ),
-            maxLines: 2,
-          ),
-        ],
-      ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: Text(
-          'Cancel',
-          style: GoogleFonts.inter(
-            color: const Color(0xFF666666),
-          ),
-        ),
-      ),
-      ElevatedButton(
-        onPressed: () {
-          if (nameController.text.isEmpty) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Please enter a trap name.'),
-                backgroundColor: Color(0xFFC62828),
-              ),
-            );
-            return;
-          }
-
-          // Create new trap placement
-          // For manual addition, place at center of field
-          final newTrap = TrapPlacement(
-            position: _fieldCenter,
-            placedAt: DateTime.now(),
-          );
-
-          setState(() {
-            _placedTraps.add(newTrap);
-            _trapCount = _placedTraps.length;
-          });
-
-          Navigator.pop(context);
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('${nameController.text} added successfully!'),
-              backgroundColor: const Color(0xFF0F5234),
-              duration: const Duration(seconds: 2),
-            ),
-          );
-        },
-        style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF0F5234),
-          foregroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-        ),
-        child: const Text('Add Trap'),
-      ),
-    ],
-  );
-}
-
+  // ADD NEW TRAP
   // ========================
-  // NAVIGATION
-  // ========================
+  void _addNewTrap() {
+    if (_isSavingSetup || _isConfirming) return;
+    setState(() {
+      _plan.startNextBatch(_placedTraps.length);
+      _currentStep = 0;
+    });
+  }
+
+  Future<void> _requestExit() async {
+    if (_isSavingSetup || _isConfirming) return;
+    if (_hasDraft) {
+      final discard = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Discard trap setup?'),
+          content: const Text(
+            'Your new placements and notes have not been saved.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Keep editing'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Discard'),
+            ),
+          ],
+        ),
+      );
+      if (discard != true || !mounted) return;
+    }
+    _closeSetup(false);
+  }
+
+  void _closeSetup(bool saved) {
+    setState(() => _allowExit = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.pop(context, saved);
+    });
+  }
+
   void _nextStep() {
+    if (_isLoadingField ||
+        _fieldError != null ||
+        _isSavingSetup ||
+        _isConfirming) {
+      return;
+    }
     // If in view-only mode, just close
     if (widget.viewOnly) {
       Navigator.pop(context);
       return;
     }
-    
+
     if (_currentStep == 0 && _trapCount < 1) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -471,24 +356,54 @@ Widget _buildAddTrapDialog(BuildContext context) {
 
   bool _isSavingSetup = false;
   Future<void> _completeSetup() async {
-    if (_isSavingSetup) return;
-    _isSavingSetup = true;
+    if (_isSavingSetup || _isConfirming || _traps.isEmpty) return;
+    final added = _traps.length - _plan.installedCount;
+    setState(() => _isConfirming = true);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Finalize trap placements?'),
+        content: Text(
+          'Existing traps: ${_plan.installedCount}\nNew traps: $added\nTotal after saving: ${_traps.length}\n\nSave these placements and location notes?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Keep editing'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Confirm & Save'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    setState(() => _isConfirming = false);
+    if (confirmed != true) return;
+    setState(() => _isSavingSetup = true);
     try {
       final db = FirebaseFirestore.instance;
       final batch = db.batch();
       if (!await _saveTrapsToFirestore(batch: batch)) return;
       await _addToDailyLog(batch: batch);
-      final cycleRef = db.collection('users').doc(widget.userId)
-          .collection('cycles').doc(widget.cycleId);
+      final cycleRef = db
+          .collection('users')
+          .doc(widget.userId)
+          .collection('cycles')
+          .doc(widget.cycleId);
       await LocalWriteService.run(cycleRef, batch.commit);
+      _plan.installedCount = _traps.length;
+      _notesDirty = false;
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not save trap installation: $error')));
+          SnackBar(content: Text('Could not save trap installation: $error')),
+        );
       }
       return;
     } finally {
-      _isSavingSetup = false;
+      if (mounted) setState(() => _isSavingSetup = false);
     }
     if (!mounted) return;
 
@@ -516,7 +431,7 @@ Widget _buildAddTrapDialog(BuildContext context) {
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
-              Navigator.pop(context);
+              _closeSetup(true);
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF0F5234),
@@ -525,7 +440,11 @@ Widget _buildAddTrapDialog(BuildContext context) {
                 borderRadius: BorderRadius.circular(12),
               ),
             ),
-            child: const Text('Back to Monitoring'),
+            child: Text(
+              widget.addingTrap
+                  ? 'Back to Installed Traps'
+                  : 'Back to Monitoring',
+            ),
           ),
         ],
       ),
@@ -545,18 +464,23 @@ Widget _buildAddTrapDialog(BuildContext context) {
           'installationDate': Timestamp.fromDate(trap.installationDate),
           'nextLureDate': Timestamp.fromDate(trap.nextLureDate),
           'notes': trap.notes,
-          if (trap.lastInspectedAt != null) 'lastInspectedAt': Timestamp.fromDate(trap.lastInspectedAt!),
+          if (trap.lastInspectedAt != null)
+            'lastInspectedAt': Timestamp.fromDate(trap.lastInspectedAt!),
           if (trap.lastMothCount != null) 'lastMothCount': trap.lastMothCount,
           if (trap.lastCondition != null) 'lastCondition': trap.lastCondition,
         };
       }).toList();
 
-      final ref = FirebaseFirestore.instance.collection('users')
-          .doc(widget.userId).collection('cycles').doc(widget.cycleId);
+      final ref = FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('cycles')
+          .doc(widget.cycleId);
       final data = <String, dynamic>{
         'traps': trapData,
         'trapsInstalled': true,
-        'trapInstallationDate': FieldValue.serverTimestamp(),
+        if (_plan.installedCount == 0)
+          'trapInstallationDate': FieldValue.serverTimestamp(),
         'trapCount': _traps.length,
       };
       if (batch != null) {
@@ -567,73 +491,76 @@ Widget _buildAddTrapDialog(BuildContext context) {
     } catch (e) {
       debugPrint('Error saving traps: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not save traps: $e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Could not save traps: $e')));
       }
       return false;
     }
     return true;
   }
 
-// ========================
-// ADD TO DAILY LOG
-// ========================
-Future<void> _addToDailyLog({WriteBatch? batch}) async {
-  try {
-    // Get today's date
-    final now = DateTime.now();
-    
-    // Calculate the day number from planting date
-    final cycleDoc = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(widget.userId)
-        .collection('cycles')
-        .doc(widget.cycleId)
-        .safeGet();
-    
-    if (!cycleDoc.exists) return;
-    
-    final cycleData = cycleDoc.data()!;
-    final plantingDate = (cycleData['plantingDate'] as Timestamp?)?.toDate();
-    
-    if (plantingDate == null) return;
-    
-    final dayIndex = now.difference(plantingDate).inDays;
-    if (dayIndex < 0) return;
-    
-    final dayId = 'day_${(dayIndex + 1).toString().padLeft(2, '0')}';
-    
-    // Create the log entry as a normal completed task
-    final docRef = FirebaseFirestore.instance
-        .collection('users')
-        .doc(widget.userId)
-        .collection('cycles')
-        .doc(widget.cycleId)
-        .collection('dailyLogs')
-        .doc(dayId)
-        .collection('activities')
-        .doc();
-    
-    final data = <String, dynamic>{
-      'type': 'Installed ${_traps.length} Pheromone Traps',
-      'notes': 'Installed ${_traps.length} pheromone traps in the field for pest monitoring.',
-      'images': [],
-      'completed': true,
-      'completedAt': FieldValue.serverTimestamp(),
-      'timestamp': FieldValue.serverTimestamp(),
-    };
-    if (batch != null) {
-      batch.set(docRef, data);
-    } else {
-      await docRef.setLocally(data);
+  // ========================
+  // ADD TO DAILY LOG
+  // ========================
+  Future<void> _addToDailyLog({WriteBatch? batch}) async {
+    try {
+      // Get today's date
+      final now = DateTime.now();
+
+      // Calculate the day number from planting date
+      final cycleDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('cycles')
+          .doc(widget.cycleId)
+          .safeGet();
+
+      if (!cycleDoc.exists) return;
+
+      final cycleData = cycleDoc.data()!;
+      final plantingDate = (cycleData['plantingDate'] as Timestamp?)?.toDate();
+
+      if (plantingDate == null) return;
+
+      final dayIndex = now.difference(plantingDate).inDays;
+      if (dayIndex < 0) return;
+
+      final dayId = 'day_${(dayIndex + 1).toString().padLeft(2, '0')}';
+
+      // Create the log entry as a normal completed task
+      final docRef = FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('cycles')
+          .doc(widget.cycleId)
+          .collection('dailyLogs')
+          .doc(dayId)
+          .collection('activities')
+          .doc();
+
+      final data = <String, dynamic>{
+        'type':
+            'Installed ${_traps.length - _plan.installedCount} Pheromone Traps',
+        'notes':
+            'Installed ${_traps.length - _plan.installedCount} new pheromone traps. Total traps: ${_traps.length}.',
+        'images': [],
+        'completed': true,
+        'completedAt': FieldValue.serverTimestamp(),
+        'timestamp': FieldValue.serverTimestamp(),
+      };
+      if (batch != null) {
+        batch.set(docRef, data);
+      } else {
+        await docRef.setLocally(data);
+      }
+
+      debugPrint('✅ Trap installation added to daily log for day $dayId');
+    } catch (e) {
+      debugPrint('Error adding to daily log: $e');
+      rethrow;
     }
-    
-    debugPrint('✅ Trap installation added to daily log for day $dayId');
-  } catch (e) {
-    debugPrint('Error adding to daily log: $e');
-    rethrow;
   }
-}
 
   // ========================
   // BUILD
@@ -641,26 +568,53 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
   @override
   Widget build(BuildContext context) {
     if (widget.viewOnly) {
-      return InstalledTrapsScreen(cycleId: widget.cycleId, userId: widget.userId);
+      return InstalledTrapsScreen(
+        cycleId: widget.cycleId,
+        userId: widget.userId,
+      );
     }
-    return Scaffold(
-      backgroundColor: const Color(0xFFF8FAF9),
-      appBar: _buildAppBar(),
-      body: Column(
-        children: [
-          _buildProgressIndicator(),
-          Expanded(
-            child: IndexedStack(
-              index: _currentStep,
-              children: [
-                _buildStep1Quantity(),
-                _buildStep2MapPlacement(),
-                _buildStep3Review(),
-              ],
-            ),
+    return PopScope(
+      canPop:
+          _allowExit ||
+          (!widget.viewOnly && !_hasDraft && !_isSavingSetup && !_isConfirming),
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) _requestExit();
+      },
+      child: AbsorbPointer(
+        absorbing: _isSavingSetup || _isConfirming,
+        child: Scaffold(
+          backgroundColor: const Color(0xFFF8FAF9),
+          appBar: _buildAppBar(),
+          body: Column(
+            children: [
+              _buildProgressIndicator(),
+              if (_fieldError != null)
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      Text(_fieldError!, textAlign: TextAlign.center),
+                      TextButton(
+                        onPressed: _fetchFieldData,
+                        child: const Text('Retry loading field'),
+                      ),
+                    ],
+                  ),
+                ),
+              Expanded(
+                child: IndexedStack(
+                  index: _currentStep,
+                  children: [
+                    _buildStep1Quantity(),
+                    _buildStep2MapPlacement(),
+                    _buildStep3Review(),
+                  ],
+                ),
+              ),
+              _buildBottomNavigation(),
+            ],
           ),
-          _buildBottomNavigation(),
-        ],
+        ),
       ),
     );
   }
@@ -674,10 +628,10 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
       elevation: 0,
       leading: IconButton(
         icon: const Icon(Icons.arrow_back, color: Color(0xFF1A1A1A)),
-        onPressed: () => Navigator.pop(context),
+        onPressed: _requestExit,
       ),
       title: Text(
-        'Setup Trap',
+        widget.addingTrap ? 'Add Traps' : 'Setup Traps',
         style: GoogleFonts.inter(
           fontSize: 18,
           fontWeight: FontWeight.w600,
@@ -697,95 +651,17 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
   }
 
   Widget _buildAddTrapButton() {
-  // If in view-only mode, show "Add Another Trap" button
-  if (widget.viewOnly) {
-    return GestureDetector(
-      onTap: () {
-        // Navigate back to step 1 to add more traps
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => TrapSetupScreen(
-              cycleId: widget.cycleId,
-              userId: widget.userId,
-              initialStep: 0,
-              viewOnly: false,
-            ),
-          ),
-        );
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
-        decoration: BoxDecoration(
-          color: const Color(0xFFE8F0E8),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: const Color(0xFF0F5234).withValues(alpha: 0.15),
-            width: 1.5,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.add,
-              color: const Color(0xFF0F5234),
-              size: 20,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              'Add Another Trap',
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: const Color(0xFF0F5234),
-              ),
-            ),
-          ],
-        ),
+    return OutlinedButton.icon(
+      onPressed: _isSavingSetup || _isConfirming ? null : _addNewTrap,
+      icon: const Icon(Icons.add),
+      label: const Text('Add Another Trap'),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: const Color(0xFF0F5234),
+        minimumSize: const Size(0, 48),
       ),
     );
   }
-  
-  // Original button for first-time setup
-  return GestureDetector(
-    onTap: _addNewTrap,
-    child: Container(
-      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFE8F0E8),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: const Color(0xFF0F5234).withValues(alpha: 0.15),
-          width: 1.5,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.add,
-            color: const Color(0xFF0F5234),
-            size: 20,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            'Add Another Trap',
-            style: GoogleFonts.inter(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: const Color(0xFF0F5234),
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-}
 
-  // ========================
-  // PROGRESS INDICATOR
-  // ========================
   Widget _buildProgressIndicator() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -853,7 +729,9 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Number of Traps',
+            _plan.retainedCount > 0
+                ? 'How Many Traps to Add?'
+                : 'Number of Traps',
             style: GoogleFonts.inter(
               fontSize: 24,
               fontWeight: FontWeight.w700,
@@ -862,7 +740,7 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
           ),
           const SizedBox(height: 4),
           Text(
-            'Select how many units to install in your farm area.',
+            '${_plan.retainedCount} traps retained. Choose how many new traps to place in this batch.',
             style: GoogleFonts.inter(
               fontSize: 14,
               color: const Color(0xFF666666),
@@ -890,9 +768,12 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                   children: [
                     GestureDetector(
                       onTap: () {
-                        if (_trapCount > 1) {
-                          setState(() => _trapCount--);
-                        }
+                        setState(
+                          () => _plan.selectQuantity(
+                            _plan.quantity - 1,
+                            _placedTraps.length,
+                          ),
+                        );
                       },
                       child: Container(
                         width: 56,
@@ -914,7 +795,7 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                     ),
                     const SizedBox(width: 32),
                     Text(
-                      '$_trapCount',
+                      '${_plan.quantity}',
                       style: GoogleFonts.inter(
                         fontSize: 48,
                         fontWeight: FontWeight.w700,
@@ -924,9 +805,12 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                     const SizedBox(width: 32),
                     GestureDetector(
                       onTap: () {
-                        if (_trapCount < 20) {
-                          setState(() => _trapCount++);
-                        }
+                        setState(
+                          () => _plan.selectQuantity(
+                            _plan.quantity + 1,
+                            _placedTraps.length,
+                          ),
+                        );
                       },
                       child: Container(
                         width: 56,
@@ -936,7 +820,9 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                              color: const Color(0xFF0F5234).withValues(alpha: 0.2),
+                              color: const Color(
+                                0xFF0F5234,
+                              ).withValues(alpha: 0.2),
                               blurRadius: 12,
                               offset: const Offset(0, 4),
                             ),
@@ -1025,7 +911,9 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
             color: checked ? const Color(0xFF0F5234) : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
             border: Border.all(
-              color: checked ? const Color(0xFF0F5234) : const Color(0xFFD0D5D0),
+              color: checked
+                  ? const Color(0xFF0F5234)
+                  : const Color(0xFFD0D5D0),
               width: 2,
             ),
           ),
@@ -1067,7 +955,10 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
             const SizedBox(height: 16),
             Text(
               _fieldError!,
-              style: GoogleFonts.inter(fontSize: 14, color: Colors.red.shade400),
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                color: Colors.red.shade400,
+              ),
               textAlign: TextAlign.center,
             ),
           ],
@@ -1104,7 +995,10 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                 ],
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: const Color(0xFF0F5234).withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(20),
@@ -1161,7 +1055,14 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                     options: MapOptions(
                       initialCenter: _fieldCenter,
                       initialZoom: 17.0,
-                      minZoom: 14,
+                      initialCameraFit: _fieldBoundaries.length >= 3
+                          ? CameraFit.bounds(
+                              bounds: LatLngBounds.fromPoints(_fieldBoundaries),
+                              padding: const EdgeInsets.all(40),
+                              maxZoom: 18,
+                            )
+                          : null,
+                      minZoom: 2,
                       maxZoom: 20,
                       onTap: (tapPosition, point) {
                         _placeTrapOnMap(point);
@@ -1173,31 +1074,35 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                             'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
                         userAgentPackageName: 'com.visaia.app',
                       ),
-                      
+
                       // FIELD BOUNDARY
                       if (_fieldBoundaries.length >= 3)
                         PolygonLayer(
                           polygons: [
                             Polygon(
                               points: _fieldBoundaries,
-                              color: const Color(0xFFFFBA27).withValues(alpha: 0.15),
+                              color: const Color(
+                                0xFFFFBA27,
+                              ).withValues(alpha: 0.15),
                               borderColor: Colors.transparent,
                               borderStrokeWidth: 0,
                             ),
                           ],
                         ),
-                      
+
                       if (_fieldBoundaries.length >= 3)
                         PolylineLayer(
-                          polylines: _createDashedPolyline(_fieldBoundaries).map((segment) {
-                            return Polyline(
-                              points: segment,
-                              color: const Color(0xFFFFBA27),
-                              strokeWidth: 2.5,
-                            );
-                          }).toList(),
+                          polylines: _createDashedPolyline(_fieldBoundaries)
+                              .map((segment) {
+                                return Polyline(
+                                  points: segment,
+                                  color: const Color(0xFFFFBA27),
+                                  strokeWidth: 2.5,
+                                );
+                              })
+                              .toList(),
                         ),
-                      
+
                       if (_fieldBoundaries.length >= 3)
                         MarkerLayer(
                           markers: [
@@ -1213,13 +1118,21 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                                     decoration: BoxDecoration(
                                       color: const Color(0xFFFFBA27),
                                       shape: BoxShape.circle,
-                                      border: Border.all(color: Colors.white, width: 1),
+                                      border: Border.all(
+                                        color: Colors.white,
+                                        width: 1,
+                                      ),
                                     ),
                                   ),
                                   Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
                                     decoration: BoxDecoration(
-                                      color: Colors.white.withValues(alpha: 0.9),
+                                      color: Colors.white.withValues(
+                                        alpha: 0.9,
+                                      ),
                                       borderRadius: BorderRadius.circular(12),
                                       border: Border.all(
                                         color: const Color(0xFFFFBA27),
@@ -1240,7 +1153,7 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                             ),
                           ],
                         ),
-                      
+
                       // Placed traps
                       MarkerLayer(
                         markers: _placedTraps.map((trap) {
@@ -1264,7 +1177,9 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                                     ),
                                     boxShadow: [
                                       BoxShadow(
-                                        color: const Color(0xFF0F5234).withValues(alpha: 0.4),
+                                        color: const Color(
+                                          0xFF0F5234,
+                                        ).withValues(alpha: 0.4),
                                         blurRadius: 12,
                                         spreadRadius: 4,
                                       ),
@@ -1287,7 +1202,9 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                                   decoration: BoxDecoration(
                                     shape: BoxShape.circle,
                                     border: Border.all(
-                                      color: const Color(0xFF0F5234).withValues(alpha: 0.2),
+                                      color: const Color(
+                                        0xFF0F5234,
+                                      ).withValues(alpha: 0.2),
                                       width: 2,
                                     ),
                                   ),
@@ -1308,8 +1225,10 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                       children: [
                         GestureDetector(
                           onTap: () {
-                            _mapController.move(_mapController.camera.center, 
-                                _mapController.camera.zoom + 1);
+                            _mapController.move(
+                              _mapController.camera.center,
+                              _mapController.camera.zoom + 1,
+                            );
                           },
                           child: Container(
                             padding: const EdgeInsets.all(8),
@@ -1333,8 +1252,10 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                         const SizedBox(height: 8),
                         GestureDetector(
                           onTap: () {
-                            _mapController.move(_mapController.camera.center, 
-                                _mapController.camera.zoom - 1);
+                            _mapController.move(
+                              _mapController.camera.center,
+                              _mapController.camera.zoom - 1,
+                            );
                           },
                           child: Container(
                             padding: const EdgeInsets.all(8),
@@ -1390,7 +1311,10 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                       left: 20,
                       right: 60,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.black.withValues(alpha: 0.75),
                           borderRadius: BorderRadius.circular(12),
@@ -1427,7 +1351,10 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                       top: 12,
                       left: 12,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
                         decoration: BoxDecoration(
                           color: const Color(0xFF4CAF50),
                           borderRadius: BorderRadius.circular(20),
@@ -1460,7 +1387,7 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                     ),
 
                   // Undo button
-                  if (_placedTraps.isNotEmpty)
+                  if (_placedTraps.length > _plan.retainedCount)
                     Positioned(
                       top: 12,
                       right: 12,
@@ -1497,20 +1424,33 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
 
   void _placeTrapOnMap(LatLng position) {
     if (_placedTraps.length >= _trapCount) return;
+    if (_placedTraps.any((trap) => trap.position == position)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Choose a separate location for each trap.'),
+        ),
+      );
+      return;
+    }
+    if (!isInsideTrapField(position, _fieldBoundaries)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Place the trap inside the field boundary.'),
+        ),
+      );
+      return;
+    }
 
     setState(() {
       _placedTraps.add(
-        TrapPlacement(
-          position: position,
-          placedAt: DateTime.now(),
-        ),
+        TrapPlacement(position: position, placedAt: DateTime.now()),
       );
     });
   }
 
   void _removeLastTrap() {
     setState(() {
-      if (_placedTraps.isNotEmpty) {
+      if (_placedTraps.length > _plan.retainedCount) {
         _placedTraps.removeLast();
       }
     });
@@ -1571,7 +1511,9 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                           },
                           child: Container(
                             padding: const EdgeInsets.symmetric(
-                                vertical: 14, horizontal: 14),
+                              vertical: 14,
+                              horizontal: 14,
+                            ),
                             decoration: BoxDecoration(
                               color: const Color(0xFF0F5234),
                               borderRadius: BorderRadius.circular(12),
@@ -1579,8 +1521,11 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                const Icon(Icons.add_chart_rounded,
-                                    color: Colors.white, size: 18),
+                                const Icon(
+                                  Icons.add_chart_rounded,
+                                  color: Colors.white,
+                                  size: 18,
+                                ),
                                 const SizedBox(width: 8),
                                 Flexible(
                                   child: Text(
@@ -1603,110 +1548,33 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                 ),
                 const SizedBox(height: 16),
 
-                // Mini map preview
-                Container(
-                  height: 140,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.06),
-                        blurRadius: 12,
-                      ),
-                    ],
+                Text(
+                  'Final Trap Placements',
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF0C503C),
                   ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: 280,
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(16),
-                    child: Stack(
-                      children: [
-                        FlutterMap(
-                          options: MapOptions(
-                            initialCenter: _fieldCenter,
-                            initialZoom: 16.0,
-                            interactionOptions: const InteractionOptions(
-                              flags: InteractiveFlag.none,
-                            ),
-                          ),
-                          children: [
-                            TileLayer(
-                              urlTemplate:
-                                  'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
-                              userAgentPackageName: 'com.visaia.app',
-                            ),
-                            if (_fieldBoundaries.length >= 3)
-                              PolygonLayer(
-                                polygons: [
-                                  Polygon(
-                                    points: _fieldBoundaries,
-                                    color: const Color(0xFFFFBA27).withValues(alpha: 0.15),
-                                    borderColor: Colors.transparent,
-                                    borderStrokeWidth: 0,
-                                  ),
-                                ],
-                              ),
-                            if (_fieldBoundaries.length >= 3)
-                              PolylineLayer(
-                                polylines: _createDashedPolyline(_fieldBoundaries).map((segment) {
-                                  return Polyline(
-                                    points: segment,
-                                    color: const Color(0xFFFFBA27),
-                                    strokeWidth: 2,
-                                  );
-                                }).toList(),
-                              ),
-                            MarkerLayer(
-                              markers: _placedTraps.map((trap) {
-                                final index = _placedTraps.indexOf(trap);
-                                return Marker(
-                                  width: 28,
-                                  height: 28,
-                                  point: trap.position,
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF0F5234),
-                                      shape: BoxShape.circle,
-                                      border: Border.all(
-                                        color: Colors.white,
-                                        width: 2,
-                                      ),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.black.withValues(alpha: 0.2),
-                                          blurRadius: 6,
-                                        ),
-                                      ],
-                                    ),
-                                    child: Center(
-                                      child: Text(
-                                        '${index + 1}',
-                                        style: GoogleFonts.inter(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w700,
-                                          color: Colors.white,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              }).toList(),
-                            ),
-                          ],
-                        ),
-                        Container(
-                          height: 140,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: const Color(0xFF0F5234).withValues(alpha: 0.15),
-                              width: 1,
-                            ),
-                          ),
-                        ),
-                      ],
+                    child: InstalledTrapMap(
+                      traps: _traps,
+                      boundaries: _fieldBoundaries,
                     ),
                   ),
                 ),
-
+                const SizedBox(height: 8),
+                Text(
+                  '${_traps.length} traps total. Open the full map to review placements within the field boundary.',
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    color: const Color(0xFF666666),
+                  ),
+                ),
                 const SizedBox(height: 20),
 
                 if (_traps.isEmpty)
@@ -1720,8 +1588,11 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                     ),
                     child: Column(
                       children: [
-                        const Icon(Icons.info_outline,
-                            color: Color(0xFF888888), size: 36),
+                        const Icon(
+                          Icons.info_outline,
+                          color: Color(0xFF888888),
+                          size: 36,
+                        ),
                         const SizedBox(height: 12),
                         Text(
                           'No traps configured yet',
@@ -1754,19 +1625,7 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                           final index = _traps.indexOf(trap);
                           _traps[index].notes = notes;
                         });
-                        _saveTrapsToFirestore();
-                      },
-                      onInspectTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => InspectTrapScreen(
-                              cycleId: widget.cycleId,
-                              userId: widget.userId,
-                              initialTrapName: trap.name,
-                            ),
-                          ),
-                        ).then((_) => _fetchFieldData());
+                        _notesDirty = true;
                       },
                     ),
                   );
@@ -1781,16 +1640,26 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
 
   void _generateTrapItems() {
     final existing = List<TrapItem>.from(_traps);
+    final usedNames = existing.map((trap) => trap.name).toSet();
     _traps = _placedTraps.asMap().entries.map((entry) {
       final placement = entry.value;
       for (final trap in existing) {
         if (trap.position == placement.position) return trap;
       }
       final now = placement.placedAt;
+      var number = entry.key + 1;
+      while (usedNames.contains('Trap $number')) {
+        number++;
+      }
+      usedNames.add('Trap $number');
       return TrapItem(
-        id: 'trap_${entry.key + 1}', name: 'Trap ${entry.key + 1}',
-        zone: 'Field location', position: placement.position,
-        installationDate: now, nextLureDate: now.add(const Duration(days: 42)), notes: '',
+        id: 'trap_$number',
+        name: 'Trap $number',
+        zone: 'Field location',
+        position: placement.position,
+        installationDate: now,
+        nextLureDate: now.add(const Duration(days: 42)),
+        notes: '',
       );
     }).toList();
   }
@@ -1855,8 +1724,10 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 14,
+                  ),
                 ),
                 child: Text(
                   'Close',
@@ -1892,7 +1763,7 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
             // PREV Button
             if (_currentStep > 0)
               TextButton.icon(
-                onPressed: _prevStep,
+                onPressed: _isSavingSetup ? null : _prevStep,
                 icon: const Icon(
                   Icons.arrow_back,
                   size: 18,
@@ -1923,7 +1794,10 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
 
             // NEXT/DONE Button
             ElevatedButton.icon(
-              onPressed: _nextStep,
+              onPressed:
+                  _isLoadingField || _fieldError != null || _isSavingSetup
+                  ? null
+                  : _nextStep,
               icon: Icon(
                 _currentStep == _totalSteps - 1
                     ? Icons.check
@@ -1932,7 +1806,9 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                 color: Colors.white,
               ),
               label: Text(
-                _currentStep == _totalSteps - 1 ? 'DONE' : 'NEXT',
+                _isSavingSetup
+                    ? 'SAVING...'
+                    : (_currentStep == _totalSteps - 1 ? 'DONE' : 'NEXT'),
                 style: GoogleFonts.inter(
                   fontSize: 14,
                   fontWeight: FontWeight.w700,
@@ -1945,8 +1821,10 @@ Future<void> _addToDailyLog({WriteBatch? batch}) async {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
               ),
             ),
           ],
@@ -1963,10 +1841,7 @@ class TrapPlacement {
   final LatLng position;
   final DateTime placedAt;
 
-  TrapPlacement({
-    required this.position,
-    required this.placedAt,
-  });
+  TrapPlacement({required this.position, required this.placedAt});
 }
 
 // ========================
@@ -2181,8 +2056,8 @@ class TrapCard extends StatelessWidget {
                     (hasInspection && mothCount > 0)
                         ? Icons.pest_control
                         : (hasInspection
-                            ? Icons.verified_outlined
-                            : Icons.schedule_rounded),
+                              ? Icons.verified_outlined
+                              : Icons.schedule_rounded),
                     color: (hasInspection && mothCount > 0)
                         ? const Color(0xFFE65100)
                         : const Color(0xFF2E7D32),
@@ -2261,34 +2136,40 @@ class TrapCard extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             if (!editableNotes)
-              Text(trap.notes.isEmpty ? 'No location notes recorded.' : trap.notes,
-                style: GoogleFonts.inter(fontSize: 13, color: const Color(0xFF555555)))
-            else TextFormField(
-              initialValue: trap.notes,
-              onChanged: onNotesChanged,
-              decoration: InputDecoration(
-                hintText: 'e.g., Near the old oak tree...',
-                filled: true,
-                fillColor: const Color(0xFFF5F7F5),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
-                ),
-                hintStyle: GoogleFonts.inter(
+              Text(
+                trap.notes.isEmpty ? 'No location notes recorded.' : trap.notes,
+                style: GoogleFonts.inter(
                   fontSize: 13,
-                  color: const Color(0xFFB0B0B0),
+                  color: const Color(0xFF555555),
                 ),
+              )
+            else
+              TextFormField(
+                initialValue: trap.notes,
+                onChanged: onNotesChanged,
+                decoration: InputDecoration(
+                  hintText: 'e.g., Near the old oak tree...',
+                  filled: true,
+                  fillColor: const Color(0xFFF5F7F5),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  hintStyle: GoogleFonts.inter(
+                    fontSize: 13,
+                    color: const Color(0xFFB0B0B0),
+                  ),
+                ),
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                  color: const Color(0xFF1A1A1A),
+                ),
+                maxLines: 2,
               ),
-              style: GoogleFonts.inter(
-                fontSize: 13,
-                color: const Color(0xFF1A1A1A),
-              ),
-              maxLines: 2,
-            ),
           ],
         ),
       ),
@@ -2297,8 +2178,18 @@ class TrapCard extends StatelessWidget {
 
   String _formatDate(DateTime date) {
     final months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     return '${months[date.month - 1]} ${date.day}, ${date.year}';
   }
