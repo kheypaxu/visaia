@@ -30,3 +30,21 @@ need the following Android/iOS device checks before release.
 
 Offline reads require cached data. AI analysis requires the backend. The pending
 indicator counts tracked Firestore documents and AI jobs, not unique user actions.
+
+## Slow analysis and connectivity checks
+
+- Delay `/predict` headers and its response body beyond 30 seconds (including a
+  multi-minute Moondream run). Keep the upload open and verify the original
+  result appears without creating an offline queue item.
+- With working internet, return HTTP 500/502/504 or an invalid response from
+  `/predict`. Verify the analysis error offers Go back/Try again and does not
+  automatically queue a report. Retry sends a new request.
+- Block one reachability host and verify the app stays online. Briefly fail both
+  hosts and verify one failed probe does not switch offline. With Wi-Fi still
+  connected but no internet, three consecutive failed checks switch offline;
+  the periodic interval is 30 seconds and probe timeout is 8 seconds. A successful
+  check restores online status; losing all network transports switches immediately.
+- The client no longer imposes a prediction response timeout. Server, ngrok, or
+  reverse-proxy timeouts can still terminate a request. For durable processing
+  across those failures or app restarts, the backend needs a persisted job ID,
+  status polling, and idempotent submission; that backend is outside this repo.

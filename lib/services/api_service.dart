@@ -6,7 +6,7 @@ import 'package:http/http.dart' as http;
 class BoundingBox {
   final double x, y, width, height, confidence;
   final String className;
-  
+
   BoundingBox({
     required this.x,
     required this.y,
@@ -15,7 +15,7 @@ class BoundingBox {
     required this.className,
     required this.confidence,
   });
-  
+
   factory BoundingBox.fromJson(Map<String, dynamic> json) => BoundingBox(
     x: (json['x']?.toDouble() ?? 0.0),
     y: (json['y']?.toDouble() ?? 0.0),
@@ -57,9 +57,24 @@ class AnalysisResult {
 }
 
 class ApiService {
-  static const String baseUrl = "https://automatically-unbefriended-misty.ngrok-free.dev";
+  @visibleForTesting
+  static Future<http.Response> awaitAnalysisResponse(
+    http.BaseRequest request, {
+    http.Client? client,
+  }) async {
+    final response = await (client == null
+        ? request.send()
+        : client.send(request));
+    return http.Response.fromStream(response);
+  }
 
-  static String _safeString(dynamic value, {String fallback = 'No information provided'}) {
+  static const String baseUrl =
+      "https://automatically-unbefriended-misty.ngrok-free.dev";
+
+  static String _safeString(
+    dynamic value, {
+    String fallback = 'No information provided',
+  }) {
     if (value == null) return fallback;
     if (value is String) return value;
     if (value is Map) {
@@ -77,17 +92,28 @@ class ApiService {
     return (sum / boxes.length).clamp(0.0, 1.0);
   }
 
-  static Future<AnalysisResult> sendImage(File imageFile) async {
+  static Future<AnalysisResult> sendImage(
+    File imageFile, {
+    http.Client? client,
+  }) async {
     try {
       debugPrint('Sending request to $baseUrl/predict');
-      var request = http.MultipartRequest('POST', Uri.parse('$baseUrl/predict'));
-      request.files.add(await http.MultipartFile.fromPath('image', imageFile.path));
+      var request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/predict'),
+      );
+      request.files.add(
+        await http.MultipartFile.fromPath('image', imageFile.path),
+      );
 
-      var streamedResponse = await request.send().timeout(const Duration(seconds: 30));
-      var response = await http.Response.fromStream(streamedResponse).timeout(const Duration(seconds: 30));
+      // /predict also runs Moondream. Keep the same request alive while it
+      // processes; a local timeout abandons a result still running server-side.
+      var response = await awaitAnalysisResponse(request, client: client);
 
       if (response.statusCode != 200) {
-        throw Exception("Server error: ${response.statusCode}\n${response.body}");
+        throw Exception(
+          "Server error: ${response.statusCode}\n${response.body}",
+        );
       }
 
       final decoded = json.decode(response.body);
@@ -102,26 +128,30 @@ class ApiService {
       // Extract bounding boxes
       List<BoundingBox> boxes = [];
       if (decoded['boxes'] != null) {
-        boxes = (decoded['boxes'] as List).map((b) => BoundingBox.fromJson(b)).toList();
+        boxes = (decoded['boxes'] as List)
+            .map((b) => BoundingBox.fromJson(b))
+            .toList();
       }
 
       // Calculate overall confidence
       double overallConfidence = _calculateOverallConfidence(boxes);
-      
+
       // Also check if there's a direct confidence field
       if (decoded['confidence'] != null) {
         overallConfidence = (decoded['confidence'] as num).toDouble();
       }
 
       // Extract scientific name
-      String scientificName = decoded['scientific_name'] ?? 
-                              _getScientificNameForPest(decoded['pest'] ?? 'Fall Armyworm');
+      String scientificName =
+          decoded['scientific_name'] ??
+          _getScientificNameForPest(decoded['pest'] ?? 'Fall Armyworm');
 
       // Extract historical context
       String historicalContext = _safeString(
         decoded['historical_context'],
-        fallback: 'This pest is known to cause significant crop damage. '
-                  'Regular monitoring and early intervention are key to management.',
+        fallback:
+            'This pest is known to cause significant crop damage. '
+            'Regular monitoring and early intervention are key to management.',
       );
 
       // Extract crop affected or use default
@@ -132,16 +162,18 @@ class ApiService {
         List<String> stages = List<String>.from(decoded['stages'] ?? []);
         String lifeStage = stages.isNotEmpty ? stages.first : 'Unknown';
         String riskLevel = decoded['risk'] ?? 'Medium';
-        
+
         // Safely extract analysis and treatment as strings
         String analysis = _safeString(
-          decoded['analysis'], 
-          fallback: 'The analysis could not be generated. Please consult an agricultural expert.',
+          decoded['analysis'],
+          fallback:
+              'The analysis could not be generated. Please consult an agricultural expert.',
         );
-        
+
         String treatment = _safeString(
           decoded['treatment'],
-          fallback: 'No treatment plan provided. Please contact agricultural extension services.',
+          fallback:
+              'No treatment plan provided. Please contact agricultural extension services.',
         );
 
         return AnalysisResult(
@@ -158,14 +190,14 @@ class ApiService {
           cropAffected: cropAffected,
           confidence: overallConfidence,
         );
-      } 
+      }
       // Not FAW – uses 'analysis' and 'treatment' as well
       else {
         String analysis = _safeString(
-          decoded['analysis'], 
+          decoded['analysis'],
           fallback: 'No analysis provided. This may not be a recognized pest.',
         );
-        
+
         String treatment = _safeString(
           decoded['treatment'],
           fallback: 'No treatment plan available for this detection.',
@@ -206,7 +238,7 @@ class ApiService {
       'Locust': 'Acrididae',
       'Beetle': 'Coleoptera',
     };
-    
+
     return pestMap[pestName] ?? 'Species unidentified';
   }
 }

@@ -9,6 +9,16 @@ class ConnectivityService {
   factory ConnectivityService() => _instance;
   ConnectivityService._internal();
 
+  @visibleForTesting
+  ConnectivityService.forTesting({
+    required Future<List<ConnectivityResult>> Function() checkTransport,
+    required Future<bool> Function() probeInternet,
+  }) : _checkTransport = checkTransport,
+       _probeInternet = probeInternet;
+
+  Future<List<ConnectivityResult>> Function()? _checkTransport;
+  Future<bool> Function()? _probeInternet;
+
   final Connectivity _connectivity = Connectivity();
   StreamSubscription<List<ConnectivityResult>>? _subscription;
 
@@ -23,6 +33,29 @@ class ConnectivityService {
   bool _isInitialized = false;
   Timer? _probeTimer;
   int _probeGeneration = 0;
+  int _failedProbes = 0;
+
+  Future<bool> _hasInternet() async {
+    // Independent hosts avoid treating one blocked/slow endpoint as an outage.
+    final checks =
+        [
+          'https://www.gstatic.com/generate_204',
+          'https://cp.cloudflare.com/generate_204',
+        ].map((url) async {
+          final client = http.Client();
+          try {
+            final response = await client
+                .get(Uri.parse(url))
+                .timeout(const Duration(seconds: 8));
+            return response.statusCode == 204;
+          } catch (_) {
+            return false;
+          } finally {
+            client.close();
+          }
+        });
+    return (await Future.wait(checks)).any((reachable) => reachable);
+  }
 
   Future<void> init() async {
     if (_isInitialized) return;
@@ -45,25 +78,21 @@ class ConnectivityService {
 
   Future<void> _updateStatus(List<ConnectivityResult> results) async {
     final generation = ++_probeGeneration;
-    var online = results.any(
-      (r) =>
-          r == ConnectivityResult.wifi ||
-          r == ConnectivityResult.mobile ||
-          r == ConnectivityResult.ethernet ||
-          r == ConnectivityResult.vpn,
-    );
+    final hasTransport = results.any((r) => r != ConnectivityResult.none);
+    var online = hasTransport;
 
     if (online) {
-      try {
-        final response = await http
-            .get(Uri.parse('https://www.gstatic.com/generate_204'))
-            .timeout(const Duration(seconds: 4));
-        online = response.statusCode == 204;
-      } catch (_) {
-        online = false;
-      }
+      online = await (_probeInternet ?? _hasInternet)();
     }
     if (generation != _probeGeneration) return;
+
+    if (online || !hasTransport) {
+      _failedProbes = 0;
+    } else {
+      _failedProbes++;
+      // A transient probe failure must not switch the entire app offline.
+      if (_failedProbes < 3) return;
+    }
 
     final wasOffline = !_lastStatus;
     _lastStatus = online;
@@ -79,15 +108,18 @@ class ConnectivityService {
 
   Future<bool> checkConnection() async {
     try {
-      final results = await _connectivity.checkConnectivity();
+      final results =
+          await (_checkTransport ?? _connectivity.checkConnectivity)();
       await _updateStatus(results);
       return isOnline;
     } catch (e) {
-      return false;
+      // A platform-check failure is inconclusive, not evidence of an outage.
+      return isOnline;
     }
   }
 
   void dispose() {
+    _probeGeneration++;
     _probeTimer?.cancel();
     _subscription?.cancel();
     _reconnectedController.close();

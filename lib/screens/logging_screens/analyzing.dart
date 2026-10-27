@@ -102,36 +102,44 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
     super.initState();
 
     _fadeInCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 600))
-      ..forward();
-    _fadeInAnim =
-        CurvedAnimation(parent: _fadeInCtrl, curve: Curves.easeOut);
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    )..forward();
+    _fadeInAnim = CurvedAnimation(parent: _fadeInCtrl, curve: Curves.easeOut);
 
     _pulseCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 1800))
-      ..repeat(reverse: true);
-    _pulseAnim = Tween<double>(begin: 0.92, end: 1.08)
-        .animate(CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat(reverse: true);
+    _pulseAnim = Tween<double>(
+      begin: 0.92,
+      end: 1.08,
+    ).animate(CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
 
     _scanCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 2200))
-      ..repeat();
+      vsync: this,
+      duration: const Duration(milliseconds: 2200),
+    )..repeat();
     _scanAnim = CurvedAnimation(parent: _scanCtrl, curve: Curves.linear);
 
     _ringCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 3000))
-      ..repeat();
+      vsync: this,
+      duration: const Duration(milliseconds: 3000),
+    )..repeat();
     _ringAnim = CurvedAnimation(parent: _ringCtrl, curve: Curves.linear);
 
-    _dotCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 500))
-      ..addStatusListener((s) {
-        if (s == AnimationStatus.completed) {
-          setState(() => _dotCount = (_dotCount % 3) + 1);
-          _dotCtrl.forward(from: 0);
-        }
-      })
-      ..forward();
+    _dotCtrl =
+        AnimationController(
+            vsync: this,
+            duration: const Duration(milliseconds: 500),
+          )
+          ..addStatusListener((s) {
+            if (s == AnimationStatus.completed) {
+              setState(() => _dotCount = (_dotCount % 3) + 1);
+              _dotCtrl.forward(from: 0);
+            }
+          })
+          ..forward();
 
     _startAnalysis();
     _stepTimer();
@@ -148,7 +156,8 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
 
   Future<void> _startAnalysis() async {
     final connectivity = ConnectivityService();
-    final isOnline = connectivity.isOnline;
+    final isOnline =
+        connectivity.isOnline || await connectivity.checkConnection();
 
     if (!isOnline) {
       await _handleOfflinePestReport();
@@ -164,7 +173,10 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
 
       // Prioritize verified field location if provided
       LocationData locationData;
-      if (widget.latitude != null && widget.longitude != null && widget.latitude != 0.0 && widget.longitude != 0.0) {
+      if (widget.latitude != null &&
+          widget.longitude != null &&
+          widget.latitude != 0.0 &&
+          widget.longitude != 0.0) {
         locationData = LocationData(
           latitude: widget.latitude!,
           longitude: widget.longitude!,
@@ -173,14 +185,14 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
       } else {
         locationData = await _getCurrentLocation();
       }
-      
+
       // Ensure scientificName is not null
-      final scientificName = result.scientificName.isNotEmpty 
-          ? result.scientificName 
+      final scientificName = result.scientificName.isNotEmpty
+          ? result.scientificName
           : _getScientificNameForPest(result.pestName);
-      
+
       if (!mounted) return;
-      
+
       Navigator.pushReplacement(
         context,
         PageRouteBuilder(
@@ -190,11 +202,13 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
             severity: _mapRiskToSeverity(result.riskLevel),
             confidencePercent: _calculateConfidence(result.boxes),
             detectionStage: result.lifeStage,
-            cropAffected: result.cropAffected.isNotEmpty ? result.cropAffected : 'Maize',
+            cropAffected: result.cropAffected.isNotEmpty
+                ? result.cropAffected
+                : 'Maize',
             analysis: result.analysis,
             treatment: result.treatment,
-            historicalContext: result.historicalContext.isNotEmpty 
-                ? result.historicalContext 
+            historicalContext: result.historicalContext.isNotEmpty
+                ? result.historicalContext
                 : 'AI analysis from uploaded image.',
             imageFile: widget.imageFile,
             annotatedImageUrl: result.annotatedImageUrl,
@@ -213,15 +227,53 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
         ),
       );
     } catch (e) {
-      debugPrint('Online AI analysis failed ($e), saving to offline queue.');
-      await _handleOfflinePestReport();
+      debugPrint('Online AI analysis failed: $e');
+      // Server failures and invalid responses do not imply lost internet.
+      // Only queue automatically after connectivity confirms we are offline.
+      final online = await connectivity.checkConnection();
+      if (!mounted) return;
+      if (!online) {
+        await _handleOfflinePestReport();
+        return;
+      }
+      final retry = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Analysis unavailable'),
+          content: const Text(
+            'You are connected, but the analysis server could not return a result. '
+            'Your photo is still available. You can go back or try again.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Go back'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Try again'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted) return;
+      if (retry == true) {
+        setState(() => _done = false);
+        await _startAnalysis();
+      } else {
+        Navigator.pop(context);
+      }
     }
   }
 
   Future<void> _handleOfflinePestReport() async {
     try {
       LocationData locationData;
-      if (widget.latitude != null && widget.longitude != null && widget.latitude != 0.0 && widget.longitude != 0.0) {
+      if (widget.latitude != null &&
+          widget.longitude != null &&
+          widget.latitude != 0.0 &&
+          widget.longitude != 0.0) {
         locationData = LocationData(
           latitude: widget.latitude!,
           longitude: widget.longitude!,
@@ -253,7 +305,9 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
       showDialog(
         context: dialogContext,
         builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
           title: Row(
             children: [
               Container(
@@ -262,8 +316,11 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
                   color: const Color(0xFFEAF3DE),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.cloud_off_rounded,
-                    color: Color(0xFF1A5C30), size: 22),
+                child: const Icon(
+                  Icons.cloud_off_rounded,
+                  color: Color(0xFF1A5C30),
+                  size: 22,
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -292,7 +349,8 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
               style: FilledButton.styleFrom(
                 backgroundColor: const Color(0xFF1A5C30),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10)),
+                  borderRadius: BorderRadius.circular(10),
+                ),
               ),
               child: const Text('Got it'),
             ),
@@ -334,7 +392,7 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
       'Cotton Bollworm': 'Helicoverpa armigera',
       'Diamondback Moth': 'Plutella xylostella',
     };
-    
+
     return pestMap[pestName] ?? 'Species unidentified';
   }
 
@@ -368,8 +426,10 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
         if (rawBounds is List) {
           for (final p in rawBounds) {
             if (p is Map) {
-              final lat = (p['lat'] ?? p['latitude'] as num?)?.toDouble() ?? 0.0;
-              final lng = (p['lng'] ?? p['longitude'] as num?)?.toDouble() ?? 0.0;
+              final lat =
+                  (p['lat'] ?? p['latitude'] as num?)?.toDouble() ?? 0.0;
+              final lng =
+                  (p['lng'] ?? p['longitude'] as num?)?.toDouble() ?? 0.0;
               if (lat != 0.0 || lng != 0.0) boundaries.add(LatLng(lat, lng));
             }
           }
@@ -395,8 +455,9 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
             permission == LocationPermission.whileInUse) {
           try {
             position = await Geolocator.getCurrentPosition(
-              locationSettings:
-                  const LocationSettings(accuracy: LocationAccuracy.high),
+              locationSettings: const LocationSettings(
+                accuracy: LocationAccuracy.high,
+              ),
             ).timeout(const Duration(seconds: 4));
           } catch (_) {}
         }
@@ -440,9 +501,13 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
           if (placemarks.isNotEmpty) {
             final place = placemarks.first;
             List<String> locationParts = [];
-            if (place.subLocality?.isNotEmpty == true) locationParts.add(place.subLocality!);
-            if (place.locality?.isNotEmpty == true) locationParts.add(place.locality!);
-            areaName = locationParts.isNotEmpty ? locationParts.join(', ') : 'Farm Location';
+            if (place.subLocality?.isNotEmpty == true)
+              locationParts.add(place.subLocality!);
+            if (place.locality?.isNotEmpty == true)
+              locationParts.add(place.locality!);
+            areaName = locationParts.isNotEmpty
+                ? locationParts.join(', ')
+                : 'Farm Location';
           }
         } catch (_) {}
 
@@ -453,10 +518,18 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
         );
       }
 
-      return LocationData(latitude: 0.0, longitude: 0.0, areaName: 'Farm Field');
+      return LocationData(
+        latitude: 0.0,
+        longitude: 0.0,
+        areaName: 'Farm Field',
+      );
     } catch (e) {
       debugPrint('Error getting location: $e');
-      return LocationData(latitude: 0.0, longitude: 0.0, areaName: 'Farm Field');
+      return LocationData(
+        latitude: 0.0,
+        longitude: 0.0,
+        areaName: 'Farm Field',
+      );
     }
   }
 
@@ -525,10 +598,7 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: RadialGradient(
-                    colors: [
-                      _green.withOpacity(0.35),
-                      Colors.transparent,
-                    ],
+                    colors: [_green.withOpacity(0.35), Colors.transparent],
                   ),
                 ),
               ),
@@ -661,7 +731,8 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
                 children: [
                   Image.file(widget.imageFile, fit: BoxFit.cover),
                   Container(
-                      color: _bg.withOpacity(0.45)), // dark tint over image
+                    color: _bg.withOpacity(0.45),
+                  ), // dark tint over image
                   // Scan line
                   AnimatedBuilder(
                     animation: _scanAnim,
@@ -712,7 +783,8 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
                 shape: BoxShape.circle,
                 border: Border.all(
                   color: _accentGreen.withOpacity(
-                      0.15 * (2 - _pulseAnim.value)),
+                    0.15 * (2 - _pulseAnim.value),
+                  ),
                   width: 2,
                 ),
               ),
@@ -774,8 +846,8 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
                   color: isDone
                       ? _accentGreen.withOpacity(0.5)
                       : isActive
-                          ? _accentGreen
-                          : Colors.white.withOpacity(0.15),
+                      ? _accentGreen
+                      : Colors.white.withOpacity(0.15),
                 ),
               );
             }),
@@ -806,8 +878,11 @@ class _AnalysisStep {
   final IconData icon;
   final String title;
   final String description;
-  const _AnalysisStep(
-      {required this.icon, required this.title, required this.description});
+  const _AnalysisStep({
+    required this.icon,
+    required this.title,
+    required this.description,
+  });
 }
 
 // ── Custom Painter ───────────────────────────────────────────────────────────
@@ -857,7 +932,7 @@ class LocationData {
   final double latitude;
   final double longitude;
   final String areaName;
-  
+
   LocationData({
     required this.latitude,
     required this.longitude,
