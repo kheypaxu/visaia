@@ -758,7 +758,7 @@ Future<void> _checkThresholdAfterCompletion() async {
   if (!await _createClusteredReport() || !mounted) return;
   await _loadAllWeeksStatus();
 
-  if (damagePercent >= 10.0) {
+  if (damagePercent >= 12.05) {
     _wasThresholdTriggered = true;
     _showControlMethodModalWithResult(damagePercent, totalDamaged, totalInspected);
   } else {
@@ -1373,7 +1373,7 @@ Future<void> _loadCycleData() async {
         setState(() {
           _stationData = stations;
           _expandedStationIndex = -1;
-          _wasThresholdTriggered = damagePercent >= 10.0;
+          _wasThresholdTriggered = damagePercent >= 12.05;
           _recommendedTaskState[weekIndex] = loadedTaskState;
           _loadedWeekIndex = weekIndex;
         });
@@ -5334,7 +5334,7 @@ Future<bool> _createClusteredReport() async {
   try {
     int totalInspected = _stationData.fold(0, (acc, s) => acc + (s['plantsInspected'] as int? ?? 0));
     double damagePercent = totalInspected > 0 ? (_totalDamaged / totalInspected) * 100 : 0.0;
-    final bool exceedsThreshold = damagePercent >= 10.0;
+    final bool exceedsThreshold = damagePercent >= 12.05;
     final String reportLevel = exceedsThreshold ? 'High' : 'Low';
     final String severityLevel = exceedsThreshold ? 'High Level' : 'Low Level';
 

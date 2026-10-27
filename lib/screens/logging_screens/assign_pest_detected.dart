@@ -7,6 +7,7 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:visaia/services/firestore_image_service.dart';
 import 'package:visaia/services/firestore_safe_ext.dart';
+import 'package:visaia/utils/scouting_completion_policy.dart';
 
 class AssignPestScreen extends StatefulWidget {
   final String userId;
@@ -85,7 +86,7 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
     final stations = _weeksStationData[weekNum];
     if (stations != null && stationNum - 1 >= 0 && stationNum - 1 < stations.length) {
       final s = stations[stationNum - 1];
-      return s['completed'] == true || s['verificationCompleted'] == true;
+      return isScoutingStationCompleted(s);
     }
     return false;
   }
@@ -132,7 +133,7 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
       return 'Week $_selectedWeek scouting has already been fully completed. Pests cannot be added to finished weeks.';
     }
     if (_isStationDone(_selectedWeek, _selectedStation)) {
-      return 'Station $_selectedStation (Week $_selectedWeek) has already completed verification & scouting. Please select another station.';
+      return 'Station $_selectedStation (Week $_selectedWeek) scouting is already completed. Please select another station.';
     }
     return null;
   }
@@ -323,18 +324,8 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
           );
           weeksStationData[weekNum] = stations;
 
-          final allStationsDone = stations.isNotEmpty &&
-              stations.every((s) => s['completed'] == true || s['verificationCompleted'] == true);
-          final completedStations = data['completedStations'] as int? ?? 0;
-          final isWeekCompleted = data['status'] == 'completed' ||
-              data['isCompleted'] == true ||
-              completedStations >= 5 ||
-              allStationsDone;
-
-          if (isWeekCompleted) {
-            completedWeeks.add(weekNum);
-          }
-        } else if (data['status'] == 'completed' || data['isCompleted'] == true) {
+        }
+        if (isScoutingWeekCompleted(data)) {
           completedWeeks.add(weekNum);
         }
       }
@@ -423,9 +414,7 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
 
       if (weekSnap.exists) {
         final weekData = weekSnap.data();
-        final isWeekAlreadyDone = weekData?['status'] == 'completed' ||
-            weekData?['isCompleted'] == true ||
-            (weekData?['completedStations'] as int? ?? 0) >= 5;
+        final isWeekAlreadyDone = isScoutingWeekCompleted(weekData ?? {});
         if (isWeekAlreadyDone) {
           if (mounted) {
             setState(() {
@@ -508,7 +497,7 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
 
       if (stationIndex >= 0 && stationIndex < stations.length) {
         final stationMap = stations[stationIndex];
-        if (stationMap['completed'] == true || stationMap['verificationCompleted'] == true) {
+        if (isScoutingStationCompleted(stationMap)) {
           setState(() {
             _weeksStationData[_selectedWeek] = stations;
             _autoAdjustStation();
@@ -516,7 +505,7 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Station $_selectedStation has already completed verification in Week $_selectedWeek.'),
+                content: Text('Station $_selectedStation scouting is already completed in Week $_selectedWeek.'),
                 backgroundColor: Colors.orange.shade800,
               ),
             );
@@ -629,30 +618,8 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
           }
         }
 
-        // Calculate verification status
-        final capImgs = stations[stationIndex]['capturedImages'] as Map<String, dynamic>? ?? {};
-        final eggsCount = stations[stationIndex]['eggMasses'] as int? ?? 0;
-        final larvaeCount = stations[stationIndex]['larvae'] as int? ?? 0;
-        final pupaeCount = stations[stationIndex]['pupae'] as int? ?? 0;
-        final mothsCount = stations[stationIndex]['moths'] as int? ?? 0;
-        final damagedCount = stations[stationIndex]['damaged'] as int? ?? 0;
-
-        final eggsPhotos = (capImgs['eggMasses'] as List?)?.length ?? 0;
-        final larvaePhotos = (capImgs['larvae'] as List?)?.length ?? 0;
-        final pupaePhotos = (capImgs['pupae'] as List?)?.length ?? 0;
-        final mothsPhotos = (capImgs['moths'] as List?)?.length ?? 0;
-        final damagePhotosCount = (stations[stationIndex]['damagePhotos'] as List?)?.length ?? 0;
-
-        final hasAny = eggsCount > 0 || larvaeCount > 0 || pupaeCount > 0 || mothsCount > 0 || damagedCount > 0;
-        final isVerified = hasAny &&
-            (eggsCount == 0 || eggsPhotos >= eggsCount) &&
-            (larvaeCount == 0 || larvaePhotos >= larvaeCount) &&
-            (pupaeCount == 0 || pupaePhotos >= pupaeCount) &&
-            (mothsCount == 0 || mothsPhotos >= mothsCount) &&
-            (damagedCount == 0 || damagePhotosCount >= damagedCount);
-
-        stations[stationIndex]['verificationCompleted'] = isVerified;
-        stations[stationIndex]['verificationRequired'] = hasAny && !isVerified;
+        // Saved photos are evidence, not confirmation of the Monitoring review.
+        requireAssignedObservationVerification(stations[stationIndex]);
       }
 
       final totalDamaged = stations.fold<int>(0, (int total, s) => total + (s['damaged'] as int? ?? 0));
