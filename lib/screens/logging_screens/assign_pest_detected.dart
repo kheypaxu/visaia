@@ -1,3 +1,4 @@
+import 'package:visaia/services/offline_sync_service.dart';
 import 'package:visaia/services/local_write_service.dart';
 import 'dart:io';
 import 'dart:typed_data';
@@ -10,6 +11,7 @@ import 'package:visaia/services/firestore_safe_ext.dart';
 import 'package:visaia/utils/scouting_completion_policy.dart';
 
 class AssignPestScreen extends StatefulWidget {
+  final String? queuedDetectionId;
   final String userId;
   final String pestName;
   final String detectedStage; // "larvae", "eggs", "pupae"
@@ -21,6 +23,7 @@ class AssignPestScreen extends StatefulWidget {
     required this.pestName,
     required this.detectedStage,
     this.imagePath,
+    this.queuedDetectionId,
   });
 
   @override
@@ -34,6 +37,15 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
   List<Map<String, dynamic>> _cycles = [];
   bool _isLoading = true;
   bool _isSaving = false;
+  bool _assignmentSaved = false;
+  bool get _alreadyAssigned =>
+      _assignmentSaved ||
+      (widget.queuedDetectionId != null &&
+          OfflineSyncService()
+                  .itemById(widget.queuedDetectionId!)
+                  ?.isAssigned ==
+              true);
+
   Set<int> _completedWeeks = {};
   Map<int, List<Map<String, dynamic>>> _weeksStationData = {};
   bool _isLoadingWeeks = false;
@@ -84,7 +96,9 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
   bool _isStationDone(int weekNum, int stationNum) {
     if (_isWeekDone(weekNum)) return true;
     final stations = _weeksStationData[weekNum];
-    if (stations != null && stationNum - 1 >= 0 && stationNum - 1 < stations.length) {
+    if (stations != null &&
+        stationNum - 1 >= 0 &&
+        stationNum - 1 < stations.length) {
       final s = stations[stationNum - 1];
       return isScoutingStationCompleted(s);
     }
@@ -125,7 +139,8 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
   }
 
   bool get _isCurrentSelectionLocked {
-    return _isWeekDone(_selectedWeek) || _isStationDone(_selectedWeek, _selectedStation);
+    return _isWeekDone(_selectedWeek) ||
+        _isStationDone(_selectedWeek, _selectedStation);
   }
 
   String? get _selectionLockedReason {
@@ -139,7 +154,7 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
   }
 
   // ─── Risk Level System (5 Levels based on Life Stage + DAP) ────────────
-  
+
   /// Get growth stage from DAP (Days After Planting)
   String _getGrowthStageFromDAP(int dap) {
     if (dap <= 14) return 'SEEDLING';
@@ -161,10 +176,7 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
   }
 
   /// Calculate risk level based on life stage and DAP
-  String _calculateRiskLevel({
-    required String lifeStage,
-    required int dap,
-  }) {
+  String _calculateRiskLevel({required String lifeStage, required int dap}) {
     // Map life stage to key
     String ls = lifeStage.toLowerCase();
     String lifeStageKey;
@@ -179,10 +191,10 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
     } else {
       lifeStageKey = 'none';
     }
-    
+
     // Get growth stage from DAP
     String growthStageKey = _getGrowthStageFromDAP(dap);
-    
+
     // Risk matrix based on FAW Life Stage + Crop Growth Stage
     // From the MitigationNew.pdf document
     final riskMatrix = {
@@ -227,7 +239,7 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
         'MATURITY': 'Very Low',
       },
     };
-    
+
     return riskMatrix[lifeStageKey]?[growthStageKey] ?? 'Low';
   }
 
@@ -246,37 +258,44 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
           .collection('cycles')
           .safeGet();
 
-      print('✓ Fetched ${snapshot.docs.length} cycles for userId: ${widget.userId}');
+      print(
+        '✓ Fetched ${snapshot.docs.length} cycles for userId: ${widget.userId}',
+      );
 
       // Filter in memory: only cycles that are NOT completed
       // A cycle is considered completed if:
       // - isCompleted == true, OR
       // - isPreviousCycle == true, OR
       // - status == 'completed'
-      final activeCycles = snapshot.docs.where((doc) {
-        final data = doc.data();
-        final isCompleted = data['isCompleted'] == true;
-        final isPrevious = data['isPreviousCycle'] == true;
-        final statusCompleted = data['status'] == 'completed';
-        final isActive = !isCompleted && !isPrevious && !statusCompleted;
-        if (!isActive) {
-          print('  ✗ Skipped: ${data['cycleName']} (completed=$isCompleted, previous=$isPrevious, status=$statusCompleted)');
-        }
-        return isActive;
-      }).map((doc) {
-        final data = doc.data();
-        print('  ✓ Added: ${data['cycleName']}');
-        return {
-          'id': doc.id,
-          'name': data['cycleName'] ?? 'Unnamed',
-          'fieldName': data['fieldName'] ?? '',
-          'fieldId': data['fieldId'] ?? '',
-          'farmId': data['farmId'] ?? '',
-          'farmName': data['farmName'] ?? '',
-          'plantingDate': (data['plantingDate'] as Timestamp?)?.toDate(),
-          'harvestDate': (data['harvestDate'] as Timestamp?)?.toDate(),
-        };
-      }).toList();
+      final activeCycles = snapshot.docs
+          .where((doc) {
+            final data = doc.data();
+            final isCompleted = data['isCompleted'] == true;
+            final isPrevious = data['isPreviousCycle'] == true;
+            final statusCompleted = data['status'] == 'completed';
+            final isActive = !isCompleted && !isPrevious && !statusCompleted;
+            if (!isActive) {
+              print(
+                '  ✗ Skipped: ${data['cycleName']} (completed=$isCompleted, previous=$isPrevious, status=$statusCompleted)',
+              );
+            }
+            return isActive;
+          })
+          .map((doc) {
+            final data = doc.data();
+            print('  ✓ Added: ${data['cycleName']}');
+            return {
+              'id': doc.id,
+              'name': data['cycleName'] ?? 'Unnamed',
+              'fieldName': data['fieldName'] ?? '',
+              'fieldId': data['fieldId'] ?? '',
+              'farmId': data['farmId'] ?? '',
+              'farmName': data['farmName'] ?? '',
+              'plantingDate': (data['plantingDate'] as Timestamp?)?.toDate(),
+              'harvestDate': (data['harvestDate'] as Timestamp?)?.toDate(),
+            };
+          })
+          .toList();
 
       print('✓ Active cycles after filtering: ${activeCycles.length}');
       setState(() {
@@ -323,7 +342,6 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
             stationsList.map((s) => Map<String, dynamic>.from(s as Map)),
           );
           weeksStationData[weekNum] = stations;
-
         }
         if (isScoutingWeekCompleted(data)) {
           completedWeeks.add(weekNum);
@@ -347,6 +365,7 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
   }
 
   Future<void> _savePestRecord() async {
+    if (_isSaving || _alreadyAssigned) return;
     if (_selectedCycleId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select a cropping cycle')),
@@ -357,7 +376,10 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
     if (_isCurrentSelectionLocked) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(_selectionLockedReason ?? 'This station or week is already completed.'),
+          content: Text(
+            _selectionLockedReason ??
+                'This station or week is already completed.',
+          ),
           backgroundColor: Colors.orange.shade800,
         ),
       );
@@ -380,7 +402,8 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
           .doc(_selectedCycleId)
           .safeGet();
 
-      final plantingDate = (cycleDoc.data()?['plantingDate'] as Timestamp?)?.toDate();
+      final plantingDate = (cycleDoc.data()?['plantingDate'] as Timestamp?)
+          ?.toDate();
       final weekNumber = _selectedWeek;
       final weekId = 'week_$weekNumber';
 
@@ -422,7 +445,9 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
             });
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Week $_selectedWeek scouting has already been completed.'),
+                content: Text(
+                  'Week $_selectedWeek scouting has already been completed.',
+                ),
                 backgroundColor: Colors.orange.shade800,
               ),
             );
@@ -453,44 +478,53 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
             station.putIfAbsent('verificationRequired', () => false);
             station.putIfAbsent('verificationCompleted', () => false);
             station.putIfAbsent('damageAssessmentChoice', () => null);
-            station.putIfAbsent('plantDamageScores', () => <Map<String, dynamic>>[]);
+            station.putIfAbsent(
+              'plantDamageScores',
+              () => <Map<String, dynamic>>[],
+            );
             station.putIfAbsent('damagePhotos', () => <String>[]);
-            station.putIfAbsent('capturedImages', () => {
-              'eggMasses': [],
-              'larvae': [],
-              'pupae': [],
-              'moths': [],
-              'damage': [],
-            });
+            station.putIfAbsent(
+              'capturedImages',
+              () => {
+                'eggMasses': [],
+                'larvae': [],
+                'pupae': [],
+                'moths': [],
+                'damage': [],
+              },
+            );
             return station;
           }),
         );
       } else {
         // Create default 5 stations matching monitoring structure
-        stations = List.generate(5, (i) => {
-          'title': 'Station ${i + 1}',
-          'completed': false,
-          'plantsInspected': 10,
-          'damaged': 0,
-          'fawObserved': false,
-          'eggMasses': 0,
-          'larvae': 0,
-          'pupae': 0,
-          'moths': 0,
-          'notes': '',
-          'verificationRequired': false,
-          'verificationCompleted': false,
-          'damageAssessmentChoice': null,
-          'plantDamageScores': <Map<String, dynamic>>[],
-          'damagePhotos': <String>[],
-          'capturedImages': {
-            'eggMasses': [],
-            'larvae': [],
-            'pupae': [],
-            'moths': [],
-            'damage': [],
+        stations = List.generate(
+          5,
+          (i) => {
+            'title': 'Station ${i + 1}',
+            'completed': false,
+            'plantsInspected': 10,
+            'damaged': 0,
+            'fawObserved': false,
+            'eggMasses': 0,
+            'larvae': 0,
+            'pupae': 0,
+            'moths': 0,
+            'notes': '',
+            'verificationRequired': false,
+            'verificationCompleted': false,
+            'damageAssessmentChoice': null,
+            'plantDamageScores': <Map<String, dynamic>>[],
+            'damagePhotos': <String>[],
+            'capturedImages': {
+              'eggMasses': [],
+              'larvae': [],
+              'pupae': [],
+              'moths': [],
+              'damage': [],
+            },
           },
-        });
+        );
       }
 
       final stationIndex = _selectedStation - 1;
@@ -505,7 +539,9 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Station $_selectedStation scouting is already completed in Week $_selectedWeek.'),
+                content: Text(
+                  'Station $_selectedStation scouting is already completed in Week $_selectedWeek.',
+                ),
                 backgroundColor: Colors.orange.shade800,
               ),
             );
@@ -518,29 +554,38 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
         final stageLower = widget.detectedStage.toLowerCase().trim();
         if (stageLower.contains('egg')) {
           stageKey = 'eggMasses';
-        } else if (stageLower.contains('larva') || stageLower.contains('caterpillar')) {
+        } else if (stageLower.contains('larva') ||
+            stageLower.contains('caterpillar')) {
           stageKey = 'larvae';
         } else if (stageLower.contains('pupa')) {
           stageKey = 'pupae';
-        } else if (stageLower.contains('moth') || stageLower.contains('adult')) {
+        } else if (stageLower.contains('moth') ||
+            stageLower.contains('adult')) {
           stageKey = 'moths';
-        } else if (stageLower.contains('damage') || stageLower.contains('leaf') || stageLower.contains('cob')) {
+        } else if (stageLower.contains('damage') ||
+            stageLower.contains('leaf') ||
+            stageLower.contains('cob')) {
           stageKey = 'damaged';
         } else {
           stageKey = 'moths'; // Default fallback
         }
-        
+
         if (stageKey == 'damaged') {
           stations[stationIndex]['damaged'] =
               (stations[stationIndex]['damaged'] as int? ?? 0) + 1;
-          
+
           final rows = List<Map<String, dynamic>>.from(
-            ((stations[stationIndex]['plantDamageScores'] as List?) ?? [])
-                .map((e) => Map<String, dynamic>.from(e as Map)),
+            ((stations[stationIndex]['plantDamageScores'] as List?) ?? []).map(
+              (e) => Map<String, dynamic>.from(e as Map),
+            ),
           );
           final currentDamaged = stations[stationIndex]['damaged'] as int;
           while (rows.length < currentDamaged) {
-            rows.add({'plantNumber': rows.length + 1, 'whorlScore': null, 'cobScore': null});
+            rows.add({
+              'plantNumber': rows.length + 1,
+              'whorlScore': null,
+              'cobScore': null,
+            });
           }
           stations[stationIndex]['plantDamageScores'] = rows;
         } else {
@@ -614,7 +659,9 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
               stations[stationIndex]['capturedImages'] = capturedImages;
             }
           } catch (imgError) {
-            print('⚠️ Error attaching image to station verification: $imgError');
+            print(
+              '⚠️ Error attaching image to station verification: $imgError',
+            );
           }
         }
 
@@ -622,16 +669,37 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
         requireAssignedObservationVerification(stations[stationIndex]);
       }
 
-      final totalDamaged = stations.fold<int>(0, (int total, s) => total + (s['damaged'] as int? ?? 0));
-      final totalEggs = stations.fold<int>(0, (int total, s) => total + (s['eggMasses'] as int? ?? 0));
-      final totalLarvae = stations.fold<int>(0, (int total, s) => total + (s['larvae'] as int? ?? 0));
-      final totalPupae = stations.fold<int>(0, (int total, s) => total + (s['pupae'] as int? ?? 0));
-      final totalMoths = stations.fold<int>(0, (int total, s) => total + (s['moths'] as int? ?? 0));
-      final completedStations = stations.where((s) => s['completed'] as bool? ?? false).length;
+      final totalDamaged = stations.fold<int>(
+        0,
+        (int total, s) => total + (s['damaged'] as int? ?? 0),
+      );
+      final totalEggs = stations.fold<int>(
+        0,
+        (int total, s) => total + (s['eggMasses'] as int? ?? 0),
+      );
+      final totalLarvae = stations.fold<int>(
+        0,
+        (int total, s) => total + (s['larvae'] as int? ?? 0),
+      );
+      final totalPupae = stations.fold<int>(
+        0,
+        (int total, s) => total + (s['pupae'] as int? ?? 0),
+      );
+      final totalMoths = stations.fold<int>(
+        0,
+        (int total, s) => total + (s['moths'] as int? ?? 0),
+      );
+      final completedStations = stations
+          .where((s) => s['completed'] as bool? ?? false)
+          .length;
 
-      print('📊 Totals: eggs=$totalEggs, larvae=$totalLarvae, pupae=$totalPupae, moths=$totalMoths, damaged=$totalDamaged');
+      print(
+        '📊 Totals: eggs=$totalEggs, larvae=$totalLarvae, pupae=$totalPupae, moths=$totalMoths, damaged=$totalDamaged',
+      );
 
-      print('📝 Saving to: users/${widget.userId}/cycles/$_selectedCycleId/weeks/$weekId');
+      print(
+        '📝 Saving to: users/${widget.userId}/cycles/$_selectedCycleId/weeks/$weekId',
+      );
 
       await weekRef.setLocally({
         'stations': stations,
@@ -658,44 +726,44 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
 
       print('✓ Week data saved to Firestore with risk assessment: $riskLevel');
 
-      // Verify the save was successful by reading it back
-      final verifySnapshot = await weekRef.safeGet();
-      if (verifySnapshot.exists) {
-        final savedStations = verifySnapshot.data()?['stations'] as List?;
-        final savedLarvae = verifySnapshot.data()?['totals']?['larvae'] ?? 0;
-        final savedMoths = verifySnapshot.data()?['totals']?['moths'] ?? 0;
-        final savedRisk = verifySnapshot.data()?['riskAssessment']?['overallRisk'] ?? 'N/A';
-        print('✓✓ VERIFIED: Week data exists with ${savedStations?.length} stations, larvae count: $savedLarvae, moths count: $savedMoths, risk: $savedRisk');
-      } else {
-        print('❌ VERIFICATION FAILED: Week document not found after save!');
+      final selectedCycle = _selectedCycle;
+      final assignment = <String, dynamic>{
+        'cycleId': _selectedCycleId,
+        'cycleName': selectedCycle?['name'],
+        'fieldId': selectedCycle?['fieldId'],
+        'fieldName': selectedCycle?['fieldName'],
+        'farmId': selectedCycle?['farmId'],
+        'farmName': selectedCycle?['farmName'],
+        'dap': dap,
+        'growthStage': growthStage,
+        'growthStageDisplay': growthStageDisplay,
+        'riskLevel': riskLevel,
+        'weekNumber': _selectedWeek,
+        'station': _selectedStation,
+      };
+      _assignmentSaved = true;
+      if (widget.queuedDetectionId != null) {
+        await OfflineSyncService().lockCycleAssignment(
+          widget.queuedDetectionId!,
+          assignment,
+        );
       }
-
-      print('✓ Daily activity saved');
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Added 1 ${widget.detectedStage} to Station $_selectedStation (Week $_selectedWeek)'),
+            content: Text(
+              'Added 1 ${widget.detectedStage} to Station $_selectedStation (Week $_selectedWeek)',
+            ),
             backgroundColor: _green,
             duration: const Duration(seconds: 1),
           ),
         );
 
         // Return the cycleId along with DAP, growth stage, and field metadata to AIResultScreen
-        final selectedCycle = _selectedCycle;
-        Navigator.pop(context, {
-          'cycleId': _selectedCycleId,
-          'cycleName': selectedCycle?['name'],
-          'fieldId': selectedCycle?['fieldId'],
-          'fieldName': selectedCycle?['fieldName'],
-          'farmId': selectedCycle?['farmId'],
-          'farmName': selectedCycle?['farmName'],
-          'dap': dap,
-          'growthStage': growthStage,
-          'growthStageDisplay': growthStageDisplay,
-          'riskLevel': riskLevel,
-          'weekNumber': _selectedWeek,
-          'station': _selectedStation,
+        setState(() => _isSaving = false);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) Navigator.pop(context, assignment);
         });
       }
     } catch (e) {
@@ -706,287 +774,326 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
         );
       }
     } finally {
-      setState(() => _isSaving = false);
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _bgColor,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: _darkGreen),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Text(
-          'Assign Pest',
-          style: GoogleFonts.inter(
-            color: _darkGreen,
-            fontWeight: FontWeight.w800,
-            fontSize: 20,
+    return PopScope(
+      canPop: !_isSaving,
+      child: AbsorbPointer(
+        absorbing: _isSaving,
+        child: Scaffold(
+          backgroundColor: _bgColor,
+          appBar: AppBar(
+            backgroundColor: Colors.white,
+            elevation: 0,
+            leading: IconButton(
+              icon: const Icon(
+                Icons.arrow_back_ios_new_rounded,
+                color: _darkGreen,
+              ),
+              onPressed: () => Navigator.pop(context),
+            ),
+            title: Text(
+              'Assign Pest',
+              style: GoogleFonts.inter(
+                color: _darkGreen,
+                fontWeight: FontWeight.w800,
+                fontSize: 20,
+              ),
+            ),
+            centerTitle: false,
           ),
-        ),
-        centerTitle: false,
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: _green))
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Pest summary card
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(24),
-                      border: Border.all(color: _borderColor),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: _green.withValues(alpha: 0.1),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(Icons.bug_report, color: _green, size: 28),
+          body: _isLoading
+              ? const Center(child: CircularProgressIndicator(color: _green))
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Pest summary card
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(24),
+                          border: Border.all(color: _borderColor),
                         ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Detected Pest',
-                                style: GoogleFonts.inter(
-                                  fontSize: 11,
-                                  color: _mutedText,
-                                  fontWeight: FontWeight.w600,
-                                ),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: _green.withValues(alpha: 0.1),
+                                shape: BoxShape.circle,
                               ),
-                              Text(
-                                widget.pestName,
-                                style: GoogleFonts.inter(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w800,
-                                  color: _darkGreen,
-                                ),
+                              child: const Icon(
+                                Icons.bug_report,
+                                color: _green,
+                                size: 28,
                               ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Life Stage: ${widget.detectedStage}',
-                                style: GoogleFonts.inter(
-                                  fontSize: 14,
-                                  color: Colors.orange.shade700,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Cycle selection
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: _borderColor),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'CROPPING CYCLE',
-                          style: GoogleFonts.inter(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: _mutedText,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        _buildCycleSelector(),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Week selection
-                  if (_selectedCycleId != null) ...[
-                    Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: _borderColor),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                'SCOUTING WEEK',
-                                style: GoogleFonts.inter(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                  color: _mutedText,
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  if (_isLoadingWeeks) ...[
-                                    const SizedBox(
-                                      width: 12,
-                                      height: 12,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: _green,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 6),
-                                  ],
                                   Text(
-                                    'Week $_selectedWeek of $_cycleTotalWeeks',
+                                    'Detected Pest',
                                     style: GoogleFonts.inter(
-                                      fontSize: 12,
+                                      fontSize: 11,
+                                      color: _mutedText,
                                       fontWeight: FontWeight.w600,
-                                      color: _green,
+                                    ),
+                                  ),
+                                  Text(
+                                    widget.pestName,
+                                    style: GoogleFonts.inter(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w800,
+                                      color: _darkGreen,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Life Stage: ${widget.detectedStage}',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      color: Colors.orange.shade700,
+                                      fontWeight: FontWeight.w500,
                                     ),
                                   ),
                                 ],
                               ),
-                            ],
-                          ),
-                          const SizedBox(height: 14),
-                          _buildWeekSelector(),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                  ],
-
-                  // Station selection
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: _borderColor),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'STATION',
-                          style: GoogleFonts.inter(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: _mutedText,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        _buildStationSelector(),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Selection locked notice banner
-                  if (_isCurrentSelectionLocked) ...[
-                    Container(
-                      margin: const EdgeInsets.only(bottom: 20),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFF3E0),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: const Color(0xFFFFB74D), width: 1.2),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Icon(Icons.lock_rounded, color: Color(0xFFE65100), size: 20),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  _isWeekDone(_selectedWeek) ? 'Week Already Completed' : 'Station Verification Completed',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                    color: const Color(0xFFBF360C),
-                                  ),
-                                ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  _selectionLockedReason ?? 'Cannot assign pests to completed scouting weeks or stations.',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 12,
-                                    color: const Color(0xFFE65100),
-                                    height: 1.35,
-                                  ),
-                                ),
-                              ],
                             ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-
-                  // Save button
-                  SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: ElevatedButton(
-                      onPressed: (_isSaving || _isCurrentSelectionLocked) ? null : _savePestRecord,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _green,
-                        disabledBackgroundColor: Colors.grey.shade400,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(28),
+                          ],
                         ),
                       ),
-                      child: _isSaving
-                          ? const SizedBox(
-                              width: 24,
-                              height: 24,
-                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                            )
-                          : Text(
-                              _isCurrentSelectionLocked
-                                  ? (_isWeekDone(_selectedWeek)
-                                      ? 'Week $_selectedWeek Completed'
-                                      : 'Station $_selectedStation Completed')
-                                  : 'Save to Cycle',
+                      const SizedBox(height: 24),
+
+                      // Cycle selection
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: _borderColor),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'CROPPING CYCLE',
                               style: GoogleFonts.inter(
-                                fontSize: 16,
+                                fontSize: 11,
                                 fontWeight: FontWeight.w700,
-                                color: Colors.white,
+                                color: _mutedText,
+                                letterSpacing: 0.5,
                               ),
                             ),
-                    ),
+                            const SizedBox(height: 12),
+                            _buildCycleSelector(),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Week selection
+                      if (_selectedCycleId != null) ...[
+                        Container(
+                          padding: const EdgeInsets.all(20),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: _borderColor),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    'SCOUTING WEEK',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: _mutedText,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (_isLoadingWeeks) ...[
+                                        const SizedBox(
+                                          width: 12,
+                                          height: 12,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: _green,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                      ],
+                                      Text(
+                                        'Week $_selectedWeek of $_cycleTotalWeeks',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: _green,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 14),
+                              _buildWeekSelector(),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                      ],
+
+                      // Station selection
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: _borderColor),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'STATION',
+                              style: GoogleFonts.inter(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: _mutedText,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            _buildStationSelector(),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+
+                      // Selection locked notice banner
+                      if (_isCurrentSelectionLocked) ...[
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 20),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 14,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFF3E0),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: const Color(0xFFFFB74D),
+                              width: 1.2,
+                            ),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Icon(
+                                Icons.lock_rounded,
+                                color: Color(0xFFE65100),
+                                size: 20,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      _isWeekDone(_selectedWeek)
+                                          ? 'Week Already Completed'
+                                          : 'Station Verification Completed',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                        color: const Color(0xFFBF360C),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      _selectionLockedReason ??
+                                          'Cannot assign pests to completed scouting weeks or stations.',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 12,
+                                        color: const Color(0xFFE65100),
+                                        height: 1.35,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+
+                      // Save button
+                      SizedBox(
+                        width: double.infinity,
+                        height: 56,
+                        child: ElevatedButton(
+                          onPressed:
+                              (_isSaving ||
+                                  _alreadyAssigned ||
+                                  _isLoadingWeeks ||
+                                  _selectedCycleId == null ||
+                                  _isCurrentSelectionLocked)
+                              ? null
+                              : _savePestRecord,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _green,
+                            disabledBackgroundColor: Colors.grey.shade400,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(28),
+                            ),
+                          ),
+                          child: _isSaving
+                              ? const SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Text(
+                                  _alreadyAssigned
+                                      ? 'Cycle Assigned'
+                                      : _isCurrentSelectionLocked
+                                      ? (_isWeekDone(_selectedWeek)
+                                            ? 'Week $_selectedWeek Completed'
+                                            : 'Station $_selectedStation Completed')
+                                      : 'Assign to Cycle',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ),
+                ),
+        ),
+      ),
     );
   }
 
@@ -1012,7 +1119,10 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
           borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide.none,
         ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 14,
+        ),
       ),
       items: _cycles.map<DropdownMenuItem<String>>((cycle) {
         return DropdownMenuItem<String>(
@@ -1032,7 +1142,10 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
           _loadCycleWeeksData(value);
         }
       },
-      hint: Text('Select cropping cycle', style: GoogleFonts.inter(color: _mutedText)),
+      hint: Text(
+        'Select cropping cycle',
+        style: GoogleFonts.inter(color: _mutedText),
+      ),
     );
   }
 
@@ -1074,7 +1187,13 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
                   width: 1.5,
                 ),
                 boxShadow: isSelected
-                    ? [BoxShadow(color: _green.withValues(alpha: 0.25), blurRadius: 6, offset: const Offset(0, 2))]
+                    ? [
+                        BoxShadow(
+                          color: _green.withValues(alpha: 0.25),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2),
+                        ),
+                      ]
                     : null,
               ),
               child: Center(
@@ -1085,7 +1204,9 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
                       'Week $weekNum',
                       style: GoogleFonts.inter(
                         fontSize: 13,
-                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+                        fontWeight: isSelected
+                            ? FontWeight.w700
+                            : FontWeight.w600,
                         color: isSelected
                             ? Colors.white
                             : (isDone ? const Color(0xFF1B5E20) : _darkGreen),
@@ -1094,9 +1215,14 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
                     if (isDone) ...[
                       const SizedBox(width: 5),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 1.5,
+                        ),
                         decoration: BoxDecoration(
-                          color: isSelected ? Colors.white.withValues(alpha: 0.25) : const Color(0xFFC8E6C9),
+                          color: isSelected
+                              ? Colors.white.withValues(alpha: 0.25)
+                              : const Color(0xFFC8E6C9),
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Row(
@@ -1105,7 +1231,9 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
                             Icon(
                               Icons.check,
                               size: 10,
-                              color: isSelected ? Colors.white : const Color(0xFF1B5E20),
+                              color: isSelected
+                                  ? Colors.white
+                                  : const Color(0xFF1B5E20),
                             ),
                             const SizedBox(width: 2),
                             Text(
@@ -1113,7 +1241,9 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
                               style: GoogleFonts.inter(
                                 fontSize: 9,
                                 fontWeight: FontWeight.w700,
-                                color: isSelected ? Colors.white : const Color(0xFF1B5E20),
+                                color: isSelected
+                                    ? Colors.white
+                                    : const Color(0xFF1B5E20),
                               ),
                             ),
                           ],
@@ -1122,9 +1252,14 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
                     ] else if (isCurrent) ...[
                       const SizedBox(width: 5),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 1.5,
+                        ),
                         decoration: BoxDecoration(
-                          color: isSelected ? Colors.white.withValues(alpha: 0.25) : _green.withValues(alpha: 0.12),
+                          color: isSelected
+                              ? Colors.white.withValues(alpha: 0.25)
+                              : _green.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
@@ -1181,7 +1316,12 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
                         width: isSelected ? 2.5 : 1.5,
                       ),
                       boxShadow: isSelected
-                          ? [BoxShadow(color: _green.withValues(alpha: 0.3), blurRadius: 8)]
+                          ? [
+                              BoxShadow(
+                                color: _green.withValues(alpha: 0.3),
+                                blurRadius: 8,
+                              ),
+                            ]
                           : null,
                     ),
                     child: Center(
@@ -1204,7 +1344,9 @@ class _AssignPestScreenState extends State<AssignPestScreen> {
                       child: Container(
                         padding: const EdgeInsets.all(2),
                         decoration: BoxDecoration(
-                          color: isSelected ? Colors.white : const Color(0xFF2E7D32),
+                          color: isSelected
+                              ? Colors.white
+                              : const Color(0xFF2E7D32),
                           shape: BoxShape.circle,
                           border: Border.all(
                             color: isSelected ? _green : Colors.white,

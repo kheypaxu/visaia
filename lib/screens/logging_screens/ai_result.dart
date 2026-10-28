@@ -1,3 +1,4 @@
+import 'package:visaia/widgets/cycle_assignment_button.dart';
 import 'package:visaia/services/local_write_service.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -66,6 +67,7 @@ class AIResultScreen extends StatefulWidget {
 class _AIResultScreenState extends State<AIResultScreen>
     with SingleTickerProviderStateMixin {
   bool _isSaving = false;
+  bool _isAssigning = false;
   // ── State variable for assigned cycle & field ──────────────────────────────
   String? _assignedCycleId;
   String? _assignedCycleName;
@@ -80,7 +82,7 @@ class _AIResultScreenState extends State<AIResultScreen>
   double? _reportLatitude;
   double? _reportLongitude;
   String? _reportAreaName;
-  
+
   // ── Tab Controller ──────────────────────────────────────────────────────
   late TabController _tabController;
 
@@ -107,8 +109,9 @@ class _AIResultScreenState extends State<AIResultScreen>
     _reportLongitude = widget.longitude;
     _reportAreaName = widget.areaName;
     final queuedId = widget.queuedDetectionId;
-    final pending = queuedId == null ? null
-        : OfflineSyncService().itemById(queuedId)?.submission;
+    final pending = queuedId == null
+        ? null
+        : OfflineSyncService().itemById(queuedId)?.lockedAssignment;
     if (pending != null) {
       _assignedCycleId = pending['cycleId'] as String?;
       _assignedCycleName = pending['cycleName'] as String?;
@@ -143,7 +146,8 @@ class _AIResultScreenState extends State<AIResultScreen>
           for (final item in rawList) {
             if (item is Map) {
               final lat = (item['lat'] ?? item['latitude'] as num?)?.toDouble();
-              final lng = (item['lng'] ?? item['longitude'] as num?)?.toDouble();
+              final lng = (item['lng'] ?? item['longitude'] as num?)
+                  ?.toDouble();
               if (lat != null && lng != null) points.add(LatLng(lat, lng));
             }
           }
@@ -153,8 +157,10 @@ class _AIResultScreenState extends State<AIResultScreen>
               setState(() {
                 _reportLatitude = center.latitude;
                 _reportLongitude = center.longitude;
-                if (_assignedFieldName != null && _assignedFieldName!.isNotEmpty) {
-                  _reportAreaName = '$_assignedFieldName, ${_assignedFarmName ?? 'Farm'}';
+                if (_assignedFieldName != null &&
+                    _assignedFieldName!.isNotEmpty) {
+                  _reportAreaName =
+                      '$_assignedFieldName, ${_assignedFarmName ?? 'Farm'}';
                 }
               });
             }
@@ -173,7 +179,7 @@ class _AIResultScreenState extends State<AIResultScreen>
   }
 
   // ─── Risk Level System (5 Levels based on Life Stage + DAP) ────────────
-  
+
   /// Get growth stage from DAP (Days After Planting)
   String _getGrowthStageFromDAP(int dap) {
     if (dap <= 14) return 'SEEDLING';
@@ -195,22 +201,24 @@ class _AIResultScreenState extends State<AIResultScreen>
   }
 
   /// Calculate risk level based on life stage and DAP
-  String _calculateRiskLevel({
-    required String lifeStage,
-    required int dap,
-  }) {
+  String _calculateRiskLevel({required String lifeStage, required int dap}) {
     // Map life stage to key
     String ls = lifeStage.toLowerCase();
     String lifeStageKey;
-    if (ls.contains('egg')) lifeStageKey = 'egg';
-    else if (ls.contains('larva') || ls.contains('caterpillar')) lifeStageKey = 'larva';
-    else if (ls.contains('pupa')) lifeStageKey = 'pupa';
-    else if (ls.contains('moth') || ls.contains('adult')) lifeStageKey = 'moth';
-    else lifeStageKey = 'none';
-    
+    if (ls.contains('egg'))
+      lifeStageKey = 'egg';
+    else if (ls.contains('larva') || ls.contains('caterpillar'))
+      lifeStageKey = 'larva';
+    else if (ls.contains('pupa'))
+      lifeStageKey = 'pupa';
+    else if (ls.contains('moth') || ls.contains('adult'))
+      lifeStageKey = 'moth';
+    else
+      lifeStageKey = 'none';
+
     // Get growth stage from DAP
     String growthStageKey = _getGrowthStageFromDAP(dap);
-    
+
     // Risk matrix based on FAW Life Stage + Crop Growth Stage
     // From the MitigationNew.pdf document
     final riskMatrix = {
@@ -255,31 +263,43 @@ class _AIResultScreenState extends State<AIResultScreen>
         'MATURITY': 'Very Low',
       },
     };
-    
+
     return riskMatrix[lifeStageKey]?[growthStageKey] ?? 'Low';
   }
 
   /// Get risk level color based on 5 levels
   Color _getRiskColor(String riskLevel) {
     switch (riskLevel) {
-      case 'Very High': return const Color(0xFFB71C1C); // Dark Red
-      case 'High': return const Color(0xFFD32F2F); // Red
-      case 'Moderate': return const Color(0xFFF57C00); // Orange
-      case 'Low': return const Color(0xFFF9A825); // Yellow
-      case 'Very Low': return const Color(0xFF2E7D32); // Green
-      default: return const Color(0xFF2E7D32);
+      case 'Very High':
+        return const Color(0xFFB71C1C); // Dark Red
+      case 'High':
+        return const Color(0xFFD32F2F); // Red
+      case 'Moderate':
+        return const Color(0xFFF57C00); // Orange
+      case 'Low':
+        return const Color(0xFFF9A825); // Yellow
+      case 'Very Low':
+        return const Color(0xFF2E7D32); // Green
+      default:
+        return const Color(0xFF2E7D32);
     }
   }
 
   /// Get risk level icon based on 5 levels
   IconData _getRiskIcon(String riskLevel) {
     switch (riskLevel) {
-      case 'Very High': return Icons.crisis_alert_rounded;
-      case 'High': return Icons.warning_amber_rounded;
-      case 'Moderate': return Icons.info_outline_rounded;
-      case 'Low': return Icons.check_circle_outline_rounded;
-      case 'Very Low': return Icons.check_circle_rounded;
-      default: return Icons.check_circle_outline_rounded;
+      case 'Very High':
+        return Icons.crisis_alert_rounded;
+      case 'High':
+        return Icons.warning_amber_rounded;
+      case 'Moderate':
+        return Icons.info_outline_rounded;
+      case 'Low':
+        return Icons.check_circle_outline_rounded;
+      case 'Very Low':
+        return Icons.check_circle_rounded;
+      default:
+        return Icons.check_circle_outline_rounded;
     }
   }
 
@@ -337,7 +357,9 @@ class _AIResultScreenState extends State<AIResultScreen>
           ),
           backgroundColor: Colors.red.shade700,
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
       );
       return;
@@ -345,11 +367,15 @@ class _AIResultScreenState extends State<AIResultScreen>
 
     if (widget.queuedDetectionId != null &&
         (FirebaseAuth.instance.currentUser?.uid != widget.userId ||
-         !await ConnectivityService().checkConnection())) {
+            !await ConnectivityService().checkConnection())) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Sign in and connect to the internet to save this report. Your AI result remains in Pending detections.'),
-      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Sign in and connect to the internet to save this report. Your AI result remains in Pending detections.',
+          ),
+        ),
+      );
       return;
     }
     if (!context.mounted || _isSaving || _discarding) return;
@@ -361,15 +387,19 @@ class _AIResultScreenState extends State<AIResultScreen>
         barrierDismissible: false,
         builder: (context) => const PopScope(
           canPop: false,
-          child: Center(child: CircularProgressIndicator(
-            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1A5C30)),
-          )),
+          child: Center(
+            child: CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1A5C30)),
+            ),
+          ),
         ),
       );
 
       String? base64Image;
       if (widget.imageFile != null && widget.queuedDetectionId == null) {
-        base64Image = await OfflineSyncService.encodeReportImage(widget.imageFile!);
+        base64Image = await OfflineSyncService.encodeReportImage(
+          widget.imageFile!,
+        );
       }
 
       // Get the calculated risk level
@@ -391,7 +421,8 @@ class _AIResultScreenState extends State<AIResultScreen>
         'farmerId': widget.userId,
         'farmerName': await _getFarmerName(),
         'farmId': _assignedFarmId ?? AuthCacheService().cachedActiveFarmId,
-        'farmName': _assignedFarmName ?? AuthCacheService().cachedActiveFarmName,
+        'farmName':
+            _assignedFarmName ?? AuthCacheService().cachedActiveFarmName,
         'fieldId': _assignedFieldId,
         'fieldName': _assignedFieldName ?? _reportAreaName ?? 'Farm Field',
         'cycleId': _assignedCycleId,
@@ -414,7 +445,8 @@ class _AIResultScreenState extends State<AIResultScreen>
       final String reportId;
       if (widget.queuedDetectionId != null) {
         reportId = await OfflineSyncService().submitReviewedReport(
-          widget.queuedDetectionId!, reportData,
+          widget.queuedDetectionId!,
+          reportData,
         );
       } else {
         final docRef = await FirebaseFirestore.instance
@@ -443,7 +475,9 @@ class _AIResultScreenState extends State<AIResultScreen>
             ),
             backgroundColor: _green,
             behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
             duration: const Duration(seconds: 3),
           ),
         );
@@ -470,7 +504,9 @@ class _AIResultScreenState extends State<AIResultScreen>
             ),
             backgroundColor: Colors.red.shade700,
             behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
           ),
         );
       }
@@ -581,8 +617,11 @@ class _AIResultScreenState extends State<AIResultScreen>
                 color: Colors.white.withOpacity(0.12),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Icon(Icons.arrow_back_ios_new_rounded,
-                  color: Colors.white, size: 18),
+              child: const Icon(
+                Icons.arrow_back_ios_new_rounded,
+                color: Colors.white,
+                size: 18,
+              ),
             ),
           ),
           const SizedBox(width: 12),
@@ -690,7 +729,10 @@ class _AIResultScreenState extends State<AIResultScreen>
               bottom: 12,
               right: 12,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.black.withOpacity(0.7),
                   borderRadius: BorderRadius.circular(12),
@@ -699,8 +741,11 @@ class _AIResultScreenState extends State<AIResultScreen>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.verified_rounded,
-                        color: _accentGreen, size: 14),
+                    const Icon(
+                      Icons.verified_rounded,
+                      color: _accentGreen,
+                      size: 14,
+                    ),
                     const SizedBox(width: 6),
                     Text(
                       '${widget.confidencePercent}% match',
@@ -719,7 +764,10 @@ class _AIResultScreenState extends State<AIResultScreen>
               bottom: 12,
               left: 12,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: _severityColor.withOpacity(0.85),
                   borderRadius: BorderRadius.circular(12),
@@ -751,7 +799,11 @@ class _AIResultScreenState extends State<AIResultScreen>
     return Container(
       color: _darkGreen,
       child: const Center(
-        child: Icon(Icons.broken_image_outlined, color: Colors.white30, size: 48),
+        child: Icon(
+          Icons.broken_image_outlined,
+          color: Colors.white30,
+          size: 48,
+        ),
       ),
     );
   }
@@ -832,7 +884,8 @@ class _AIResultScreenState extends State<AIResultScreen>
 
   // ── Overview Tab ────────────────────────────────────────────────────────
   Widget _buildOverviewTab() {
-    final bool isNonFaw = !widget.pestName.toLowerCase().contains('fall armyworm') &&
+    final bool isNonFaw =
+        !widget.pestName.toLowerCase().contains('fall armyworm') &&
         !widget.pestName.toLowerCase().contains('faw');
 
     return SingleChildScrollView(
@@ -859,7 +912,11 @@ class _AIResultScreenState extends State<AIResultScreen>
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.pending_actions_rounded, color: Color(0xFFE65100), size: 24),
+                const Icon(
+                  Icons.pending_actions_rounded,
+                  color: Color(0xFFE65100),
+                  size: 24,
+                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -911,7 +968,10 @@ class _AIResultScreenState extends State<AIResultScreen>
                     ),
                     if (isNonFaw)
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
                         decoration: BoxDecoration(
                           color: const Color(0xFFE3F2FD),
                           borderRadius: BorderRadius.circular(8),
@@ -1058,7 +1118,7 @@ class _AIResultScreenState extends State<AIResultScreen>
     final isMoth = stage.contains('moth');
     final isEgg = stage.contains('egg');
     final isPupa = stage.contains('pupa');
-    
+
     switch (riskLevel) {
       case 'Very High':
         if (isLarva) {
@@ -1067,7 +1127,7 @@ class _AIResultScreenState extends State<AIResultScreen>
           return '🚨 EXTREME: High moth population at critical crop stage. Immediate monitoring and control measures required.';
         }
         return '🚨 CRITICAL: Immediate action required to protect crop yield.';
-      
+
       case 'High':
         if (isLarva) {
           return '⚠️ HIGH RISK: Larvae present at vulnerable crop stage. Urgent action needed within 24-48 hours.';
@@ -1075,7 +1135,7 @@ class _AIResultScreenState extends State<AIResultScreen>
           return '⚠️ HIGH RISK: Moths detected at vulnerable crop stage. High spread potential requiring immediate monitoring.';
         }
         return '⚠️ HIGH RISK: Prompt action recommended to prevent yield loss.';
-      
+
       case 'Moderate':
         if (isLarva) {
           return '⚠️ MODERATE RISK: Larvae present but crop can recover with prompt treatment. Monitor every 3-4 days.';
@@ -1083,7 +1143,7 @@ class _AIResultScreenState extends State<AIResultScreen>
           return '⚠️ MODERATE RISK: Egg masses detected. They will hatch into larvae within days - prepare for action.';
         }
         return '⚠️ MODERATE RISK: Monitor closely and treat within 48-72 hours if population increases.';
-      
+
       case 'Low':
         if (isLarva) {
           return '✅ LOW RISK: Low larvae population. Continue regular monitoring. Treatment may not be necessary.';
@@ -1091,10 +1151,10 @@ class _AIResultScreenState extends State<AIResultScreen>
           return '✅ LOW RISK: Pupae detected. Monitor for adult emergence but no immediate action needed.';
         }
         return '✅ LOW RISK: Continue regular monitoring. No immediate treatment needed.';
-      
+
       case 'Very Low':
         return '✅ VERY LOW RISK: No significant pest activity. Continue routine monitoring.';
-      
+
       default:
         return 'Continue regular monitoring.';
     }
@@ -1143,7 +1203,8 @@ class _AIResultScreenState extends State<AIResultScreen>
 
   // ── Analysis Tab ────────────────────────────────────────────────────────
   Widget _buildAnalysisTab() {
-    final bool isNonFaw = !widget.pestName.toLowerCase().contains('fall armyworm') &&
+    final bool isNonFaw =
+        !widget.pestName.toLowerCase().contains('fall armyworm') &&
         !widget.pestName.toLowerCase().contains('faw');
 
     return SingleChildScrollView(
@@ -1163,7 +1224,11 @@ class _AIResultScreenState extends State<AIResultScreen>
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.psychology_alt_rounded, color: Color(0xFF15803D), size: 22),
+                  const Icon(
+                    Icons.psychology_alt_rounded,
+                    color: Color(0xFF15803D),
+                    size: 22,
+                  ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
@@ -1207,8 +1272,11 @@ class _AIResultScreenState extends State<AIResultScreen>
                         color: _lightGreen,
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: const Icon(Icons.analytics_rounded,
-                          color: _green, size: 16),
+                      child: const Icon(
+                        Icons.analytics_rounded,
+                        color: _green,
+                        size: 16,
+                      ),
                     ),
                     const SizedBox(width: 10),
                     Text(
@@ -1280,7 +1348,11 @@ class _AIResultScreenState extends State<AIResultScreen>
                           children: [
                             Row(
                               children: [
-                                const Icon(Icons.science_outlined, color: Color(0xFFDC2626), size: 16),
+                                const Icon(
+                                  Icons.science_outlined,
+                                  color: Color(0xFFDC2626),
+                                  size: 16,
+                                ),
                                 const SizedBox(width: 6),
                                 Expanded(
                                   child: Text(
@@ -1322,7 +1394,11 @@ class _AIResultScreenState extends State<AIResultScreen>
                           children: [
                             Row(
                               children: [
-                                const Icon(Icons.eco_outlined, color: Color(0xFF16A34A), size: 16),
+                                const Icon(
+                                  Icons.eco_outlined,
+                                  color: Color(0xFF16A34A),
+                                  size: 16,
+                                ),
                                 const SizedBox(width: 6),
                                 Expanded(
                                   child: Text(
@@ -1380,8 +1456,11 @@ class _AIResultScreenState extends State<AIResultScreen>
                         color: Colors.white.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: const Icon(Icons.healing_rounded,
-                          color: Colors.white, size: 16),
+                      child: const Icon(
+                        Icons.healing_rounded,
+                        color: Colors.white,
+                        size: 16,
+                      ),
                     ),
                     const SizedBox(width: 10),
                     Text(
@@ -1394,11 +1473,16 @@ class _AIResultScreenState extends State<AIResultScreen>
                     ),
                     const Spacer(),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
                         color: _accentGreen.withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: _accentGreen.withValues(alpha: 0.3)),
+                        border: Border.all(
+                          color: _accentGreen.withValues(alpha: 0.3),
+                        ),
                       ),
                       child: Text(
                         _riskLevel.toUpperCase(),
@@ -1433,7 +1517,7 @@ class _AIResultScreenState extends State<AIResultScreen>
     final isMoth = stage.contains('moth');
     final isEgg = stage.contains('egg');
     final isPupa = stage.contains('pupa');
-    
+
     // Determine life stage details
     String lifeStageName;
     IconData lifeStageIcon;
@@ -1441,31 +1525,36 @@ class _AIResultScreenState extends State<AIResultScreen>
     String riskType;
     Color riskColor = _severityColor;
     IconData riskIcon = _severityIcon;
-    
+
     if (isMoth) {
       lifeStageName = 'Moth (Adult)';
       lifeStageIcon = Icons.flight_takeoff_rounded;
-      lifeStageDescription = 'Adult moths are the reproductive and dispersal stage. They don\'t directly damage crops but lay eggs that become destructive larvae.';
+      lifeStageDescription =
+          'Adult moths are the reproductive and dispersal stage. They don\'t directly damage crops but lay eggs that become destructive larvae.';
       riskType = 'Spread Risk';
     } else if (isLarva) {
       lifeStageName = 'Larva (Caterpillar)';
       lifeStageIcon = Icons.bug_report_rounded;
-      lifeStageDescription = 'Larvae cause DIRECT crop damage by feeding on leaves, stems, and reproductive structures. This is the most destructive stage.';
+      lifeStageDescription =
+          'Larvae cause DIRECT crop damage by feeding on leaves, stems, and reproductive structures. This is the most destructive stage.';
       riskType = 'Infestation/Destruction Risk';
     } else if (isEgg) {
       lifeStageName = 'Egg Mass';
       lifeStageIcon = Icons.circle_outlined;
-      lifeStageDescription = 'Egg masses indicate active reproduction. While eggs don\'t damage crops, they will hatch into larvae that will begin feeding within 2-5 days.';
+      lifeStageDescription =
+          'Egg masses indicate active reproduction. While eggs don\'t damage crops, they will hatch into larvae that will begin feeding within 2-5 days.';
       riskType = 'Emerging Infestation Risk';
     } else if (isPupa) {
       lifeStageName = 'Pupa';
       lifeStageIcon = Icons.settings_overscan_rounded;
-      lifeStageDescription = 'Pupae are the transitional stage before adults emerge. They are usually found in soil or debris and indicate a new generation is developing.';
+      lifeStageDescription =
+          'Pupae are the transitional stage before adults emerge. They are usually found in soil or debris and indicate a new generation is developing.';
       riskType = 'Future Generation Risk';
     } else {
       lifeStageName = 'NOT FAW';
       lifeStageIcon = Icons.help_outline_rounded;
-      lifeStageDescription = 'The detected stage could not be clearly identified.';
+      lifeStageDescription =
+          'The detected stage could not be clearly identified.';
       riskType = 'Risk Level not Applicable';
     }
 
@@ -1526,7 +1615,10 @@ class _AIResultScreenState extends State<AIResultScreen>
                       ),
                     ),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
                         color: riskColor.withOpacity(0.12),
                         borderRadius: BorderRadius.circular(20),
@@ -1678,9 +1770,9 @@ class _AIResultScreenState extends State<AIResultScreen>
                             // Low (20-40%)
                             Expanded(
                               child: Container(
-                                color: const Color(0xFFF9A825).withOpacity(
-                                  riskLevel == 'Low' ? 1.0 : 0.3,
-                                ),
+                                color: const Color(
+                                  0xFFF9A825,
+                                ).withOpacity(riskLevel == 'Low' ? 1.0 : 0.3),
                               ),
                             ),
                             // Moderate (40-60%)
@@ -1694,9 +1786,9 @@ class _AIResultScreenState extends State<AIResultScreen>
                             // High (60-80%)
                             Expanded(
                               child: Container(
-                                color: const Color(0xFFD32F2F).withOpacity(
-                                  riskLevel == 'High' ? 1.0 : 0.3,
-                                ),
+                                color: const Color(
+                                  0xFFD32F2F,
+                                ).withOpacity(riskLevel == 'High' ? 1.0 : 0.3),
                               ),
                             ),
                             // Very High (80-100%)
@@ -1723,20 +1815,47 @@ class _AIResultScreenState extends State<AIResultScreen>
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('Very Low', style: GoogleFonts.manrope(fontSize: 7, color: Colors.grey.shade500)),
-                    Text('Low', style: GoogleFonts.manrope(fontSize: 7, color: Colors.grey.shade500)),
-                    Text('Moderate', style: GoogleFonts.manrope(fontSize: 7, color: Colors.grey.shade500)),
-                    Text('High', style: GoogleFonts.manrope(fontSize: 7, color: Colors.grey.shade500)),
-                    Text('Very High', style: GoogleFonts.manrope(fontSize: 7, color: Colors.grey.shade500)),
+                    Text(
+                      'Very Low',
+                      style: GoogleFonts.manrope(
+                        fontSize: 7,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
+                    Text(
+                      'Low',
+                      style: GoogleFonts.manrope(
+                        fontSize: 7,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
+                    Text(
+                      'Moderate',
+                      style: GoogleFonts.manrope(
+                        fontSize: 7,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
+                    Text(
+                      'High',
+                      style: GoogleFonts.manrope(
+                        fontSize: 7,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
+                    Text(
+                      'Very High',
+                      style: GoogleFonts.manrope(
+                        fontSize: 7,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 4),
                 Text(
                   riskType,
-                  style: GoogleFonts.manrope(
-                    fontSize: 10,
-                    color: _muted,
-                  ),
+                  style: GoogleFonts.manrope(fontSize: 10, color: _muted),
                 ),
               ],
             ),
@@ -1802,23 +1921,23 @@ class _AIResultScreenState extends State<AIResultScreen>
 
   String _getCropVulnerabilityText() {
     final riskLevel = _riskLevel;
-    
+
     switch (riskLevel) {
       case 'Very High':
         return 'CRITICAL: The crop is at Tasseling-Silking stage (45-55 DAP). This is when yield is most at risk. Even small pest populations can cause significant economic damage. IMMEDIATE ACTION REQUIRED.';
-      
+
       case 'High':
         return 'HIGH VULNERABILITY: The crop is at Late Whorl (30-45 DAP) or Grain Filling (55-75 DAP) stage. Damage at these stages can significantly reduce yield.';
-      
+
       case 'Moderate':
         return 'MODERATE VULNERABILITY: The crop is in early vegetative stage where it can recover from some damage. However, pest populations can quickly increase if not addressed.';
-      
+
       case 'Low':
         return 'LOW VULNERABILITY: The crop is either in seedling stage (can recover) or early growth stage. Pest impact is limited.';
-      
+
       case 'Very Low':
         return 'VERY LOW VULNERABILITY: No significant pest pressure. Continue routine monitoring.';
-      
+
       default:
         return 'Crop vulnerability is moderate. Continue monitoring.';
     }
@@ -1881,7 +2000,7 @@ class _AIResultScreenState extends State<AIResultScreen>
           return 'URGENT: Deploy pheromone traps immediately. Consider perimeter spraying. Monitor daily for egg masses.';
         }
         return 'URGENT: Immediate action required. Contact agricultural extension officer.';
-      
+
       case 'High':
         if (isLarva) {
           return 'TREAT WITHIN 24 HOURS: Apply recommended insecticide. Focus on affected areas. Monitor daily for spread.';
@@ -1891,7 +2010,7 @@ class _AIResultScreenState extends State<AIResultScreen>
           return 'REMOVE/MONITOR: Remove visible egg masses manually. Apply biological control (Trichogramma wasps). Prepare for larval emergence.';
         }
         return 'IMMEDIATE ACTION: Implement control measures within 24 hours.';
-      
+
       case 'Moderate':
         if (isLarva) {
           return 'TREAT WITHIN 48 HOURS: Apply recommended control to prevent population explosion. Monitor daily for signs of increasing damage.';
@@ -1901,7 +2020,7 @@ class _AIResultScreenState extends State<AIResultScreen>
           return 'PREPARE: Strengthen biological control. Consider soil treatments. Prepare monitoring for emerging adults.';
         }
         return 'MONITOR CLOSELY: Scout every 3-4 days. Take action if population increases.';
-      
+
       case 'Low':
         if (isLarva) {
           return 'CONTINUE SCOUTING: Monitor weekly. Treatment only needed if populations increase or crop enters a more vulnerable stage.';
@@ -1909,10 +2028,10 @@ class _AIResultScreenState extends State<AIResultScreen>
           return 'CONTINUE MONITORING: Pupae indicate a new generation will emerge. Maintain regular scouting.';
         }
         return 'CONTINUE ROUTINE MONITORING: Weekly scouting is sufficient at this risk level.';
-      
+
       case 'Very Low':
         return 'CONTINUE ROUTINE MONITORING: No action needed. Maintain regular scouting schedule.';
-      
+
       default:
         return 'VERIFY: Conduct field scouting to confirm pest presence and stage. Assess damage level and crop status.';
     }
@@ -1937,7 +2056,9 @@ class _AIResultScreenState extends State<AIResultScreen>
             child: const Text('Keep detection'),
           ),
           TextButton(
-            style: TextButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
             onPressed: () => Navigator.pop(dialogContext, true),
             child: const Text('Discard'),
           ),
@@ -1951,10 +2072,14 @@ class _AIResultScreenState extends State<AIResultScreen>
       if (!mounted) return;
       final messenger = ScaffoldMessenger.of(context);
       Navigator.pop(context);
-      messenger.showSnackBar(const SnackBar(content: Text('Detection discarded')));
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Detection discarded')),
+      );
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not discard detection: $error')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not discard detection: $error')),
+        );
       }
     } finally {
       if (mounted) setState(() => _discarding = false);
@@ -2004,8 +2129,11 @@ class _AIResultScreenState extends State<AIResultScreen>
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(Icons.camera_alt_outlined,
-                            color: _green, size: 16),
+                        const Icon(
+                          Icons.camera_alt_outlined,
+                          color: _green,
+                          size: 16,
+                        ),
                         const SizedBox(width: 6),
                         Text(
                           widget.queuedDetectionId == null ? 'Retake' : 'Back',
@@ -2023,100 +2151,114 @@ class _AIResultScreenState extends State<AIResultScreen>
               const SizedBox(width: 10),
               Expanded(
                 flex: 2,
-                child: GestureDetector(
-                  onTap: () async {
+                child: CycleAssignmentButton(
+                  assigned: _assignedCycleId != null,
+                  busy: _isSaving || _discarding || _isAssigning,
+                  onAssign: () async {
+                    if (_assignedCycleId != null ||
+                        _isAssigning ||
+                        _isSaving ||
+                        _discarding)
+                      return;
                     final queuedId = widget.queuedDetectionId;
-                    if (queuedId != null && OfflineSyncService().itemById(queuedId)?.submission != null) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text('Your earlier save is awaiting confirmation. Its cycle assignment is preserved; retry saving from Sync details.'),
-                      ));
+                    if (queuedId != null &&
+                        OfflineSyncService().itemById(queuedId)?.submission !=
+                            null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Your earlier save is awaiting confirmation. Its cycle assignment is preserved; retry saving from Sync details.',
+                          ),
+                        ),
+                      );
                       return;
                     }
-                    final returnedData = await Navigator.push<Map<String, dynamic>>(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => AssignPestScreen(
-                          userId: widget.userId,
-                          pestName: widget.pestName,
-                          detectedStage: widget.detectionStage.toLowerCase(),
-                          imagePath: widget.imageFile?.path,
+                    setState(() => _isAssigning = true);
+                    Map<String, dynamic>? returnedData;
+                    try {
+                      returnedData = await Navigator.push<Map<String, dynamic>>(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => AssignPestScreen(
+                            queuedDetectionId: widget.queuedDetectionId,
+                            userId: widget.userId,
+                            pestName: widget.pestName,
+                            detectedStage: widget.detectionStage.toLowerCase(),
+                            imagePath: widget.imageFile?.path,
+                          ),
                         ),
-                      ),
-                    );
-
-                    if (returnedData != null && returnedData['cycleId'] != null) {
-                      setState(() { 
-                        _assignedCycleId = returnedData['cycleId'];
-                        _assignedCycleName = returnedData['cycleName']?.toString();
-                        _assignedWeekNumber = (returnedData['weekNumber'] as num?)?.toInt();
-                        _assignedStation = (returnedData['station'] as num?)?.toInt();
-                        _assignedDap = returnedData['dap'];
-                        _assignedGrowthStage = returnedData['growthStage'];
-                        if (returnedData['fieldId'] != null && returnedData['fieldId'].toString().isNotEmpty) {
-                          _assignedFieldId = returnedData['fieldId'].toString();
+                      );
+                    } finally {
+                      if (mounted) setState(() => _isAssigning = false);
+                    }
+                    if (!mounted) return;
+                    if (widget.queuedDetectionId != null) {
+                      returnedData ??= OfflineSyncService()
+                          .itemById(widget.queuedDetectionId!)
+                          ?.lockedAssignment;
+                    }
+                    final assigned = returnedData;
+                    if (assigned != null && assigned['cycleId'] != null) {
+                      setState(() {
+                        _assignedCycleId = assigned['cycleId'];
+                        _assignedCycleName = assigned['cycleName']?.toString();
+                        _assignedWeekNumber = (assigned['weekNumber'] as num?)
+                            ?.toInt();
+                        _assignedStation = (assigned['station'] as num?)
+                            ?.toInt();
+                        _assignedDap = assigned['dap'];
+                        _assignedGrowthStage = assigned['growthStage'];
+                        if (assigned['fieldId'] != null &&
+                            assigned['fieldId'].toString().isNotEmpty) {
+                          _assignedFieldId = assigned['fieldId'].toString();
                         }
-                        if (returnedData['fieldName'] != null && returnedData['fieldName'].toString().isNotEmpty) {
-                          _assignedFieldName = returnedData['fieldName'].toString();
+                        if (assigned['fieldName'] != null &&
+                            assigned['fieldName'].toString().isNotEmpty) {
+                          _assignedFieldName = assigned['fieldName'].toString();
                         }
-                        if (returnedData['farmId'] != null && returnedData['farmId'].toString().isNotEmpty) {
-                          _assignedFarmId = returnedData['farmId'].toString();
+                        if (assigned['farmId'] != null &&
+                            assigned['farmId'].toString().isNotEmpty) {
+                          _assignedFarmId = assigned['farmId'].toString();
                         }
-                        if (returnedData['farmName'] != null && returnedData['farmName'].toString().isNotEmpty) {
-                          _assignedFarmName = returnedData['farmName'].toString();
+                        if (assigned['farmName'] != null &&
+                            assigned['farmName'].toString().isNotEmpty) {
+                          _assignedFarmName = assigned['farmName'].toString();
                         }
                       });
-                      if (_assignedFieldId != null && _assignedFieldId!.isNotEmpty) {
+                      if (_assignedFieldId != null &&
+                          _assignedFieldId!.isNotEmpty) {
                         _resolveFieldCoordinates(_assignedFieldId!);
                       }
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Row(children: [
-                              const Icon(Icons.check_circle,
-                                  color: Colors.white, size: 20),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Text(
-                                  'Cycle assigned! DAP: $_assignedDap days, Stage: $_assignedGrowthStage',
-                                  style: const TextStyle(fontSize: 13),
+                            content: Row(
+                              children: [
+                                const Icon(
+                                  Icons.check_circle,
+                                  color: Colors.white,
+                                  size: 20,
                                 ),
-                              ),
-                            ]),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    'Cycle assigned! DAP: $_assignedDap days, Stage: $_assignedGrowthStage',
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                ),
+                              ],
+                            ),
                             backgroundColor: _green,
                             behavior: SnackBarBehavior.floating,
                             shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12)),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                             duration: const Duration(seconds: 3),
                           ),
                         );
                       }
                     }
                   },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    decoration: BoxDecoration(
-                      color: _assignedCycleId != null ? _green : _green.withOpacity(0.5),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.add_task_rounded,
-                            color: Colors.white, size: 16),
-                        const SizedBox(width: 6),
-                        Text(
-                          _assignedCycleId != null
-                              ? 'Cycle Assigned ✓'
-                              : 'Assign to Cycle',
-                          style: GoogleFonts.manrope(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
                 ),
               ),
             ],
@@ -2130,8 +2272,11 @@ class _AIResultScreenState extends State<AIResultScreen>
                       SnackBar(
                         content: Row(
                           children: [
-                            const Icon(Icons.info_outline,
-                                color: Colors.white, size: 20),
+                            const Icon(
+                              Icons.info_outline,
+                              color: Colors.white,
+                              size: 20,
+                            ),
                             const SizedBox(width: 10),
                             Expanded(
                               child: Text(
@@ -2144,7 +2289,8 @@ class _AIResultScreenState extends State<AIResultScreen>
                         backgroundColor: Colors.orange.shade700,
                         behavior: SnackBarBehavior.floating,
                         shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
                     );
                   }
@@ -2197,17 +2343,17 @@ class _AIResultScreenState extends State<AIResultScreen>
 
   // ── Helpers ─────────────────────────────────────────────────────────────
   BoxDecoration _cardDecoration() => BoxDecoration(
-        color: _card,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _border),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      );
+    color: _card,
+    borderRadius: BorderRadius.circular(20),
+    border: Border.all(color: _border),
+    boxShadow: [
+      BoxShadow(
+        color: Colors.black.withOpacity(0.04),
+        blurRadius: 12,
+        offset: const Offset(0, 4),
+      ),
+    ],
+  );
 
   MarkdownStyleSheet _markdownStyleSheet({required bool isDark}) {
     final baseTextStyle = GoogleFonts.manrope(fontSize: 13, height: 1.65);
@@ -2263,7 +2409,9 @@ class _AIResultScreenState extends State<AIResultScreen>
             width: 4,
           ),
         ),
-        color: isDark ? Colors.white.withOpacity(0.05) : const Color(0xFFFFFBF0),
+        color: isDark
+            ? Colors.white.withOpacity(0.05)
+            : const Color(0xFFFFFBF0),
       ),
       code: GoogleFonts.manrope(
         fontSize: 12,

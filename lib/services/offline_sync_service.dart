@@ -32,6 +32,10 @@ class QueuedOfflineItem {
   String? errorMessage;
   AnalysisResult? result;
   Map<String, dynamic>? submission;
+  Map<String, dynamic>? assignment;
+  Map<String, dynamic>? get lockedAssignment => assignment ?? submission;
+  bool get isAssigned =>
+      (lockedAssignment?['cycleId'] as String? ?? '').isNotEmpty;
 
   bool get isReady => result != null && status != 'submitted';
   bool get needsSync =>
@@ -43,7 +47,9 @@ class QueuedOfflineItem {
       case 'analyzing':
         return 'Waiting for AI result';
       case 'ready':
-        return 'Ready to review';
+        return isAssigned
+            ? 'Cycle assigned - ready to save'
+            : 'Ready to review';
       case 'submitting':
         return 'Saving report';
       case 'failed':
@@ -53,7 +59,9 @@ class QueuedOfflineItem {
       case 'submitted':
         return 'Report saved';
       default:
-        return 'Waiting to sync';
+        return submission != null
+            ? 'Report save waiting to sync'
+            : 'Waiting to sync';
     }
   }
 
@@ -77,6 +85,7 @@ class QueuedOfflineItem {
     this.errorMessage,
     this.result,
     this.submission,
+    this.assignment,
   });
 
   Map<String, dynamic> toJson() => {
@@ -99,6 +108,7 @@ class QueuedOfflineItem {
     'errorMessage': errorMessage,
     'result': result?.toJson(),
     'submission': submission,
+    'assignment': assignment,
   };
 
   factory QueuedOfflineItem.fromJson(Map<String, dynamic> json) =>
@@ -125,6 +135,9 @@ class QueuedOfflineItem {
             ? AnalysisResult.fromJson(
                 Map<String, dynamic>.from(json['result'] as Map),
               )
+            : null,
+        assignment: json['assignment'] is Map
+            ? Map<String, dynamic>.from(json['assignment'] as Map)
             : null,
         submission: json['submission'] is Map
             ? Map<String, dynamic>.from(json['submission'] as Map)
@@ -412,7 +425,8 @@ class OfflineSyncService {
     return item;
   }
 
-  int get readyCount => queue.where((i) => i.isReady).length;
+  int get readyCount =>
+      queue.where((i) => i.isReady && i.submission == null).length;
   bool get hasSyncWork => queue.any((i) => i.needsSync);
 
   QueuedOfflineItem? itemById(String id) {
@@ -498,6 +512,33 @@ class OfflineSyncService {
     }
   }
 
+  /// Persist the first successful cycle assignment independently of report save.
+  /// Keep the in-memory lock even if persistence fails so retry cannot assign twice.
+  Future<void> lockCycleAssignment(
+    String id,
+    Map<String, dynamic> assignment,
+  ) async {
+    final item = itemById(id);
+    if (item == null || item.result == null) {
+      throw StateError('This detection is no longer available');
+    }
+    _requireOwner(item);
+    if ((assignment['cycleId'] as String? ?? '').isEmpty) {
+      throw StateError('Select a cycle first');
+    }
+    final locked = item.lockedAssignment;
+    if (locked != null) {
+      for (final key in ['cycleId', 'weekNumber', 'station']) {
+        if (locked[key] != assignment[key]) {
+          throw StateError('This detection is already assigned to a cycle');
+        }
+      }
+    }
+    item.assignment ??= Map<String, dynamic>.from(assignment);
+    _updatePendingCount();
+    await _saveQueue();
+  }
+
   /// Called only after explicit review, assignment and Save in AIResultScreen.
   /// Preserve assignment before networking so interrupted saves can retry safely.
   Future<String> submitReviewedReport(
@@ -519,6 +560,16 @@ class OfflineSyncService {
     }
     if (_submissions.containsKey(id)) {
       throw StateError('This report is already being saved');
+    }
+    final assignment = item.assignment;
+    if (assignment != null) {
+      for (final key in ['cycleId', 'weekNumber', 'station']) {
+        if (assignment[key] != data[key]) {
+          throw StateError(
+            'This detection is already assigned to a different cycle, week or station',
+          );
+        }
+      }
     }
     final submission = Map<String, dynamic>.from(data)
       ..remove('timestamp')
@@ -649,7 +700,9 @@ class OfflineSyncService {
       throw StateError('Wait for the current sync to finish');
     }
     if (item.submission != null) {
-      throw StateError('An earlier report save is awaiting confirmation. Retry saving before removing this detection.');
+      throw StateError(
+        'An earlier report save is awaiting confirmation. Retry saving before removing this detection.',
+      );
     }
     _queue.remove(item);
     try {

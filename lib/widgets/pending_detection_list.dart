@@ -70,7 +70,10 @@ class PendingDetectionList extends StatelessWidget {
           separatorBuilder: (_, index) => const SizedBox(height: 8),
           itemBuilder: (context, index) {
             final item = items[index];
-            final ready = item.isReady && item.status != 'submitting';
+            final ready =
+                item.isReady &&
+                item.submission == null &&
+                item.status != 'submitting';
             final busy =
                 item.status == 'uploading' ||
                 item.status == 'analyzing' ||
@@ -166,15 +169,30 @@ class PendingDetectionList extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
+                    if (item.isAssigned)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(
+                          'Assigned to ${item.lockedAssignment?['cycleName'] ?? item.lockedAssignment?['cycleId']}. This assignment cannot be changed.',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF536257),
+                          ),
+                        ),
+                      ),
                     if (ready)
                       TextButton.icon(
                         onPressed: () => onOpen != null
                             ? onOpen!(item)
                             : openResult(context, item),
                         icon: const Icon(Icons.fact_check_outlined),
-                        label: const Text('View AI result'),
+                        label: Text(
+                          item.isAssigned
+                              ? 'View assigned result'
+                              : 'View AI result',
+                        ),
                       )
-                    else if (failed)
+                    else if (failed && item.submission == null)
                       TextButton.icon(
                         onPressed: () => sync.syncAll(),
                         icon: const Icon(Icons.refresh),
