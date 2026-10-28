@@ -40,6 +40,8 @@ class AnalysisResult {
   final String historicalContext;
   final String cropAffected;
   final double confidence;
+  final String? explanationId;
+  final String analysisStatus;
 
   AnalysisResult({
     required this.pestName,
@@ -54,6 +56,8 @@ class AnalysisResult {
     required this.historicalContext,
     required this.cropAffected,
     required this.confidence,
+    this.explanationId,
+    this.analysisStatus = 'completed',
   });
 
   Map<String, dynamic> toJson() => {
@@ -80,6 +84,8 @@ class AnalysisResult {
     'historicalContext': historicalContext,
     'cropAffected': cropAffected,
     'confidence': confidence,
+    'explanationId': explanationId,
+    'analysisStatus': analysisStatus,
   };
 
   factory AnalysisResult.fromJson(Map<String, dynamic> json) => AnalysisResult(
@@ -97,6 +103,8 @@ class AnalysisResult {
     historicalContext: json['historicalContext'] as String? ?? '',
     cropAffected: json['cropAffected'] as String? ?? 'Maize',
     confidence: (json['confidence'] as num).toDouble(),
+    explanationId: json['explanationId'] as String?,
+    analysisStatus: json['analysisStatus'] as String? ?? 'completed',
   );
 }
 
@@ -117,7 +125,40 @@ class _AnalysisMultipartRequest extends http.MultipartRequest {
   );
 }
 
+class ExplanationUpdate {
+  final String status;
+  final String analysis;
+  const ExplanationUpdate({required this.status, required this.analysis});
+  bool get isFinished => status == 'completed' || status == 'failed';
+}
+
 class ApiService {
+  static Future<ExplanationUpdate> fetchExplanation(
+    String id, {
+    http.Client? client,
+  }) async {
+    final uri = Uri.parse('$baseUrl/explanations/${Uri.encodeComponent(id)}');
+    final response = await (client == null ? http.get(uri) : client.get(uri));
+    if (response.statusCode != 200) {
+      throw Exception('Explanation status unavailable: ${response.statusCode}');
+    }
+    final decoded = json.decode(response.body) as Map<String, dynamic>;
+    final status = decoded['analysis_status'] as String;
+    if (!const [
+      'pending',
+      'queued',
+      'processing',
+      'completed',
+      'failed',
+    ].contains(status)) {
+      throw const FormatException('Invalid explanation status');
+    }
+    return ExplanationUpdate(
+      status: status,
+      analysis: decoded['analysis'] as String? ?? '',
+    );
+  }
+
   @visibleForTesting
   static Future<http.Response> awaitAnalysisResponse(
     http.BaseRequest request, {
@@ -162,15 +203,15 @@ class ApiService {
       debugPrint('Sending request to $baseUrl/predict');
       var request = _AnalysisMultipartRequest(
         'POST',
-        Uri.parse('$baseUrl/predict'),
+        Uri.parse('$baseUrl/predict?background=true'),
         onImageSent,
       );
       request.files.add(
         await http.MultipartFile.fromPath('image', imageFile.path),
       );
 
-      // /predict also runs Moondream. Keep the same request alive while it
-      // processes; a local timeout abandons a result still running server-side.
+      // Qwen returns detection and fixed treatment first; explanation follows
+      // through its job endpoint. Older synchronous servers still work.
       var response = await awaitAnalysisResponse(request, client: client);
 
       if (response.statusCode != 200) {
@@ -261,6 +302,8 @@ class ApiService {
           historicalContext: historicalContext,
           cropAffected: cropAffected,
           confidence: overallConfidence,
+          explanationId: decoded['explanation_id'] as String?,
+          analysisStatus: decoded['analysis_status'] as String? ?? 'completed',
         );
       }
       // Not FAW – uses 'analysis' and 'treatment' as well
@@ -288,6 +331,8 @@ class ApiService {
           historicalContext: historicalContext,
           cropAffected: cropAffected,
           confidence: overallConfidence,
+          explanationId: decoded['explanation_id'] as String?,
+          analysisStatus: decoded['analysis_status'] as String? ?? 'completed',
         );
       }
     } catch (e) {

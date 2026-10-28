@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'package:http/http.dart' as http;
+import 'package:visaia/services/api_service.dart';
+import 'package:visaia/widgets/explanation_loading.dart';
 import 'package:visaia/widgets/cycle_assignment_button.dart';
 import 'package:visaia/services/local_write_service.dart';
 import 'dart:io';
@@ -22,6 +26,8 @@ class AIResultScreen extends StatefulWidget {
   final String detectionStage;
   final String cropAffected;
   final String analysis;
+  final String? explanationId;
+  final String analysisStatus;
   final String treatment;
   final String historicalContext;
   final File? imageFile;
@@ -45,6 +51,8 @@ class AIResultScreen extends StatefulWidget {
     required this.detectionStage,
     required this.cropAffected,
     required this.analysis,
+    this.explanationId,
+    this.analysisStatus = 'completed',
     required this.treatment,
     required this.historicalContext,
     this.imageFile,
@@ -66,6 +74,36 @@ class AIResultScreen extends StatefulWidget {
 
 class _AIResultScreenState extends State<AIResultScreen>
     with SingleTickerProviderStateMixin {
+  late String _analysis;
+  late bool _analysisPending;
+  final http.Client _explanationClient = http.Client();
+  Timer? _explanationPoll;
+
+  Future<void> _loadExplanation() async {
+    if (!mounted || !_analysisPending || widget.explanationId == null) return;
+    try {
+      final update = await ApiService.fetchExplanation(
+        widget.explanationId!,
+        client: _explanationClient,
+      );
+      if (!mounted) return;
+      if (update.isFinished) {
+        setState(() {
+          _analysis = update.analysis;
+          _analysisPending = false;
+        });
+        return;
+      }
+    } catch (error) {
+      // A lost status request must not turn a slow generation into a failure.
+      // Observe the same job again; never restart Qwen or impose a deadline.
+      debugPrint('Explanation status temporarily unavailable: $error');
+    }
+    if (mounted && _analysisPending) {
+      _explanationPoll = Timer(const Duration(seconds: 2), _loadExplanation);
+    }
+  }
+
   bool _isSaving = false;
   bool _isAssigning = false;
   // ── State variable for assigned cycle & field ──────────────────────────────
@@ -100,6 +138,12 @@ class _AIResultScreenState extends State<AIResultScreen>
   @override
   void initState() {
     super.initState();
+    _analysis = widget.analysis;
+    _analysisPending =
+        widget.explanationId != null &&
+        widget.analysisStatus != 'completed' &&
+        widget.analysisStatus != 'failed';
+    if (_analysisPending) unawaited(_loadExplanation());
     _tabController = TabController(length: 4, vsync: this);
     _assignedFieldId = widget.fieldId;
     _assignedFieldName = widget.fieldName;
@@ -174,6 +218,8 @@ class _AIResultScreenState extends State<AIResultScreen>
 
   @override
   void dispose() {
+    _explanationPoll?.cancel();
+    _explanationClient.close();
     _tabController.dispose();
     super.dispose();
   }
@@ -339,7 +385,7 @@ class _AIResultScreenState extends State<AIResultScreen>
 
   // ── Save to Firestore ─────────────────────────────────────────────────────
   Future<void> _saveToReports(BuildContext context) async {
-    if (_isSaving || _discarding) return;
+    if (_isSaving || _discarding || _analysisPending) return;
     if (_assignedCycleId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -413,7 +459,7 @@ class _AIResultScreenState extends State<AIResultScreen>
         'confidence': widget.confidencePercent / 100,
         'risk': riskDisplay,
         'cropAffected': widget.cropAffected,
-        'analysis': widget.analysis,
+        'analysis': _analysis,
         'treatment': widget.treatment,
         'historicalContext': widget.historicalContext,
         'imageBase64': base64Image,
@@ -652,11 +698,13 @@ class _AIResultScreenState extends State<AIResultScreen>
             ),
           ),
           GestureDetector(
-            onTap: () => _saveToReports(context),
+            onTap: _analysisPending ? null : () => _saveToReports(context),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
               decoration: BoxDecoration(
-                color: _accentGreen,
+                color: _analysisPending
+                    ? const Color(0xFFE2E8E4)
+                    : _accentGreen,
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Row(
@@ -665,7 +713,7 @@ class _AIResultScreenState extends State<AIResultScreen>
                   const Icon(Icons.save_rounded, color: _darkGreen, size: 16),
                   const SizedBox(width: 4),
                   Text(
-                    'Save',
+                    _analysisPending ? 'Loading?' : 'Save',
                     style: GoogleFonts.manrope(
                       color: _darkGreen,
                       fontWeight: FontWeight.w700,
@@ -1290,11 +1338,14 @@ class _AIResultScreenState extends State<AIResultScreen>
                   ],
                 ),
                 const SizedBox(height: 16),
-                MarkdownBody(
-                  data: widget.analysis,
-                  styleSheet: _markdownStyleSheet(isDark: false),
-                  selectable: true,
-                ),
+                if (_analysisPending)
+                  const ExplanationLoading()
+                else
+                  MarkdownBody(
+                    data: _analysis,
+                    styleSheet: _markdownStyleSheet(isDark: false),
+                    selectable: true,
+                  ),
               ],
             ),
           ),
@@ -2266,7 +2317,9 @@ class _AIResultScreenState extends State<AIResultScreen>
           const SizedBox(height: 8),
           // Save Report Button
           GestureDetector(
-            onTap: _assignedCycleId == null
+            onTap: _analysisPending
+                ? null
+                : _assignedCycleId == null
                 ? () {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
@@ -2298,12 +2351,12 @@ class _AIResultScreenState extends State<AIResultScreen>
             child: Container(
               padding: const EdgeInsets.symmetric(vertical: 12),
               decoration: BoxDecoration(
-                color: _assignedCycleId != null
+                color: _assignedCycleId != null && !_analysisPending
                     ? const Color(0xFFEAF5EE)
                     : Colors.grey.shade100,
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                  color: _assignedCycleId != null
+                  color: _assignedCycleId != null && !_analysisPending
                       ? _accentGreen
                       : Colors.grey.shade300,
                   width: 1.5,
@@ -2314,18 +2367,20 @@ class _AIResultScreenState extends State<AIResultScreen>
                 children: [
                   Icon(
                     Icons.cloud_upload_outlined,
-                    color: _assignedCycleId != null
+                    color: _assignedCycleId != null && !_analysisPending
                         ? _green
                         : Colors.grey.shade400,
                     size: 18,
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    _assignedCycleId != null
+                    _analysisPending
+                        ? 'Waiting for image explanation'
+                        : _assignedCycleId != null
                         ? 'Save Report to Monitoring'
                         : 'Assign a Cycle to Save Report',
                     style: GoogleFonts.manrope(
-                      color: _assignedCycleId != null
+                      color: _assignedCycleId != null && !_analysisPending
                           ? _green
                           : Colors.grey.shade400,
                       fontWeight: FontWeight.w700,

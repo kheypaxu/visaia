@@ -32,6 +32,8 @@ class PendingDetectionList extends StatelessWidget {
           detectionStage: result.lifeStage,
           cropAffected: result.cropAffected,
           analysis: result.analysis,
+          explanationId: result.explanationId,
+          analysisStatus: result.analysisStatus,
           treatment: result.treatment,
           historicalContext: result.historicalContext,
           annotatedImageUrl: result.annotatedImageUrl,

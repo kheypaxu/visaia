@@ -206,6 +206,8 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
                 ? result.cropAffected
                 : 'Maize',
             analysis: result.analysis,
+            explanationId: result.explanationId,
+            analysisStatus: result.analysisStatus,
             treatment: result.treatment,
             historicalContext: result.historicalContext.isNotEmpty
                 ? result.historicalContext
