@@ -8,6 +8,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:visaia/utils/growth_stage.dart';
 import 'package:visaia/services/auth_cache_service.dart';
+import 'package:visaia/core/models/cycle_audit_policy.dart' as auditPolicy;
 
 class StartCroppingCycleScreen extends StatefulWidget {
   final String? farmId;
@@ -297,6 +298,26 @@ class _StartCroppingCycleScreenState extends State<StartCroppingCycleScreen> {
 
     setState(() => _isSaving = true);
     try {
+      final existingCycles = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(_effectiveUid)
+          .collection('cycles')
+          .where('fieldId', isEqualTo: selectedFieldId)
+          .safeGet();
+      final hasActiveCycle = existingCycles.docs.any((doc) {
+        final cycle = doc.data();
+        return !auditPolicy.hasRecordedHarvest(cycle);
+      });
+      if (hasActiveCycle) {
+        if (mounted) {
+          _showSnackBar(
+            'This field already has an active cycle. Complete it before starting another.',
+            isError: true,
+          );
+        }
+        return;
+      }
+
       await _loadCycleNumber();
       if (!mounted) return;
       // Calculate the current growth stage based on planting date
